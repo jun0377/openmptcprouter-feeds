@@ -6,6 +6,7 @@
 #	  Ycarus (Yannick Chabanois) for OpenMPTCProuter <contact@openmptcprouter.com>
 # Released under GPL 3 or later
 
+# 检查是否启用MPTCP
 if [ -d "/proc/sys/net/mptcp" ]; then
         if ([ -f /proc/sys/net/mptcp/mptcp_enabled ] && [ `cat /proc/sys/net/mptcp/mptcp_enabled` = 0 ]) || ([ -f /proc/sys/net/mptcp/enabled ] && [ `cat /proc/sys/net/mptcp/enabled` = 0 ]); then
                 echo "MPTCP is disabled!"
@@ -17,6 +18,7 @@ else
 fi
 
 case $1 in
+    # 帮助信息
    "-h")
         echo "          Multipath-TCP configuration tool"
         echo "show/update flags:"
@@ -38,6 +40,7 @@ case $1 in
         echo "no subflow being established), as long as there are other interfaces available."
         echo
         exit 0 ;;
+    # 显示连接信息
    "-c")
         if [ -f /proc/net/mptcp_net/mptcp ]; then
             cat /proc/net/mptcp_net/mptcp
@@ -45,6 +48,7 @@ case $1 in
             ss -M
         fi
         exit 0;;
+    # 显示fullmesh路径管理信息
    "-f")
         if [ -f /proc/net/mptcp_fullmesh ]; then
             cat /proc/net/mptcp_fullmesh
@@ -52,6 +56,7 @@ case $1 in
             ip mptcp endpoint | grep fullmesh
         fi
         exit 0;;
+    # 显示MPTCP内核配置
    "-k")
         if [ -f /proc/sys/net/mptcp/mptcp_enabled ]; then
             echo Enabled: `cat /proc/sys/net/mptcp/mptcp_enabled`
@@ -77,6 +82,7 @@ case $1 in
         fi
         echo
         exit 0 ;;
+    # 显示MPTCP统计信息
    "-m")
 	if [ -f /proc/net/mptcp_net/snmp ]; then
 	    cat /proc/net/mptcp_net/snmp
@@ -84,6 +90,7 @@ case $1 in
 	    nstat -z | grep -i mptcp
 	fi
         exit 0 ;;
+    # 显示所有接口信息
    "")
         for ifpath in /sys/class/net/*; do
                 $0 ${ifpath##*/}
@@ -96,12 +103,14 @@ DEVICE="$1"
 TYPE="$2"
 #FLAG_PATH=`find /sys/devices/ -path "*/net/$DEVICE/flags"`
 
+# 检查指定的网络设备是否存在
 [ -e "/sys/class/net/$DEVICE/" ] || {
         #echo "Device '$DEVICE' can't found!"
         #echo "Use the hardware name like in ifconfig"
         exit 1
 }
 
+# 旧版本MPTCP处理
 if [ -f /proc/sys/net/mptcp/mptcp_enabled ]; then
         FLAG_PATH="/sys/class/net/$DEVICE/flags"
         IFF=`cat $FLAG_PATH`
@@ -131,6 +140,8 @@ if [ -f /proc/sys/net/mptcp/mptcp_enabled ]; then
         esac
 
         printf "0x%02x" $(($(($IFF^$(($IFF&$IFF_MASK))))|$FLAG)) > $FLAG_PATH
+
+# 新版本MPTCP处理
 else
 	endpoint="$(ip mptcp endpoint show)"
 	if [ -n "$TYPE" ]; then
