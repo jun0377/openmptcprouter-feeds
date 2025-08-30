@@ -1,5 +1,18 @@
 #!/bin/sh
 
+# OpenVPN热插拔处理脚本
+## 1. 检查并执行用户自定义的全局OpenVPN事件处理脚本（/etc/openvpn.user
+## 2. 处理OpenVPN配置中通过up/down等选项定义的事件处理脚本
+## 3. 支持五种事件类型的处理：
+###		- up：VPN连接建立时
+### 	- down：VPN连接断开时
+### 	- route-up：路由设置完成时
+### 	- route-pre-down：路由删除前
+### 	- ipchange：IP地址变更时
+## 4. 通过环境变量传递事件类型（ACTION）和实例名称（INSTANCE）
+## 5. 确保脚本执行的安全性，使用env -i创建干净的环境
+
+# /etc/openvpn.user若存在则执行之
 [ -e "/etc/openvpn.user" ] && {
 	env -i ACTION="$ACTION" INSTANCE="$INSTANCE" \
 		/bin/sh \
@@ -9,15 +22,26 @@
 
 # Wrap user defined scripts on up/down/route-up/route-pre-down/ipchange events
 # Scriptp set with up/down/route-up/route-pre-down/ipchange in the openvpn config are also executed with the command=user_xxxx
+# 处理用户在OpenVPN配置中定义的各种事件脚本
+# 这些脚本通过在OpenVPN配置中设置up/down等选项，并使用command=user_xxxx的形式来执行
+
+# 根据ACTION环境变量的值进行不同的处理
 case "$ACTION" in
+	# 如果是up事件，使用user_up变量中的命令
 	up) command=$user_up ;;
+	# 如果是down事件，使用user_down变量中的命令
 	down) command=$user_down ;;
+	# 如果是route-up事件，使用user_route_up变量中的命令
 	route-up) command=$user_route_up ;;
+	# 如果是route-pre-down事件，使用user_route_pre_down变量中的命令
 	route-pre-down) command=$user_route_pre_down ;;
+	# 如果是ipchange事件，使用user_ipchange变量中的命令
 	ipchange) command=$user_ipchange ;;
+	# 如果是其他事件，将command变量设置为空
 	*) command= ;;
 esac
 
+ # 如果command变量不为空（即有对应的用户定义脚本）, 则执行用户定义的命令，并将剩余的参数传递给它
 if [ -n "$command" ]; then
 	shift
 	exec /bin/sh -c "$command $*"

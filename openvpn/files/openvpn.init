@@ -7,6 +7,7 @@
 START=90
 STOP=10
 
+# 启用procd进程管理
 USE_PROCD=1
 PROG=/usr/sbin/openvpn
 
@@ -17,6 +18,7 @@ LIST_SEP="
 UCI_STARTED=
 UCI_DISABLED=
 
+# 检查内核版本是否大于5.4
 version_over_5_4() {
 	MAJOR_VERSION=$(uname -r | awk -F '.' '{print $1}')
 	MINOR_VERSION=$(uname -r | awk -F '.' '{print $2}' | awk -F '-' '{print $1}')
@@ -27,6 +29,7 @@ version_over_5_4() {
 	fi
 }
 
+# 见参数名称转换格式，并写入配置文件
 append_param() {
 	local s="$1"
 	local v="$2"
@@ -39,6 +42,7 @@ append_param() {
 	return 0
 }
 
+# bool类型的参数，当值为1时写入配置文件
 append_bools() {
 	local p; local v; local s="$1"; shift
 	for p in $*; do
@@ -47,6 +51,7 @@ append_bools() {
 	done
 }
 
+# 处理带值的普通参数
 append_params() {
 	local p; local v; local s="$1"; shift
 	for p in $*; do
@@ -61,6 +66,7 @@ append_params() {
 	done
 }
 
+# 列表参数处理，用冒号连接多个值
 append_list() {
 	local p; local v; local s="$1"; shift
 
@@ -75,12 +81,14 @@ append_list() {
 	done
 }
 
+# 检查配置段是否启用
 section_enabled() {
 	config_get_bool enable  "$1" 'enable'  0
 	config_get_bool enabled "$1" 'enabled' 0
 	[ $enable -gt 0 ] || [ $enabled -gt 0 ]
 }
 
+# 创建临时文件，仅root用户可读写
 create_temp_file() {
 	mkdir -p "$(dirname "$1")"
 	rm -f "$1"
@@ -89,29 +97,41 @@ create_temp_file() {
 	chmod 0600 "$1"
 }
 
+# 获取网络设备配置，返回相应的命令行参数
 openvpn_get_dev() {
 	local dev dev_type
+	# 实例名称
 	local name="$1"
+	# 配置文件路径
 	local conf="$2"
 
 	# Do override only for configurations with config_file
+	# 仅对具有config_file配置的实例进行覆盖
 	config_get config_file "$name" config
+	# 如果没有配置文件，则直接返回
 	[ -n "$config_file" ] || return
 
 	# Check there is someething to override
+	# 检查是否有需要覆盖的设备配置
 	config_get dev "$name" dev
 	config_get dev_type "$name" dev_type
+	# 如果没有设备名称，则直接返回
 	[ -n "$dev" ] || return
 
 	# If there is a no dev_type, try to guess it
+	# 如果没有设备类型，尝试从配置文件中推断
 	if [ -z "$dev_type" ]; then
 		. /lib/functions/openvpn.sh
 
 		local odev odev_type
+		# 从配置文件中获取设备名称
 		get_openvpn_option "$conf" odev dev
+		# 从配置文件中获取设备类型
 		get_openvpn_option "$conf" odev_type dev-type
+		# 如果没有设备类型，则使用设备名称作为类型
 		[ -n "$odev_type" ] || odev_type="$odev"
 
+		# 根据设备名称判断设备类型
 		case "$odev_type" in
 			tun*) dev_type="tun" ;;
 			tap*) dev_type="tap" ;;
@@ -120,23 +140,29 @@ openvpn_get_dev() {
 	fi
 
 	# Return overrides
+	# 返回设备类型和设备名称的命令行参数
 	echo "--dev-type $dev_type --dev $dev"
 }
 
+# 获取认证信息，创建密码文件和用户认证文件
 openvpn_get_credentials() {
+	# omr
 	local name="$1"
 	local ret=""
 
+	# 从UCI配置中获取证书密码、用户密码、用户名
 	config_get cert_password "$name" cert_password
 	config_get password "$name" password
 	config_get username "$name" username
 
+	# 将证书密码写入临时文件,添加askpass参数，指定密码文件路径
 	if [ -n "$cert_password" ]; then
 		create_temp_file /var/run/openvpn.$name.pass
 		echo "$cert_password" > /var/run/openvpn.$name.pass
 		ret=" --askpass /var/run/openvpn.$name.pass "
 	fi
 
+	# 将用户名写入临时文件,添加auth-user-pass参数，指定用户认证文件路径
 	if [ -n "$username" ]; then
 		create_temp_file /var/run/openvpn.$name.userpass
 		echo "$username" > /var/run/openvpn.$name.userpass
@@ -148,23 +174,36 @@ openvpn_get_credentials() {
 	echo "$ret"
 }
 
+# openVPN实例添加，创建OpenVPN实例，配置所有启动参数、回调脚本和进程管理参数
 openvpn_add_instance() {
+	# 实例名称
 	local name="$1"
+	# 配置文件所在目录
 	local dir="$2"
+	# 配置文件名
 	local conf=$(basename "$3")
+	# 脚本安全级别
 	local security="$4"
+	# 连接建立时执行的脚本
 	local up="$5"
+	# 连接断开时执行的脚本
 	local down="$6"
+	# 路由建立后执行的脚本
 	local route_up="$7"
+	# 路由删除前执行的脚本
 	local route_pre_down="$8"
+	# IP地址变更时执行的脚本
 	local ipchange="$9"
+	# 检查是否是作为客户端
 	local client=$(grep -qEx "client|tls-client" "$dir/$conf" && echo 1)
 
 	#if version_over_5_4; then
 	#	PROG="mptcpize run ${PROG}"
 	#fi
 
+	# 配置procd服务实例
 	procd_open_instance "$name"
+	# 设置启动命令及其参数
 	procd_set_param command "$PROG"	\
 		--syslog "openvpn($name)" \
 		--status "/var/run/openvpn.$name.status" \
@@ -184,22 +223,34 @@ openvpn_add_instance() {
 		${mptcp:+--mptcp} \
 		$(openvpn_get_dev "$name" "$conf") \
 		$(openvpn_get_credentials "$name" "$conf")
+	# 添加配置文件到监控列表
 	procd_set_param file "$dir/$conf"
+	# 设置进程优先级为10
 	procd_set_param nice 10
+	# 设置终止超时为15秒
 	procd_set_param term_timeout 15
+	# 启用进程重启
 	procd_set_param respawn
+	# 最短重启间隔：3600秒
 	procd_append_param respawn 3600
+	# 重启阈值：5次
 	procd_append_param respawn 5
+	# 重启时间窗口：无限制
 	procd_append_param respawn -1
+	# 完成实例配置
 	procd_close_instance
 }
 
+# 启动UCI配置的OpenVPN实例
 start_uci_instance() {
+	# omr
 	local s="$1"
 
+	# 获取指定配置段
 	config_get config "$s" config
 	config="${config:+$(readlink -f "$config")}"
 
+	# 检查section是否启用，如果未启用则将配置添加到禁用列表并返回
 	section_enabled "$s" || {
 		append UCI_DISABLED "$config" "$LIST_SEP"
 		return 1
@@ -212,31 +263,47 @@ start_uci_instance() {
 	config_get route_pre_down "$s" route_pre_down
 	config_get ipchange "$s" ipchange
 	config_get script_security "$s" script_security
+	# 从UCI配置中获取mptcp选项的布尔值，默认为true
 	config_get_bool mptcp "$s" mptcp true
 
 	[ ! -d "/var/run" ] && mkdir -p "/var/run"
 
+	# 如果config不为空，表示使用外部配置文件
 	if [ ! -z "$config" ]; then
+		# 将配置文件路径添加到已启动列表
 		append UCI_STARTED "$config" "$LIST_SEP"
+		# 如果未设置script_security，则从配置文件中获取
 		[ -n "$script_security" ] || get_openvpn_option "$config" script_security script-security
+		# 如果未设置up脚本，则从配置文件中获取
 		[ -n "$up" ] || get_openvpn_option "$config" up up
+		# 如果未设置down脚本，则从配置文件中获取
 		[ -n "$down" ] || get_openvpn_option "$config" down down
+		# 如果未设置route-up脚本，则从配置文件中获取
 		[ -n "$route_up" ] || get_openvpn_option "$config" route_up route-up
+		# 如果未设置route-pre-down脚本，则从配置文件中获取
 		[ -n "$route_pre_down" ] || get_openvpn_option "$config" route_pre_down route-pre-down
+		# 如果未设置ipchange脚本，则从配置文件中获取
 		[ -n "$ipchange" ] || get_openvpn_option "$config" ipchange ipchange
+		# 添加OpenVPN实例，使用外部配置文件的设置
 		openvpn_add_instance "$s" "${config%/*}" "$config" "$script_security" "$up" "$down" "$route_up" "$route_pre_down" "$ipchange" "$mptcp"
 		return
 	fi
 
+	# 如果没有外部配置文件，则创建临时配置文件
 	create_temp_file "/var/etc/openvpn-$s.conf"
 
+	# 将布尔类型的选项添加到临时配置文件
 	append_bools "$s" $OPENVPN_BOOLS
+	# 将参数类型的选项添加到临时配置文件
 	append_params "$s" $OPENVPN_PARAMS
+	# 将列表类型的选项添加到临时配置文件
 	append_list "$s" $OPENVPN_LIST
 
+	# 添加OpenVPN实例，使用临时配置文件
 	openvpn_add_instance "$s" "/var/etc" "openvpn-$s.conf" "$script_security" "$up" "$down" "$route_up" "$route_pre_down" "$ipchange"
 }
 
+# 启动/etc/openvpn目录下的配置文件实例，避免重复启动
 start_path_instances() {
 	local path name
 
@@ -249,40 +316,51 @@ start_path_instances() {
 	done
 }
 
+# 找到实例对应的配置文件，启动实例
 start_path_instance() {
+	# 实例名称，如 omr
 	local name="$1"
 
 	local path name up down route_up route_pre_down ipchange
 
+	# 实例对应的配置文件
 	path="${PATH_INSTANCE_DIR}/${name}.conf"
 
 	# don't start configs again that are already started by uci
+	# 如果该实例已启动，记录日志并返回
 	if echo "$UCI_STARTED" | grep -qxF "$path"; then
 		logger -t openvpn "$name.conf already started"
 		return
 	fi
 
 	# don't start configs which are set to disabled in uci
+	# 该实例在uci配置文件中被禁用
 	if echo "$UCI_DISABLED" | grep -qxF "$path"; then
 		logger -t openvpn "$name.conf is disabled in /etc/config/openvpn"
 		return
 	fi
 
+	# 从openvpn配置文件中获取各种事件脚本的路径
 	get_openvpn_option "$path" up up || up=""
 	get_openvpn_option "$path" down down || down=""
 	get_openvpn_option "$path" route_up route-up || route_up=""
 	get_openvpn_option "$path" route_pre_down route-pre-down || route_pre_down=""
 	get_openvpn_option "$path" ipchange ipchange || ipchange=""
 
+	# 添加OpenVPN实例, ${path%/*} 获取配置文件所在目录路径
 	openvpn_add_instance "$name" "${path%/*}" "$path" "" "$up" "$down" "$route_up" "$route_pre_down" "$ipchange"
 }
 
+# 主服务启动函数
 start_service() {
 	local instance="$1"
 	local instance_found=0
 
+	# uci配置系统的回调函数，检查能否找到openvpn实例的配置段,如omr / omr2 / omr3 / omr4,实际上只使用了omr
 	config_cb() {
+		# uci配置的section类型
 		local type="$1"
+		# uci配置的section名称
 		local name="$2"
 		if [ "$type" = "openvpn" ]; then
 			if [ -n "$instance" -a "$instance" = "$name" ]; then
@@ -291,28 +369,40 @@ start_service() {
 		fi
 	}
 
+	# 从openvpn配置文件获取指定的选项值
 	. /lib/functions/openvpn.sh
+	# openvpn配置文件支持的所有选项
 	. /usr/share/openvpn/openvpn.options
+	# 加载/etc/config/openvpn配置
 	config_load 'openvpn'
 
+	# 指定了openvpn实例名称，则启动相应的实例
 	if [ -n "$instance" ]; then
+		# 在/etc/config/openvpn中找到了相应的实例配置，启动之
 		if [ "$instance_found" -gt 0 ]; then
 			start_uci_instance "$instance"
+		# 没有uci配置文件，则使用默认的openvpn配置文件启动之
 		elif [ -f "${PATH_INSTANCE_DIR}/${instance}.conf" ]; then
 			start_path_instance "$instance"
 		fi
+	# 未指定openvpn实例名称
 	else
+		# 遍历/etc/config/openvpn启动所有的OpenVPN实例
 		config_foreach start_uci_instance 'openvpn'
 
+		# 自动启动配置
 		auto="$(uci_get openvpn globals autostart 1)"
+		# 自动启动
 		if [ "$auto" = "1" ]; then
 			start_path_instances
 		else
+			# 日志记录，自动启动已关闭
 			logger -t openvpn "Autostart for configs in '$PATH_INSTANCE_DIR/*.conf' disabled"
 		fi
 	fi
 }
 
+# 服务触发器
 service_triggers() {
 	procd_add_reload_trigger openvpn
 }
