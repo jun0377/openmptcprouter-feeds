@@ -9,33 +9,55 @@ USE_PROCD=1
 . /usr/lib/unbound/iptools.sh
 . /lib/functions/network.sh
 
+# 根据uci配置文件 /etc/config/network 进行配置
 global_multipath_settings() {
 	local multipath mptcp_path_manager mptcp_scheduler mptcp_subflows mptcp_debug mptcp_add_addr_accepted congestion mptcp_checksum mptcp_syn_retries mptcp_fullmesh_num_subflows mptcp_fullmesh_create_on_err mptcp_ndiffports_num_subflows mptcp_rr_cwnd_limited mptcp_rr_num_segments
 	local multipath_status=0
+	# uci show network
 	config_load network
+	# uci get network.globals.multipath
 	config_get multipath globals multipath
+	# uci get network.globals.mptcp_path_manager
 	config_get mptcp_path_manager globals mptcp_path_manager
+	# uci get network.globals.mptcp_scheduler
 	config_get mptcp_scheduler globals mptcp_scheduler
+	# uci get network.globals.mptcp_subflows
 	config_get mptcp_subflows globals mptcp_subflows "3"
+	# uci get network.globals.mptcp_add_addr_accepted
 	config_get mptcp_add_addr_accepted globals mptcp_add_addr_accepted "1"
+	# uci get network.globals.mptcp_add_addr_timeout
 	config_get mptcp_add_addr_timeout globals mptcp_add_addr_timeout "120"
+	# uci get network.globals.mptcp_debug
 	config_get mptcp_debug globals mptcp_debug
+	# uci get network.globals.congestion
 	config_get congestion globals congestion
+	# uci get network.globals.mptcp_checksum
 	config_get mptcp_checksum globals mptcp_checksum
+	# uci get network.globals.mptcp_syn_retries
 	config_get mptcp_syn_retries globals mptcp_syn_retries
+	# uci get network.globals.mptcp_fullmesh_num_subflows
 	config_get mptcp_fullmesh_num_subflows globals mptcp_fullmesh_num_subflows
+	# uci get network.globals.mptcp_fullmesh_create_on_err
 	config_get mptcp_fullmesh_create_on_err globals mptcp_fullmesh_create_on_err
+	# uci get network.globals.mptcp_ndiffports_num_subflows
 	config_get mptcp_ndiffports_num_subflows globals mptcp_ndiffports_num_subflows
+	# uci get network.globals.mptcp_rr_cwnd_limited
 	config_get mptcp_rr_cwnd_limited globals mptcp_rr_cwnd_limited
+	# uci get network.globals.mptcp_rr_num_segments
 	config_get mptcp_rr_num_segments globals mptcp_rr_num_segments
+	# uci get network.globals.mptcp_version
 	config_get mptcp_version globals mptcp_version "0"
+	# uci get network.globals.mptcp_stale_loss_cnt
 	config_get mptcp_stale_loss_cnt globals mptcp_stale_loss_cnt "4"
+	# uci get network.globals.mptcp_pm_type
 	config_get mptcp_pm_type globals mptcp_pm_type "1"
+	# uci get network.globals.mptcp_allow_join_initial_addr_port
 	config_get mptcp_allow_join_initial_addr_port globals mptcp_allow_join_initial_addr_port "1"
 	
 	[ "$multipath" = "enable" ] && multipath_status=1
 
 	# Global MPTCP configuration
+	# MPTCPv0 配置
 	if [ -f /proc/sys/net/mptcp/mptcp_enabled ]; then
 		sysctl -qew net.mptcp.mptcp_enabled="$multipath_status"
 		if [ -z "$(grep net.mptcp.mptcp_enabled /etc/sysctl.d/zzz_openmptcprouter.conf)" ]; then
@@ -54,20 +76,31 @@ global_multipath_settings() {
 		[ -z "$mptcp_rr_cwnd_limited" ] || sysctl -qew /sys/module/mptcp_rr/parameters/cwnd_limited="$mptcp_rr_cwnd_limited"
 		[ -z "$mptcp_rr_num_segments" ] || sysctl -qew /sys/module/mptcp_rr/parameters/num_segments="$mptcp_rr_num_segments"
 		[ -z "$mptcp_version" ] || sysctl -qew net.mptcp.mptcp_version="$mptcp_version"
+	# MPTCPv1 配置
 	elif [ -f /proc/sys/net/mptcp/enabled ]; then
+
+		# 更新MPTCP使能配置
 		sysctl -qew net.mptcp.enabled="$multipath_status"
 		if [ -z "$(grep net.mptcp.enabled /etc/sysctl.d/zzz_openmptcprouter.conf)" ]; then
 			echo "net.mptcp.enabled=${multipath_status}" >> /etc/sysctl.d/zzz_openmptcprouter.conf
 		else
 			sed -i "s:^net.mptcp.enabled=[0-1]*:net.mptcp.enabled=${multipath_status}:" /etc/sysctl.d/zzz_openmptcprouter.conf
 		fi
+
+		# 允许对端通告地址的数量
 		ip mptcp limits set add_addr_accepted $mptcp_add_addr_accepted subflows $mptcp_subflows >/dev/null 2>&1
 		#[ -z "$mptcp_debug" ] || sysctl -qew net.mptcp.mptcp_debug="$mptcp_debug"
+		# 向对端发送ADD_ADDR后，等待响应的超时时间,秒
 		[ -z "$mptcp_add_addr_timeout" ] || sysctl -qew net.mptcp.add_addr_timeout="$mptcp_add_addr_timeout"
+		# 校验和开关
 		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.checksum_enabled="$mptcp_checksum"
+		# MPTCP 在将子流标记为"stale"（过期/陈旧）之前，需要连续检测到的数据包丢失次数
 		[ -z "$mptcp_stale_loss_cnt" ] || sysctl -qew net.mptcp.stale_loss_cnt="$mptcp_stale_loss_cnt"
+		# 指定系统默认使用的 MPTCP 路径管理器类型
 		[ -z "$mptcp_pm_type" ] || sysctl -qew net.mptcp.pm_type="$mptcp_pm_type"
+		# 控制是否允许远程端点使用初始子流的地址和端口对来建立新的 MPTCP 子流
 		[ -z "$mptcp_allow_join_initial_addr_port" ] || sysctl -qew net.mptcp.allow_join_initial_addr_port="$mptcp_allow_initial_addr_port"
+		# 子流调度器
 		if [ -n "$mptcp_scheduler" ] && [ -d /usr/share/bpf/scheduler ]; then
 			for scheduler in $(ls -1 /usr/share/bpf/scheduler/*.o); do
 				bpftool struct_ops register $scheduler >/dev/null 2>&1
@@ -75,9 +108,11 @@ global_multipath_settings() {
 			sysctl -qew net.mptcp.scheduler="$(echo $mptcp_scheduler | sed -e 's/mptcp_//' -e 's/.o//')" >/dev/null 2>&1
 		fi
 	fi
+	# TCP拥塞控制算法
 	[ -z "$congestion" ] || sysctl -qew net.ipv4.tcp_congestion_control="$congestion"
 }
 
+# 统计具有相同MAC地址的非VLAN网络接口数量，用于查找和统计使用了同一个物理网卡的多个逻辑接口
 interface_macaddr_count() {
 	local intf="$1"
 	local dmacaddr="$2"
@@ -85,10 +120,14 @@ interface_macaddr_count() {
 	[ "$macaddr" = "$dmacaddr" ] && [ -z "$(echo $intf | grep '\.')" ] && nbmac=$((nbmac+1))
 }
 
+# 为不同类型的网络接口准备或设定 metric （跃点数/优先级）值，以便统一管理路由
 interface_max_metric() {
 	local config="$1"
+
+	# 普通网络接口，从/etc/config/network获取metric的值，如：uci show network.wan1.ip4table
 	if [ "$1" != "omrvpn" ] && [ "$1" != "omr6in4" ] && [ "$1" != "lan" ] && [ "$1" != "loopback" ]; then
 		config_get metric "$config" ip4table
+		# 更新count值，避免metric冲突
 		if [ "$metric" -gt "$count" ] && [ "$metric" -lt "1000" ]; then
 			count=$metric
 		fi
@@ -111,28 +150,36 @@ interface_max_metric() {
 	fi
 }
 
+# 为一个网络接口配置所有与 MPTCP（多路径TCP）相关的设置，包括路由策略、多路径模式和硬件参数
 interface_multipath_settings() {
 	local mode iface proto metric ip4table
 	local config="$1"
 	local intf="$2"
 	local enabled
 
+	# 获取真实的物理设备名，如：wan1 ==> eth1
 	network_get_device iface $config
 	[ -z "$iface" ] && network_get_physdev iface $config
 	[ -z "$iface" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$iface" ] && config_get iface "$config" ifname
 	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
 
+	# 获取接口的 "auto" (启用) 配置，默认为 1 (启用)
 	config_get enabled "$config" auto "1"
+	# 获取接口的发送队列长度 (txqueuelen) 配置
 	config_get txqueuelen "$config" txqueuelen
+	# 如果接口名包含 "@" (通常表示 VLAN 或别名)，则通过 ifstatus 获取真实的设备名
 	[ -n "$(echo $iface | grep '@')" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["device"]')
+	# 如果 openmptcprouter UCI 中没有为该接口配置 metric，或 metric 为 1，则自动递增
 	if [ "$(uci -q get openmptcprouter.${config}.metric)" = "" ] || [ "$(uci -q get openmptcprouter.${config}.metric)" = "1" ]; then
 		count=$((count+1))
 		metric=$count
 	else
 		metric="$(uci -q get openmptcprouter.${config}.metric)"
 	fi
+	# 如果 metric 值大于 1000 (通常用于特殊目的)，并且不是特殊接口，则减去 1000 恢复为基础 metric
 	[ "$metric" -gt 1000 ] && [ "${config}" != "omrvpn" ] && [ "${config}" != "omr6in4" ] && [ "${config}" != "loopback" ] && metric=$((metric-1000))
+	# 为特殊接口 "lan", "omrvpn", "omr6in4" 分配固定的 metric 值
 	if [ "${config}" = "lan" ] || [ "$(uci -q get network.${config}.ip4table)" = "lan" ] || [ "$(uci -q get network.${config}.ip4table)" = "9999" ]; then
 		metric="9999"
 	elif [ "${config}" = "omrvpn" ]; then
@@ -142,17 +189,23 @@ interface_multipath_settings() {
 #	elif [ "$(uci -q get network.${config}.multipath)" = "off" ]; then
 #		metric="9998"
 	fi
+	# 将最终确定的 metric 值保存回 UCI 配置
 	config_set "$config" metric $metric
 	uci -q set network.${config}.metric=$metric
 	uci -q set network.${config}.ip4table=$metric
 	uci -q set network.${config}.ip6table=6$metric
 	uci -q set openmptcprouter.${config}.metric=$metric
+
+	# 获取接口的多路径模式 (on, off, master, backup)
 	config_get mode "$config" multipath
+	# 获取接口的禁用状态
 	config_get disabled "$config" disabled
+	# 如果接口被禁用，则强制将模式设为 "off"
 	[ "$disabled" = "1" ] && mode="off"
 	id=$metric
 	ip4table=$metric
 	ip6table=6$metric
+	# 配置硬件卸载选项 (GRO, GSO, LRO, UFO, TSO)
 	[ -n "$iface" ] && {
 		gro=$(uci -q get network.${config}.gro)
 		[ "$gro" = "1" ] && ethtool -K $iface gro on >/dev/null 2>&1
@@ -170,10 +223,12 @@ interface_multipath_settings() {
 		[ "$tso" = "1" ] && ethtool -K $iface tso on >/dev/null 2>&1
 		[ "$tso" = "0" ] && ethtool -K $iface tso on >/dev/null 2>&1
 	}
+	# 如果模式未定义，则从 openmptcprouter UCI 配置中读取
 	[ "$mode" = "" ] && {
 		mode="$(uci -q get openmptcprouter.${config}.multipath)"
 		[ -n "$mode" ] && uci -q set network.${config}.multipath="$mode"
 	}
+	# 如果模式仍未定义，则根据接口类型设置默认值 (通常为 "off")
 	[ "$mode" = "" ] && {
 		[ "$config" = "lan" ] && mode="off"
 		[ "$config" = "omrvpn" ] && mode="off"
@@ -183,6 +238,7 @@ interface_multipath_settings() {
 		uci -q set network.${config}.multipath="$mode"
 		uci -q set openmptcprouter.${config}.multipath="$mode"
 	}
+	# 如果模式不是 "off"，则进行 MPTCP 相关配置
 	[ "$mode" != "off" ] && {
 		[ -n "$mptcpintf" ] && mptcpintf="$mptcpintf $iface"
 		[ -z "$mptcpintf" ] && mptcpintf="$iface"
@@ -192,8 +248,10 @@ interface_multipath_settings() {
 		uci -q delete network.${config}.dns=0
 		echo '' > /etc/resolv.conf >/dev/null 2>&1
 	}
+	# 如果模式为 "master"，确保只有一个 master 接口
 	[ "$mode" = "master" ] && {
 		# Force that only one interface is master
+		# 如果已经存在 master 接口，则将当前接口模式降级为 "on", 否则，将当前接口设置为 master
 		if [ "$master" != "" ]; then
 			logger -t "MPTCP" "Multipath master already set, disable master for $config"
 			mode="on"
@@ -204,10 +262,14 @@ interface_multipath_settings() {
 			master="$config"
 		fi
 	}
+
+	# 在 /etc/config/openmptcprouter 中标记该配置为一个接口，并保存其多路径模式
 	uci -q set openmptcprouter.${config}="interface"
 	uci -q set openmptcprouter.${config}.multipath="$mode"
 
+	# 获取配置的 MAC 地址
 	config_get macaddr "$config" macaddr ""
+	# 遍历所有接口，检查是否有重复的 MAC 地址, 如果发现重复，则删除当前接口的 MAC 地址配置，避免冲突
 	[ -n "$macaddr" ] && {
 		nbmac=0
 		config_foreach interface_macaddr_count interface $macaddr
@@ -217,16 +279,22 @@ interface_multipath_settings() {
 		}
 	}
 
+	# 如果接口被禁用 (enabled=0)，则直接返回
 	[ "$enabled" = "0" ] && return 0
+	# 如果指定了 intf 但不匹配，则返回
 	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
+	# 没有获取到接口设备名，则返回
 	[ -z "$iface" ] && return 0
 	#[ "$config" = "omrvpn" ] && return 0
 	[ "$config" = "omrvpn" ] && mode="off"
 	#[ -n "$(ifconfig | grep $iface)" ] || return 0
+	# 确保接口存在
 	[ -n "$(ip link show dev $iface)" ] || return 0
+	# 忽略特定类型的接口 (如 _dev, if*, lo)
 	[ "$(echo $iface | grep _dev)" != "" ] && return 0
 	[ "$(echo $iface | grep '^if')" != "" ] && return 0
 	[ "$iface" = "lo" ] && return 0
+	# 获取接口的 "up" 状态，如果接口未启动，则返回
 	status=`ifstatus $config | jsonfilter -q -e "@.up" | tr -d "\n"`
 	[ "$status" = "false" ] && return 0
 
@@ -245,19 +313,26 @@ interface_multipath_settings() {
 	local network
 	local netmask
 	local proto
+	# 获取接口的协议类型 (static, dhcp, etc.)
 	config_get proto $config proto
+	# 静态 IP
 	if [ "$proto" = "static" ]; then
 		config_get ipaddr $config ipaddr
 		config_get gateway $config gateway
 		config_get netmask $config netmask
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr/$netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr/$netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
+	# 不是gre协议，动态IP，尝试通过多种方式获取 IP 地址、网关、子网掩码
 	elif [ "$proto" != "gre" ]; then
 		network_get_ipaddr ipaddr $config
+		# 获取IP
 		[ -z "$ipaddr" ] && ipaddr=$(ip -4 addr show dev $iface | awk '/inet / {print $2; exit}' | cut -d/ -f1 | tr -d "\n")
 		network_get_gateway gateway $config true
+		# 从路由表获取网关
 		[ -z "$gateway" ] && gateway=$(ip -4 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
+		# 从uci配置文件/etc/config/network获取网关
 		[ -z "$gateway" ] && gateway=$(uci -q get "network.$config.gateway")
+		# 从 ubus 的 inactive 状态获取网关 (避免路由环路)
 		[ -z "$gateway" ] && gateway=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then
 			gateway=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
@@ -268,13 +343,16 @@ interface_multipath_settings() {
 		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then 
 			gateway=$(ubus call network.interface.${config}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		fi
+		# 尝试从 `ip route` 命令获取
 		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then
 			gateway=$(ip -4 r list dev "$iface" | awk '/via/ {print $3;exit}' | tr -d "\n")
 		fi
+		# 最后的尝试：使用 traceroute 获取下一跳
 		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then
 			gateway=$(traceroute -m1 -i $iface 8.8.8.8 2>/dev/null | awk 'FNR==2{ print $2 }')
 			[ "$gateway" = "*" ] && gateway=""
 		fi
+		# 获取子网掩码/前缀长度
 		network_get_subnet netmask $config
 		[ -n "$netmask" ] && [ "$(echo $netmask | grep '/')" != "" ] && netmask=""
 		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | awk '/peer/ {print $4; exit}' | cut -d/ -f2 | tr -d "\n")
@@ -283,6 +361,7 @@ interface_multipath_settings() {
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr/$netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr/$netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 	fi
+	# 根据全局设置决定是使用 UCI 还是 ip 命令来配置路由
 	if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			delete network.${config}_rule
@@ -295,6 +374,7 @@ interface_multipath_settings() {
 		ip route flush $id > /dev/null 2>&1
 	fi
 
+	# 成功获取到网关和网络地址，则添加策略路由和路由表项
 	if [ -n "$gateway" ] && [ -n "$network" ]; then
 		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
 			uci -q batch <<-EOF >/dev/null
@@ -328,6 +408,7 @@ interface_multipath_settings() {
 			ip route replace $network/$netmask dev $iface scope link table $ip4table $initcwrwnd >/dev/null 2>&1
 			ip route replace $gateway dev $iface table $ip4table $initcwrwnd >/dev/null 2>&1
 			ip route replace default via $gateway dev $iface table $ip4table $initcwrwnd >/dev/null 2>&1
+			# 根据全局设置决定是否添加默认网关到主路由表
 			[ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && {
 				ip route replace $gateway dev $iface metric $id $initcwrwnd >/dev/null 2>&1
 				ip route replace default via $gateway dev $iface metric $id $initcwrwnd >/dev/null 2>&1
@@ -341,6 +422,8 @@ interface_multipath_settings() {
 		#	#echo "ip route replace default via $gateway dev $iface"
 		#	ip route replace default via $gateway dev $iface >/dev/null 2>&1
 		#}
+
+		# 设置接口的发送队列长度
 		if [ "$txqueuelen" != "" ]; then
 			#ifconfig $iface txqueuelen $txqueuelen > /dev/null 2>&1
 			ip link set dev $iface txqueuelen $txqueuelen > /dev/null 2>&1
@@ -349,6 +432,8 @@ interface_multipath_settings() {
 			ip link set dev $iface txqueuelen 1000 > /dev/null 2>&1
 		fi
 	fi
+
+	# 只获取到网络地址但没有网关 (例如点对点连接)，添加路由
 	if [ -z "$gateway" ] && [ -n "$network" ]; then
 		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
 			uci -q batch <<-EOF >/dev/null
@@ -376,6 +461,7 @@ interface_multipath_settings() {
 			#ip route flush cache $id >/dev/null 2>&1
 		fi
 
+		# 设置接口的发送队列长度
 		if [ "$txqueuelen" != "" ]; then
 			#ifconfig $iface txqueuelen $txqueuelen > /dev/null 2>&1
 			ip link set dev $iface txqueuelen $txqueuelen > /dev/null 2>&1
@@ -384,6 +470,9 @@ interface_multipath_settings() {
 			ip link set dev $iface txqueuelen 1000 > /dev/null 2>&1
 		fi
 	fi
+
+	# --- IPv6 路由和规则配置 ---
+	# 如果 IPv6 没有被全局禁用，并且当前接口不是 6in4 隧道
 	if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$config" != "omr6in4" ]; then
 		# IPv6 Updates:
 		local ip6addr
@@ -480,6 +569,8 @@ interface_multipath_settings() {
 		fi
 	fi
 
+	# --- 应用多路径设置 ---
+	# 如果全局设置强制启用 multipath，并且接口有 IP 地址，根据接口的 mode (master, on, off, backup) 调用 multipath 命令
 	if [ "$(uci -q get openmptcprouter.settings.force_multipath)" != "0" ] && [ -n "$(ip a show dev $iface | grep inet)" ]; then
 		if ([ "$mode" = "master" ] || [ "$mode" = "on" ]) && [ -z "$(multipath $iface | grep default)" ]; then
 			logger -t "MPTCP" "Set $iface to $mode from $(multipath $iface)"
@@ -495,6 +586,7 @@ interface_multipath_settings() {
 
 }
 
+# 检查一个网络接口配置，如果该接口启用了 MPTCP（多路径），就将其物理设备名添加到一个全局的接口列表（ interfaces ）中
 load_interfaces() {
 	network_get_device ifname $1
 	[ -z "$ifname" ] && network_get_physdev ifname $1
@@ -505,14 +597,19 @@ load_interfaces() {
 	[ "$multipath" != "off" ] && [ "$multipath" != "" ] && interfaces=" ${ifname} ${interfaces}"
 }
 
+# 清理和禁用那些不再需要 MPTCP 的网络接口上的多路径功能
 set_multipath() {
+	# ls -1 /sys/class/net/ 会列出所有网络接口的名称，如 eth0, wlan0, lo 等
 	ls -1 /sys/class/net/ | while read iface; do
 		exist=0
+		# 检查当前接口是否存在于“应启用 MPTCP 的接口列表”($mptcpintf) 中，$mptcpintf 是由 interface_multipath_settings 函数在之前生成的
 		for ifacemptcp in $mptcpintf; do
 			if [ "$iface" = "$ifacemptcp" ]; then
 				exist=1
 			fi
 		done
+
+		# 判断是否需要禁用该接口的 MPTCP
 		[ "$exist" = "0" ] && [ -z "$(multipath $iface | grep deactivated)" ] && [ "$iface" != "bonding_master" ] && [ -n "$(multipath $iface)" ] && {
 			logger -t "MPTCP" "Disabling MPTCP on interface $iface not found in enabled multipath list"
 			multipath $iface off >/dev/null 2>&1
@@ -520,31 +617,47 @@ set_multipath() {
 	done
 }
 
+# 解析一个 UCI 配置段中的静态路由信息，并将其转换成一条 ip route replace 命令来添加或更新系统中的静态路由
 add_route() {
+	# 检查路由是否被禁用
 	config_get disabled "$1" disabled
 	[ "$disabled" = "1" ] && return 0
+	# 获取路由的目标地址 (target)
 	config_get target "$1" target
 	routeset="$target"
+	# 获取并处理子网掩码 (netmask)
 	config_get netmask "$1" netmask
 	[ -n "$target" ] && [ -n "$netmask" ] && {
+		# 使用 ipcalc.sh 工具将子网掩码转换为 CIDR 前缀长度
 		netmask=`ipcalc.sh $target/$netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
+		# 计算网络地址
 		network=`ipcalc.sh $target/$netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
+		# 如果目标地址本身就是一个网络地址，则将路由目标设置为 CIDR 格式 (e.g., 192.168.100.0/24)
 		[ -n "$netmask" ] && [ "$target" = "$network" ] && routeset="$routeset/$netmask"
 	}
+	# 获取网关 (gateway)
 	config_get gateway "$1" gateway
 	[ -n "$gateway" ] && routeset="$routeset via $gateway"
+	# 获取优先级/跃点数 (metric)
 	config_get metric "$1" metric
 	[ -n "$metric" ] && routeset="$routeset metric $metric"
+	# 获取 MTU
 	config_get mtu "$1" mtu
 	[ -n "$mtu" ] && routeset="$routeset mtu $mtu"
+	# 获取路由类型 (type)
 	config_get type "$1" type
 	[ -n "$type" ] && routeset="$routeset type $type"
+	# 获取路由表名 (table)
 	config_get table "$1" table
 	[ -n "$table" ] && routeset="table $table"
+	# 获取并处理接口 (interface)
 	config_get interface "$1" interface
+	# 获取接口的真实物理设备名
 	iface=$(ifstatus "$interface" | jsonfilter -q -e '@["l3_device"]')
 	[ -n "$(echo $iface | grep '@')" ] && iface=$(ifstatus "$interface" | jsonfilter -q -e '@["device"]')
 	[ -n "$iface" ] && routeset="$routeset dev $iface"
+
+	# 执行配置路由命令
 	logger -t "MPTCP" "Add route $routeset"
 	[ -n "$routeset" ] && {
 		ip route replace ${routeset} >/dev/null 2>&1
@@ -576,6 +689,7 @@ add_route6() {
 	}
 }
 
+# 从 /etc/config/network 配置文件中删除一个指定的配置段（section）
 remove() {
 	logger -t "MPTCP" "Remove network.$1"
 	uci -q delete network.$1
@@ -589,6 +703,7 @@ start_service() {
 	#[ -n "$intf" ] && multipath "${intf}" off >/dev/null 2>&1
 	global_multipath_settings
 
+	# 检查当前设备是否为树莓派3B，并且其 eth0 网卡当前处于关闭状态。
 	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep '3-model-b')" ] && [ "$(ip link show eth0 | grep UP)" = "" ] && {
 		# RPI 3 workaround no network at boot
 		ethtool eth0 > /dev/null 2>&1
@@ -602,6 +717,7 @@ start_service() {
 	master=""
 	count=0
 	config_load openmptcprouter
+	# 遍历配置文件/etc/config/openmptcprouter中所有类型为 'interface' 的配置段，并对每一个都执行 interface_max_metric 函数
 	config_foreach interface_max_metric interface
 	
 	initcwrwnd=""
@@ -618,13 +734,18 @@ start_service() {
 	#	ip route flush cache
 	#	ip -6 route flush cache
 	#}
+
+	# 检查是否存在一个全局标志位来禁用 MPTCP 的初始配置。如果该值不为 "1"，则继续执行配置。
 	if [ "$(uci -q get network.globals.mptcp_disable_initial_config)" != "1" ]; then
+		# 遍历所有 'interface' 配置段，并执行核心的 interface_multipath_settings 函数来配置每个接口的 MPTCP 路由和规则。
+		# 如果 $intf 变量有值，则此循环只对那一个指定的接口执行。
 		config_foreach interface_multipath_settings interface $intf
 		config_foreach add_route route
 		config_foreach add_route6 route6
 		[ -z "$intf" ] && set_multipath
 	fi
 	# If no master is defined, one interface is defined as master
+	# 如果在遍历所有接口后，没有发现任何一个接口被配置为 "master"，并且这是一次全局启动（$intf 为空）。将之前记录的第一个 MPTCP 接口（mptcpmintf）作为默认的 master 接口。
 	if [ "$master" = "" ] && [ "$intf" = "" ]; then
 		intfmaster="$mptcpmintf"
 		[ "$intfmaster" != "" ] && {
@@ -633,11 +754,14 @@ start_service() {
 			uci -q set openmptcprouter.${intfmaster}.multipath="master"
 		}
 	fi
+	# 检查配置文件是否有未保存的更改，如果有，则提交（保存）它们。
 	[ -n "$(uci -q changes network)" ] && uci -q commit network
 	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+	# 针对非树莓派4和5的其他树莓派型号，关闭 eth0 的硬件卸载功能（rx/tx checksumming）。
 	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && [ -z "$(ubus call system board | jsonfilter -e '@.board_name' | grep '4-model-b')" ] && [ -z "$(ubus call system board | jsonfilter -e '@.board_name' | grep '5')" ] && {
 		ethtool --offload eth0 rx off tx off > /dev/null 2>&1
 	}
+	# 针对 NanoPi R2S 设备，关闭 eth0 和 eth1 的硬件卸载功能。
 	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep -i r2s)" ] && {
 		ethtool -K eth0 rx off tx off > /dev/null 2>&1
 		ethtool -K eth1 rx off tx off > /dev/null 2>&1
@@ -653,18 +777,32 @@ service_triggers_load_interface() { ifaces="${ifaces}${1} "; }
 
 service_triggers() {
 	local ifaces n
+	# 加载 /etc/config/network 配置文件
 	config_load network
+	# 遍历所有 'interface' 类型的配置段，并对每个段调用 service_triggers_load_interface 函数，执行完毕后，变量 $ifaces 将包含所有接口的逻辑名称列表（例如 "lan wan wan2"）。
 	config_foreach service_triggers_load_interface 'interface';
+	# 添加一个全局重载触发器。当 /etc/config/network 配置文件被修改并提交后，procd 会自动重载整个 mptcp 服务
 	procd_add_reload_trigger "network"
+	# 开始定义一个触发器块
 	procd_open_trigger
+	# 循环遍历刚才收集到的所有接口逻辑名
 	for n in $ifaces; do 
+		# 获取接口 $n 对应的真实物理设备名（如 eth0
 		network_get_device iface "$n"
 		[ -z "$iface" ] && network_get_physdev iface "$n"
 		[ -z "$iface" ] && iface=$(ifstatus "$n" | jsonfilter -q -e '@["l3_device"]')
 		[ -z "$iface" ] && config_get iface "$n" ifname
 		[ -z "$iface" ] && continue
+
+		# 为接口的配置更改添加重载触发器
 		procd_add_reload_interface_trigger "$n"
+		# 添加一个接口事件触发器。
+		# "interface.*" 监听所有接口事件（如 up, down, new, remove）。
+		# "$n" 是事件源的逻辑接口名。
+		# 当事件发生时，执行 "/etc/init.d/mptcp reload '$iface'" 命令。
+		# 这使得当一个网络接口状态变化时（例如拨号成功或网线拔出），mptcp 服务能自动重新配置该接口。
 		procd_add_interface_trigger "interface.*" "$n" /etc/init.d/mptcp reload "$iface"
 	done
+	# 结束定义触发器块
 	procd_close_trigger
 }
