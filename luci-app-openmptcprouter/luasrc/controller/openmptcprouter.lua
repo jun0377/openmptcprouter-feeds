@@ -1490,6 +1490,7 @@ function wizard_add()
 
 	-- openvpn配置
 	if default_vpn == "openvpn" and disablednb ~= serversnb  then
+		-- OpenVPN负载均衡使能 uci get openmptcprouter.settings.openvpn_lb
 		if ucic:get("openmptcprouter","settings","openvpn_lb") == "0" then
 			ucic:foreach("openvpn","openvpn", function(s)
 				local sectionname = s[".name"]
