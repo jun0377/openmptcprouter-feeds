@@ -109,7 +109,7 @@ openvpn_get_dev() {
 	# 仅对具有config_file配置的实例进行覆盖
 	config_get config_file "$name" config
 
-	logger -t 'OpenVPN' "openvpn_get_dev name:${name} conf:${conf} config_file:${config_file}"
+	logger -t 'openvpn' "openvpn_get_dev name:${name} conf:${conf} config_file:${config_file}"
 
 	# 如果没有配置文件，则直接返回
 	[ -n "$config_file" ] || return
@@ -119,7 +119,7 @@ openvpn_get_dev() {
 	config_get dev "$name" dev
 	config_get dev_type "$name" dev_type
 
-	logger -t 'OpenVPN' "openvpn_get_dev dev:${dev} dev_type:${dev_type}"
+	logger -t 'openvpn' "openvpn_get_dev dev:${dev} dev_type:${dev_type}"
 
 	# 如果没有设备名称，则直接返回
 	[ -n "$dev" ] || return
@@ -137,7 +137,7 @@ openvpn_get_dev() {
 		# 如果没有设备类型，则使用设备名称作为类型
 		[ -n "$odev_type" ] || odev_type="$odev"
 
-		logger -t 'OpenVPN' "openvpn_get_dev odev_type:${odev_type} odev_type:${odev_type}"
+		logger -t 'openvpn' "openvpn_get_dev odev_type:${odev_type} odev_type:${odev_type}"
 
 		# 根据设备名称判断设备类型
 		case "$odev_type" in
@@ -212,7 +212,7 @@ openvpn_add_instance() {
 	#fi
 
 	# 配置procd服务实例
-	logger -t 'OpenVPN' "procd_open_instance ${name}"
+	logger -t 'openvpn' "procd_open_instance ${name}"
 	procd_open_instance "$name"
 	# 设置启动命令及其参数
 	procd_set_param command "$PROG"	\
@@ -235,25 +235,25 @@ openvpn_add_instance() {
 		$(openvpn_get_dev "$name" "$conf") \
 		$(openvpn_get_credentials "$name" "$conf")
 
-	# logger -t 'OpenVPN' "---------------------------- cmd ----------------------------------------"
-	# logger -t 'OpenVPN' "PROG: ${PROG}"
-	# logger -t 'OpenVPN' "--syslog openvpn${name}"
-	# logger -t 'OpenVPN' "--status /var/run/openvpn.${name}.status"
-	# logger -t 'OpenVPN' "--cd ${dir}"
-	# logger -t 'OpenVPN' "--config ${conf}"
-	# logger -t 'OpenVPN' "--up /usr/libexec/openvpn-hotplug up ${name}"
-	# logger -t 'OpenVPN' "--down /usr/libexec/openvpn-hotplug down ${name}"
-	# logger -t 'OpenVPN' "--route-up /usr/libexec/openvpn-hotplug route-up ${name}"
-	# logger -t 'OpenVPN' "--route-pre-down /usr/libexec/openvpn-hotplug route-pre-down ${name}"
-	# logger -t 'OpenVPN' "--ipchange /usr/libexec/openvpn-hotplug ipchange ${name}"
-	# logger -t 'OpenVPN' "--setenv user_route_up ${route_up}"
-	# logger -t 'OpenVPN' "--setenv user_route_pre_down ${route_pre_down}"
-	# logger -t 'OpenVPN' "--setenv user_ipchange ${ipchange}"
-	# logger -t 'OpenVPN' "--script-security ${security:-2}"
-	# logger -t 'OpenVPN' "--mptcp ${mpctp}"
-	# logger -t 'OpenVPN' "$(openvpn_get_dev "$name" "$conf")"
-	# logger -t 'OpenVPN' "$(openvpn_get_credentials "$name" "$conf")"
-	# logger -t 'OpenVPN' "---------------------------- cmd end ------------------------------------"
+	# logger -t 'openvpn' "---------------------------- cmd ----------------------------------------"
+	# logger -t 'openvpn' "PROG: ${PROG}"
+	# logger -t 'openvpn' "--syslog openvpn${name}"
+	# logger -t 'openvpn' "--status /var/run/openvpn.${name}.status"
+	# logger -t 'openvpn' "--cd ${dir}"
+	# logger -t 'openvpn' "--config ${conf}"
+	# logger -t 'openvpn' "--up /usr/libexec/openvpn-hotplug up ${name}"
+	# logger -t 'openvpn' "--down /usr/libexec/openvpn-hotplug down ${name}"
+	# logger -t 'openvpn' "--route-up /usr/libexec/openvpn-hotplug route-up ${name}"
+	# logger -t 'openvpn' "--route-pre-down /usr/libexec/openvpn-hotplug route-pre-down ${name}"
+	# logger -t 'openvpn' "--ipchange /usr/libexec/openvpn-hotplug ipchange ${name}"
+	# logger -t 'openvpn' "--setenv user_route_up ${route_up}"
+	# logger -t 'openvpn' "--setenv user_route_pre_down ${route_pre_down}"
+	# logger -t 'openvpn' "--setenv user_ipchange ${ipchange}"
+	# logger -t 'openvpn' "--script-security ${security:-2}"
+	# logger -t 'openvpn' "--mptcp ${mpctp}"
+	# logger -t 'openvpn' "$(openvpn_get_dev "$name" "$conf")"
+	# logger -t 'openvpn' "$(openvpn_get_credentials "$name" "$conf")"
+	# logger -t 'openvpn' "---------------------------- cmd end ------------------------------------"
 
 	# 添加配置文件到监控列表
 	procd_set_param file "$dir/$conf"
@@ -272,7 +272,7 @@ openvpn_add_instance() {
 	# 完成实例配置
 	procd_close_instance
 
-	logger -t 'OpenVPN' "openvpn_add_instance done"
+	logger -t 'openvpn' "openvpn_add_instance done"
 }
 
 # 启动UCI配置的OpenVPN实例
@@ -280,7 +280,7 @@ start_uci_instance() {
 	# omr
 	local s="$1"
 
-	logger -t 'OpenVPN' "start_uci_instance section:${s}"
+	logger -t 'openvpn' "start_uci_instance section:${s}"
 
 	# 获取指定配置段, uci show openvpn.omr
 	config_get config "$s" config
@@ -289,32 +289,32 @@ start_uci_instance() {
 	# 检查section是否启用，如果未启用则将配置添加到禁用列表并返回
 	section_enabled "$s" || {
 		append UCI_DISABLED "$config" "$LIST_SEP"
-		logger -t 'OpenVPN' "start_uci_instance section:${s} disabled! return now..."
+		logger -t 'openvpn' "start_uci_instance section:${s} disabled! return now..."
 		return 1
 	}
 
 	local up down route_up route_pre_down ipchange script_security mptcp
 	config_get up "$s" up
-	logger -t 'OpenVPN' "up:${up}"
+	logger -t 'openvpn' "up:${up}"
 
 	config_get down "$s" down
-	logger -t 'OpenVPN' "down:${down}"
+	logger -t 'openvpn' "down:${down}"
 
 	config_get route_up "$s" route_up
-	logger -t 'OpenVPN' "route_up:${route_up}"
+	logger -t 'openvpn' "route_up:${route_up}"
 
 	config_get route_pre_down "$s" route_pre_down
-	logger -t 'OpenVPN' "route_pre_down:${route_pre_down}"
+	logger -t 'openvpn' "route_pre_down:${route_pre_down}"
 
 	config_get ipchange "$s" ipchange
-	logger -t 'OpenVPN' "ipchange:${ipchange}"
+	logger -t 'openvpn' "ipchange:${ipchange}"
 
 	config_get script_security "$s" script_security
-	logger -t 'OpenVPN' "script_security:${script_security}"
+	logger -t 'openvpn' "script_security:${script_security}"
 
 	# 从UCI配置中获取mptcp选项的布尔值，默认为true
 	config_get_bool mptcp "$s" mptcp true
-	logger -t 'OpenVPN' "mptcp:${mptcp}"
+	logger -t 'openvpn' "mptcp:${mptcp}"
 
 	[ ! -d "/var/run" ] && mkdir -p "/var/run"
 
@@ -324,22 +324,22 @@ start_uci_instance() {
 		append UCI_STARTED "$config" "$LIST_SEP"
 		# 如果未设置script_security，则从配置文件中获取
 		[ -n "$script_security" ] || get_openvpn_option "$config" script_security script-security
-		logger -t 'OpenVPN' "script_security:${script_security}"
+		logger -t 'openvpn' "script_security:${script_security}"
 		# 如果未设置up脚本，则从配置文件中获取
 		[ -n "$up" ] || get_openvpn_option "$config" up up
-		logger -t 'OpenVPN' "up:${up}"
+		logger -t 'openvpn' "up:${up}"
 		# 如果未设置down脚本，则从配置文件中获取
 		[ -n "$down" ] || get_openvpn_option "$config" down down
-		logger -t 'OpenVPN' "down:${down}"
+		logger -t 'openvpn' "down:${down}"
 		# 如果未设置route-up脚本，则从配置文件中获取
 		[ -n "$route_up" ] || get_openvpn_option "$config" route_up route-up
-		logger -t 'OpenVPN' "route_up:${route_up}"
+		logger -t 'openvpn' "route_up:${route_up}"
 		# 如果未设置route-pre-down脚本，则从配置文件中获取
 		[ -n "$route_pre_down" ] || get_openvpn_option "$config" route_pre_down route-pre-down
-		logger -t 'OpenVPN' "route_pre_down:${route_pre_down}"
+		logger -t 'openvpn' "route_pre_down:${route_pre_down}"
 		# 如果未设置ipchange脚本，则从配置文件中获取
 		[ -n "$ipchange" ] || get_openvpn_option "$config" ipchange ipchange
-		logger -t 'OpenVPN' "ipchange:${ipchange}"
+		logger -t 'openvpn' "ipchange:${ipchange}"
 		# 添加OpenVPN实例，使用外部配置文件的设置
 		openvpn_add_instance "$s" "${config%/*}" "$config" "$script_security" "$up" "$down" "$route_up" "$route_pre_down" "$ipchange" "$mptcp"
 		return
@@ -412,7 +412,7 @@ start_service() {
 	local instance="$1"
 	local instance_found=0
 
-	logger -t 'OpenVPN' "start_service instance:${instance}"
+	logger -t 'openvpn' "start_service instance:${instance}"
 
 	# uci配置系统的回调函数，检查能否找到openvpn实例的配置段,如omr / omr2 / omr3 / omr4,实际上只使用了omr
 	config_cb() {
@@ -438,11 +438,11 @@ start_service() {
 	if [ -n "$instance" ]; then
 		# 在/etc/config/openvpn中找到了相应的实例配置，启动之
 		if [ "$instance_found" -gt 0 ]; then
-			logger -t 'OpenVPN' "start_uci_instance ${instance}"
+			logger -t 'openvpn' "start_uci_instance ${instance}"
 			start_uci_instance "$instance"
 		# 没有uci配置文件，则使用默认的openvpn配置文件启动之
 		elif [ -f "${PATH_INSTANCE_DIR}/${instance}.conf" ]; then
-			logger -t 'OpenVPN' "start_path_instance ${instance}"
+			logger -t 'openvpn' "start_path_instance ${instance}"
 			start_path_instance "$instance"
 		fi
 	# 未指定openvpn实例名称
@@ -452,14 +452,14 @@ start_service() {
 
 		# 自动启动配置
 		auto="$(uci_get openvpn globals autostart 1)"
-		logger -t 'OpenVPN' "auto=${auto}"
+		logger -t 'openvpn' "auto=${auto}"
 		# 自动启动
 		if [ "$auto" = "1" ]; then
-			logger -t 'OpenVPN' "start_path_instances"
+			logger -t 'openvpn' "start_path_instances"
 			start_path_instances
 		else
 			# 日志记录，自动启动已关闭
-			logger -t 'OpenVPN' "Autostart for configs in '$PATH_INSTANCE_DIR/*.conf' disabled"
+			logger -t 'openvpn' "Autostart for configs in '$PATH_INSTANCE_DIR/*.conf' disabled"
 		fi
 	fi
 }
