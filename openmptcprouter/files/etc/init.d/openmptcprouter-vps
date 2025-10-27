@@ -10,6 +10,7 @@ EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall g
 
 . /usr/lib/unbound/iptools.sh
 
+# 新的nftables框架
 if [ -e /usr/sbin/iptables-nft ]; then
 	IPTABLES="/usr/sbin/iptables-nft"
 	IPTABLESRESTORE="/usr/sbin/iptables-nft-restore"
@@ -17,6 +18,7 @@ if [ -e /usr/sbin/iptables-nft ]; then
 	IP6TABLES="/usr/sbin/ip6tables-nft"
 	IP6TABLESRESTORE="/usr/sbin/ip6tables-nft-restore"
 	IP6TABLESSAVE="/usr/sbin/ip6tables-nft-save"
+# 传统的iptables
 else
 	IPTABLES="/usr/sbin/iptables"
 	IPTABLESRESTORE="/usr/sbin/iptables-restore"
@@ -26,32 +28,61 @@ else
 	IP6TABLESSAVE="/usr/sbin/ip6tables-save"
 fi
 
-
+# 解析JSON格式的数据中的result字段
 _parse_result() {
 	result=$("echo $1 | jsonfilter -q -e '@.result'")
 	echo $result
 }
 
+# VPS服务器的认证登录
 _login() {
 	local username password auth
-	#server="$(uci -q get openmptcprouter.${servername}.ip)"
-	#[ -z "$server" ] && server="$(uci -q get shadowsocks-libev.sss0.server)"
+	
+	# 从配置文件/etc/config/openmptcprouter中获取用户名、密码、端口
+	# uci get openmptcprouter.vps.username
 	username="$(uci -q get openmptcprouter.${servername}.username)"
+	# uci get openmptcprouter.vps.password
 	password="$(uci -q get openmptcprouter.${servername}.password)"
+	# uci get openmptcprouter.vps.port
 	serverport="$(uci -q get openmptcprouter.${servername}.port)"
-	#[ -z "$server" ] && server="$(uci -q get openmptcprouter.${servername}.ip)"
+
+	# 自动获取服务器密码，自动登录
+	local serverip="$(uci -q get openmptcprouter.vps.ip)"
+	[ "$(valid_subnet_any "$serverip")" != "ok" ] && logger -t "OMR-VPS" "$FUNCNAME Unkonwn server ip: ${serverip}! " && return
+	# serial
+	[ "${serial}" == "" ] && serial=$(cat /proc/cpuinfo | grep Serial | awk '{print $3}')
+	new_password="$(curl -s -k -X POST https://${serverip}:${serverport}/passwd?serial=${serial} | jsonfilter -e '@.password')"
+	if [ -z "$new_password" ]; then
+		for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
+			new_password="$(curl -s -k -X POST https://${serverip}:${serverport}/passwd?serial=${serial})"
+			[ -n "$new_password" ] && break
+		done
+	fi
+
+	[ ! -n "$new_password" ] && logger -t "OMR-VPS" "$FUNCNAME Get server ${serverip}:${serverport} password error! " && return
+	if [ "$new_password" != "$password" ]; then
+		logger -t "OMR-VPS" "$FUNCNAME new_password: ${new_password}... "
+		password=${new_password}
+		uci -q set openmptcprouter.${servername}.password=${password}
+	fi
+
+	# 获取身份认证token
 	if [ -z "$token" ]; then
 		login_on_server() {
 			[ -n "$token" ] && return
 			server=$1
-			#auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:$serverport/login`
-			#resolve="$(resolveip -t 5 $server)"
+			
+			# submodules/feeds/6.6/packages/net/unbound/files/iptools.sh -> valid_subnet6()
 			valid_ip6=$(valid_subnet6 $server)
+			# IPv6
 			if [ "$valid_ip6" = "ok" ]; then
 				auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://[$server]:$serverport/token`
+			# IPv4
 			else
 				auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://$server:$serverport/token`
 			fi
+
+			# auth为空，认证失败,使用其他接口重新尝试
 			if [ -z "$auth" ]; then
 				for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
 					if [ "$valid_ip6" = "ok" ]; then
@@ -62,34 +93,48 @@ _login() {
 					[ -n "$auth" ] && break
 				done
 			fi
+
+			# 认证成功，解析获取token字段，保存到配置文件/etc/config/openmptcprouter中
 			[ -n "$auth" ] && {
 				token="$(echo "$auth" | jsonfilter -q -e '@.access_token')"
 				uci -q set openmptcprouter.${servername}.token="$token"
 			}
 		}
+
+		# 从文件/etc/config/openmptcprouter中加载配置到环境变量
 		config_load openmptcprouter
+		# 遍历所有的VPS服务器, 对/etc/config/openmptcprouter中的vps section中的list ip中的每个ip都执行login_on_server
 		config_list_foreach ${servername} ip login_on_server
 	fi
 }
 
+# VPS服务器的ping连通性状态检查
 _ping_server() {
 	server="$1"
 	ret=$(ping -c 3 -w 3 -Q 184 $server 2>&1) && echo "$ret" | grep -sq "bytes from" && return
 	false
 }
 
+# 发起http GET请求，获取JSON格式的响应数据
 _get_json() {
 	local route result
+	# 请求的API URL
 	route=$1
+	# 没有token,需要先登录认证获取token
 	[ -z "$token" ] && _login
+	# 发起http请求，获取JSON格式的响应数据
 	[ -n "$token" ] && {
 		#resolve="$(resolveip -t 5 $server)"
+		# http请求
 		valid_ip6=$(valid_subnet6 $server)
 		if [ "$valid_ip6" = "ok" ]; then
+			logger -t "OMR-VPS" "$FUNCNAME https://[$server]:$serverport/$route"
 			result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://[$server]:$serverport/$route`
 		else
+			logger -t "OMR-VPS" "$FUNCNAME https://$server:$serverport/$route"
 			result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
 		fi
+		# 获取http响应失败，使用其它接口重试
 		if [ -z "$result" ]; then
 			for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
 				if [ "$valid_ip6" = "ok" ]; then
@@ -100,33 +145,42 @@ _get_json() {
 				[ -n "$result" ] && break
 			done
 		fi
+		# 获取http响应失败
 		if [ "$(echo $result | grep 'Could not validate credentials')" ]; then
 			result=''
 		fi
+		# 获取http响应成功
 		echo $result
 	} || {
 		echo ''
 	}
 }
 
+# 设置JSON格式的请求体，并发起http POST请求
 _set_json() {
 	local route result settings
+	# 请求URL
 	route=$1
 	settings="$2"
+	# 没有token,需要先登录认证获取token
 	[ -z "$token" ] && _login
 	[ -n "$token" ] && {
 		#resolve="$(resolveip -t 5 $server)"
 		valid_ip6=$(valid_subnet6 $server)
 		if [ "$valid_ip6" = "ok" ]; then
+			logger -t "OMR-VPS" "https://[$server]:$serverport/$route ${settings}"
 			result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
 		else
+			logger -t "OMR-VPS" "https://$server:$serverport/$route ${settings}"
 			result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
 		fi
 		if [ -z "$result" ]; then
 			for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
 				if [ "$valid_ip6" = "ok" ]; then
+					logger -t "OMR-VPS" "https://[$server]:$serverport/$route ${settings}"
 					result=`curl --max-time 10 -s -k --interface $intf -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
 				else
+					logger -t "OMR-VPS" "https://$server:$serverport/$route ${settings}"
 					result=`curl --max-time 10 -s -k --interface $intf -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
 				fi
 				[ -n "$result" ] && break
@@ -141,7 +195,11 @@ _set_json() {
 	}
 }
 
+# 从VPS获取glorytun的端口、加密算法和密钥，并进行设置
 _set_glorytun_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	local enabled port key
 	enabled="$(uci -q get glorytun.vpn.enable)"
 	[ "$enabled" != "1" ] && enabled="$(uci -q get glorytun-udp.vpn.enable)"
@@ -154,14 +212,19 @@ _set_glorytun_vps() {
 	else
 		chacha="false"
 	fi
-	[ -z "$key" ] && echo "Glorytun key not set" && return
+	[ -z "$key" ] && echo "Glorytun key not set" && logger -t "OMR-VPS" "Glorytun key not set" && return
 	local current_port current_key current_chacha
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.port')"
 	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.key')"
 	current_chacha="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.chacha')"
 	if [ "$current_port" != "$port" ] || [ "$current_key" != "$key" ] || [ "$current_chacha" != "$chacha" ]; then
+
+		logger -t "OMR-VPS" "$FUNCNAME port:${port}"
+		logger -t "OMR-VPS" "$FUNCNAME key:${key}"
+		logger -t "OMR-VPS" "$FUNCNAME chacha:${chacha}"
+
 		local settings
 		settings='{"port": '$port',"key":"'$key'", "chacha": "'$chacha'"}'
 		echo $(_set_json "glorytun" "$settings")
@@ -170,22 +233,38 @@ _set_glorytun_vps() {
 	fi
 }
 
+# 当你在路由器上更新了 OpenVPN 端口或加密算法，本地对比不一致时， _set_openvpn_vps 会把这些设置同步到 VPS
+# 当 VPS 返回的客户端密钥与本地不一致时， _set_openvpn_vps 会打 get_config 标记。随后通过显式调用 get_openvpn_key <servername> ，从 VPS 拉取并写入客户端密钥/证书/CA 文件
 _set_openvpn_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	local enabled port key
 	enabled="$(uci -q get openvpn.omr.enabled)"
 	[ "$enabled" != "1" ] && echo "OpenVPN disabled" && return
+	# 服务器端口
 	port="$(uci -q get openvpn.omr.port)"
+	# 加密算法
 	cipher="$(uci -q get openvpn.omr.cipher)"
+	# 客户端秘钥
 	key="$(base64 /etc/luci-uploads/client.key | tr -d "\n")"
 	local current_port current_cipher current_key
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	# 发起http请求，从VPN获取OpenVPN的配置
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.client_key')"
 	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.port')"
 	current_cipher="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.cipher')"
+	# 表示更新了OpenVPN的秘钥,提示本地需要拉取最新客户端配置
 	if [ "$current_key" != "$key" ]; then
 		uci -q set openmptcprouter.${servername}.get_config="1"
 	fi
+
+	logger -t "OMR-VPS" "$FUNCNAME port:${port}"
+	logger -t "OMR-VPS" "$FUNCNAME cipher:${cipher}"
+	logger -t "OMR-VPS" "$FUNCNAME key:${key}"
+
+	# 更新了OpenVPN的端口或加密算法,
 	if [ "$current_port" != "$port" ] || [ "$current_cipher" != "$cipher" ]; then
 		local settings
 		settings='{"port": '$port', "cipher": "'$cipher'"}'
@@ -195,23 +274,34 @@ _set_openvpn_vps() {
 	fi
 }
 
+# 从VPS获取MLVPN的端口、加密算法和密钥，并进行设置
 _set_mlvpn_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	local enabled port key
 	enabled="$(uci -q get mlvpn.general.enable)"
-	[ "$enabled" != "1" ] && echo "MLVPN disabled" && return
+	[ "$enabled" != "1" ] && echo "MLVPN disabled" && logger -t "OMR-VPS" "$FUNCNAME MLVPN disabled" && return
 	timeout="$(uci -q get mlvpn.general.timeout)"
 	reorder_buffer_size="$(uci -q get mlvpn.general.reorder_buffer_size)"
 	loss_tolerence="$(uci -q get mlvpn.general.loss_tolerence)"
 	password="$(uci -q get mlvpn.general.password)"
 	cleartext_data="$(uci -q get mlvpn.general.cleartext_data)"
 	local current_timeout current_reorder_buffer_size current_loss_tolerence current_password current_cleartext_data
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	current_timeout="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.timeout')"
 	current_reorder_buffer_size="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.reorder_buffer_size')"
 	current_loss_tolerence="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.loss_tolerence')"
 	current_password="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.key')"
 	current_cleartext_data="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.cleartext_data')"
+
+	logger -t "OMR-VPS" "$FUNCNAME timeout:${timeout}"
+	logger -t "OMR-VPS" "$FUNCNAME reorder_buffer_size:${reorder_buffer_size}"
+	logger -t "OMR-VPS" "$FUNCNAME loss_tolerence:${loss_tolerence}"
+	logger -t "OMR-VPS" "$FUNCNAME password:${password}"
+	logger -t "OMR-VPS" "$FUNCNAME cleartext_data:${cleartext_data}"
+
 	if [ "$current_timeout" != "$timeout" ] || [ "$current_reorder_buffer_size" != "$reorder_buffer_size" ] || [ "$current_loss_tolerence" != "$loss_tolerence" ] || [ "$current_password" != "$password" ] || [ "$current_cleartext_data" != "$cleartext_data" ]; then
 		local settings
 		settings='{"timeout": '$timeout', "reorder_buffer_size": "'$reorder_buffer_size'", "loss_tolerence": "'$loss_tolerence'", "password": "'$password'", "cleartext_data": "'$cleartext_data'"}'
@@ -221,7 +311,11 @@ _set_mlvpn_vps() {
 	fi
 }
 
+# 从VPS获取wireguard的端口、加密算法和密钥，并进行设置
 _set_wireguard_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	local enabled port key
 	ipskey=""
 	_get_wg_ipskey() {
@@ -248,9 +342,10 @@ _set_wireguard_vps() {
 	fi
 }
 
+# 外部调用，从VPN获取OpenVPN的密钥，并重启OpenVPN服务
 get_openvpn_key() {
 	servername=$2
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	openvpn_client_key="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.client_key')"
 	[ -n "$openvpn_client_key" ] && {
@@ -269,25 +364,40 @@ get_openvpn_key() {
 	}
 }
 
+# 提取ShadowSocks重定向相关配置
 _get_ss_redir() {
+	logger -t "OMR-VPS" "$FUNCNAME..."
 	config_get cf_ebpf $1 ebpf
 	[ "$cf_ebpf" = "1" ] && ebpf="true"
+	logger -t "OMR-VPS" "$FUNCNAME ebpf:${ebpf}"
 	config_get cf_fast_open $1 fast_open
 	[ "$cf_fast_open" = "1" ] && fast_open="true"
+	logger -t "OMR-VPS" "$FUNCNAME fast_open:${fast_open}"
 	config_get cf_no_delay $1 no_delay
 	[ "$cf_no_delay" = "1" ] && no_delay="true"
+	logger -t "OMR-VPS" "$FUNCNAME no_delay:${no_delay}"
 	config_get cf_mptcp $1 mptcp
 	[ "$cf_mptcp" = "1" ] && mptcp="true"
+	logger -t "OMR-VPS" "$FUNCNAME mptcp:${mptcp}"
 }
 
+# 提取ShadowSocks服务器相关配置
 _get_ss_server() {
+	logger -t "OMR-VPS" "$FUNCNAME..."
 	config_get cf_obfs $1 obfs
 	[ "$cf_obfs" = "1" ] && obfs="true"
+	logger -t "OMR-VPS" "$FUNCNAME obfs=${obfs}"
 	config_get obfs_plugin $1 obfs_plugin "v2ray"
+	logger -t "OMR-VPS" "$FUNCNAME obfs_plugin=${obfs_plugin}"
 	config_get obfs_type $1 obfs_type "http"
+	logger -t "OMR-VPS" "$FUNCNAME obfs_type=${obfs_type}"
 }
 
+# 从VPS获取ShadowSocks相关配置
 _set_ss_server_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	local disabled port key method
 	config_load shadowsocks-libev
 	config_get disabled sss0 disabled
@@ -299,18 +409,29 @@ _set_ss_server_vps() {
 	[ -z "$key" ] && return
 	config_get method sss0 method
 	local current_port current_key current_method
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	# 发起http GET请求，获取shadowshocks配置
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.port')"
+	logger -t "OMR-VPS" "$FUNCNAME port:${current_port}"
 	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.key')"
+	logger -t "OMR-VPS" "$FUNCNAME key:${current_key}"
 	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.method')"
+	logger -t "OMR-VPS" "$FUNCNAME method:${current_method}"
 	current_ebpf="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.ebpf')"
+	logger -t "OMR-VPS" "$FUNCNAME ebpf:${current_ebpf}"
 	current_obfs="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs')"
+	logger -t "OMR-VPS" "$FUNCNAME obfs:${current_obfs}"
 	current_obfs_plugin="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs_plugin')"
+	logger -t "OMR-VPS" "$FUNCNAME obfs_plugin:${current_obfs_plugin}"
 	current_obfs_type="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs_type')"
+	logger -t "OMR-VPS" "$FUNCNAME obfs_type:${current_obfs_type}"
 	current_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
+	logger -t "OMR-VPS" "$FUNCNAME fast_open:${current_fast_open}"
 	current_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
+	logger -t "OMR-VPS" "$FUNCNAME no_delay:${current_no_delay}"
 	current_mptcp="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.mptcp')"
+	logger -t "OMR-VPS" "$FUNCNAME mptcp:${current_mptcp}"
 	
 	ebpf="false"
 	fast_open="false"
@@ -320,17 +441,44 @@ _set_ss_server_vps() {
 	obfs_plugin="v2ray"
 	obfs_type="http"
 	config_load shadowsocks-libev
+	# 遍历/etc/config/shadowsocks-libev的所有ss_redir节点
 	config_foreach _get_ss_redir ss_redir
+	# 遍历/etc/config/shadowsocks-libev的所有server节点
 	config_foreach _get_ss_server server
 
-	if [ "$current_mptcp" != "$mptcp" ] || [ "$current_obfs_plugin" != "$obfs_plugin" ] || [ "$current_obfs_type" != "$obfs_type" ] || [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ] || [ "$current_ebpf" != "$ebpf" ] || [ "$current_obfs" != "$obfs" ] || [ "$current_fast_open" != "$fast_open" ] || [ "$current_no_delay" != "$no_delay" ]; then
+	if [ "$current_mptcp" != "$mptcp" ] \
+	|| [ "$current_obfs_plugin" != "$obfs_plugin" ] \
+	|| [ "$current_obfs_type" != "$obfs_type" ] \
+	|| [ "$current_port" != "$port" ] \
+	|| [ "$current_method" != "$method" ] \
+	|| [ "$current_key" != "$key" ] \
+	|| [ "$current_ebpf" != "$ebpf" ] \
+	|| [ "$current_obfs" != "$obfs" ] \
+	|| [ "$current_fast_open" != "$fast_open" ] \
+	|| [ "$current_no_delay" != "$no_delay" ]; then
+
+		logger -t "OMR-VPS" "$FUNCNAME port:${port}"
+		logger -t "OMR-VPS" "$FUNCNAME key:${key}"
+		logger -t "OMR-VPS" "$FUNCNAME method:${method}"
+		logger -t "OMR-VPS" "$FUNCNAME ebpf:${ebpf}"
+		logger -t "OMR-VPS" "$FUNCNAME obfs:${obfs}"
+		logger -t "OMR-VPS" "$FUNCNAME obfs_plugin:${obfs_plugin}"
+		logger -t "OMR-VPS" "$FUNCNAME obfs_type:${obfs_type}"
+		logger -t "OMR-VPS" "$FUNCNAME fast_open:${fast_open}"
+		logger -t "OMR-VPS" "$FUNCNAME no_delay:${no_delay}"
+		logger -t "OMR-VPS" "$FUNCNAME mptcp:${mptcp}"
+
 		local settings
 		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"no_delay":'$no_delay',"mptcp":'$mptcp',"key":"'$key'","ebpf":'$ebpf',"obfs":'$obfs',"obfs_plugin":"'$obfs_plugin'","obfs_type":"'$obfs_type'"}'
 		result=$(_set_json "shadowsocks" "$settings")
 	fi
 }
 
+# 从VPS获取ShadowSocks-go相关配置
 _set_ssgo_server_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	local disabled port key method
 	config_load shadowsocks-rust
 	config_get disabled sss0 disabled
@@ -342,13 +490,11 @@ _set_ssgo_server_vps() {
 	[ -z "$key" ] && return
 	config_get method sss0 method
 	local current_port current_key current_method
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.port')"
 	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.password')"
 	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.protocol')"
-#	current_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.fast_open')"
-#	current_mptcp="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.mptcp')"
 	
 	ebpf="false"
 	fast_open="false"
@@ -360,31 +506,47 @@ _set_ssgo_server_vps() {
 	# Force disable fast open for now du to problem on 6.1 with MPTCP
 	fast_open="false"
 
-	#if [ "$current_mptcp" != "$mptcp" ] || [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_fast_open" != "$fast_open" ]; then
 	if [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ]; then
+
+		logger -t "OMR-VPS" "$FUNCNAME port:${port}"
+		logger -t "OMR-VPS" "$FUNCNAME method:${method}"
+		logger -t "OMR-VPS" "$FUNCNAME fast_open:${fast_open}"
+		logger -t "OMR-VPS" "$FUNCNAME mptcp:${mptcp}"
+
 		local settings
 		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":false,"mptcp":'$mptcp'}'
 		result=$(_set_json "shadowsocks-go" "$settings")
 	fi
 }
 
+# 从VPS获取V2ray相关配置
 _set_v2ray_server_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	enabled=$(uci -q get v2ray.main.enabled)
 	[ "$enabled" != "1" ] && return
 	userid=$(uci -q get v2ray.omrout.s_vless_user_id)
 	[ -z "$userid" ] && return
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	current_userid="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.key')"
 
 	if [ "$current_userid" != "$userid" ]; then
+
+		logger -t "OMR-VPS" "$FUNCNAME userid:${userid}"
+
 		local settings
 		settings='{"userid": "'$userid'"}'
 		echo $(_set_json "v2ray" "$settings")
 	fi
 }
 
+# 从VPS获取xray相关配置
 _set_xray_server_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	enabled=$(uci -q get xray.main.enabled)
 	userid=$(uci -q get xray.omrout.s_vless_user_id)
 	protocol=$(uci -q get xray.omrout.protocol)
@@ -395,27 +557,39 @@ _set_xray_server_vps() {
 		vless_reality='false'
 	fi
 	[ -z "$userid" ] && return
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	current_userid="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.key')"
 	current_vlessreality="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.vless_reality')"
 	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.ss_method')"
 
 	if [ "$current_userid" != "$userid" ] || [ "$current_vlessreality" != "$vless_reality" ] || [ "$current_method" != "$ss_method" ]; then
+
+		logger -t "OMR-VPS" "$FUNCNAME userid:${userid}"
+		logger -t "OMR-VPS" "$FUNCNAME protocol:${protocol}"
+		logger -t "OMR-VPS" "$FUNCNAME ss_method:${ss_method}"
+		logger -t "OMR-VPS" "$FUNCNAME vless_reality:${vless_reality}"
+
 		local settings
 		settings='{"userid": "'$userid'","vless_reality": '$vless_reality',"ss_method": "'$ss_method'"}'
 		echo $(_set_json "xray" "$settings")
 	fi
 }
 
+# 从VPS获取配置，同步到本地
 _get_vps_config() {
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+
+	# 首先获取VPS配置
+	# 如果配置为空则返回
+	# 然后检查配置的最后修改时间，如果VPS配置比本地新，则调用 _set_config_from_vps 更新本地配置
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	vps_lastchange="$(echo "$vps_config" | jsonfilter -q -e '@.vps.lastchange')"
 	if [ -n "$(uci -q get openmptcprouter.${servername}.lastchange)" ] && [ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$(uci -q get openmptcprouter.${servername}.lastchange)" ]; then
 		_set_config_from_vps
 	fi
 
+	# 同步Pi-hole（一个DNS级广告和互联网跟踪阻止应用）的启用状态
 	piholeomr="$(uci -q get openmptcprouter.${servername}.pihole)"
 	pihole="$(echo "$vps_config" | jsonfilter -q -e '@.pihole.state')"
 	if [ "$pihole" = "true" ] && [ "$piholeomr" != "1" ]; then
@@ -430,6 +604,7 @@ _get_vps_config() {
 		EOF
 	fi
 
+	# VPS系统信息同步: 内核版本、机器类型和OpenMPTCRouter版本信息
 	vpsinternet="$(echo "$vps_config" | jsonfilter -q -e '@.network.internet')"
 	if [ "$vpsinternet" = "false" ] && [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
 		uci -q batch <<-EOF >/dev/null
@@ -446,8 +621,11 @@ _get_vps_config() {
 		set openmptcprouter.${servername}.machine=$vps_machine
 		set openmptcprouter.${servername}.omr_version=$vps_omr_version
 	EOF
+
+	# VPN配置同步
 	vpn="$(uci -q get openmptcprouter.settings.vpn)"
 
+	# Glorytun TCP配置：包括端口、IP地址、协议
 	glorytun_state=0
 	glorytun_change=0
 	if [ "$vpn" = "glorytun_tcp" ]; then
@@ -494,6 +672,8 @@ _get_vps_config() {
 			fi
 		fi
 	fi
+
+	# Glorytun UDP配置：包括端口、IP地址、协议
 	if [ "$vpn" = "glorytun_udp" ]; then
 		glorytun_state=1
 		#uci -q set glorytun.vpn.proto='udp'
@@ -537,6 +717,8 @@ _get_vps_config() {
 			fi
 		fi
 	fi
+
+	# 解析和处理VPS的IP地址，允许以域名方式指定服务器IP
 	vpsip="$(uci -q get openmptcprouter.${servername}.ip | awk '{print $1}')"
 	ipresolve="$(resolveip -t 5 -4 $vpsip | head -n 1)"
 	if [ -n "$ipresolve" ]; then
@@ -545,6 +727,8 @@ _get_vps_config() {
 		ip6resolve="$(resolveip -t 5 -6 $vpsip | head -n 1)"
 		[ -n "$ip6resolve" ] && vpsip="$ip6resolve"
 	fi
+
+	# Shadowsocks配置
 	if [ -n "$(uci -q get shadowsocks-libev.sss0)" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "127.0.0.1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		config_foreach _set_ss_server server "server" $vpsip
 		uci -q batch <<-EOF >/dev/null
@@ -556,6 +740,8 @@ _get_vps_config() {
 			/etc/init.d/shadowsocks-libev restart
 		fi
 	fi
+
+	# shadowsocks-rust 配置
 	if [ -n "$(uci -q get shadowsocks-rust.sss0)" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "127.0.0.1" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		config_foreach _set_ssrust_server server "server" $vpsip
 		uci -q batch <<-EOF >/dev/null
@@ -567,6 +753,8 @@ _get_vps_config() {
 			/etc/init.d/shadowsocks-rust restart
 		fi
 	fi
+
+	# V2Ray配置
 	if [ -n "$(uci -q get v2ray.omrout)" ] && [ "$(uci -q get v2ray.omrout.s_vmess_address)" != "127.0.0.1" ] && [ "$(uci -q get v2ray.omrout.s_vmess_address)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set v2ray.omrout.s_vmess_address="$vpsip"
@@ -580,6 +768,8 @@ _get_vps_config() {
 			/etc/init.d/v2ray restart
 		fi
 	fi
+
+	# xray配置
 	if [ -n "$(uci -q get xray.omrout)" ] && [ "$(uci -q get xray.omrout.s_vmess_address)" != "127.0.0.1" ] && [ "$(uci -q get xray.omrout.s_vmess_address)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set xray.omrout.s_vmess_address="$vpsip"
@@ -595,6 +785,8 @@ _get_vps_config() {
 			/etc/init.d/xray restart
 		fi
 	fi
+
+	# openvpn配置
 	if [ -n "$(uci -q get openvpn.omr)" ] && [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ] && [ -z "$(uci -q get openvpn.omr.remote | grep $vpsip)" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			delete openvpn.omr.remote
@@ -606,6 +798,8 @@ _get_vps_config() {
 			/etc/init.d/openvpn restart
 		fi
 	fi
+
+	# dsvpn配置
 	port="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.port')"
 	localip="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.client_ip')"
 	remoteip="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.host_ip')"
@@ -623,6 +817,7 @@ _get_vps_config() {
 		fi
 	fi
 
+	# mlvpn配置
 	if [ -n "$(uci -q get mlvpn.general)" ] && [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ] && [ "$(uci -q get mlvpn.general.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ] && [ -f /etc/init.d/mlvpn ]; then
 		uci -q batch <<-EOF >/dev/null
 			set mlvpn.general=mlvpn
@@ -634,12 +829,16 @@ _get_vps_config() {
 			/etc/init.d/mlvpn restart
 		fi
 	fi
+
+	# glorytun.vpn配置
 	if [ -n "$(uci -q get glorytun.vpn)" ] && [ "$(uci -q get glorytun.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get glorytun.vpn.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set glorytun.vpn.host="$vpsip"
 		EOF
 		glorytun_change=1
 	fi
+
+	# glorytun-udp.vpn配置
 	if [ -n "$(uci -q get glorytun-udp.vpn)" ] && [ "$(uci -q get glorytun-udp.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get glorytun-udp.vpn.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set glorytun-udp.vpn.host="$vpsip"
@@ -663,9 +862,10 @@ _get_vps_config() {
 	fi
 }
 
+# 从VPS获取GRE隧道配置，并进行设置
 _get_gre_tunnel() {
 	[ -z "$servername" ] && servername=$1
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	gre_tunnel_state="$(echo "$vps_config" | jsonfilter -q -e '@.gre_tunnel.enabled')"
 	vpnip_local="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.remoteip')"
@@ -862,7 +1062,7 @@ set_gre_tunnel() {
 
 _get_pihole() {
 	[ "$(uci -q get openmptcprouter.settings.pihole_auto_conf)" = "0" ] && return
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	vpn="$(uci -q get openmptcprouter.settings.vpn)"
 	piholeomr="$(uci -q get openmptcprouter.${servername}.pihole)"
@@ -951,13 +1151,21 @@ _get_pihole() {
 	fi
 }
 
+# 从VPS同步端口重定向配置
 _set_redirect_ports_from_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	redirect_ports=$1
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	redirect_ports_current="$(echo "$vps_config" | jsonfilter -q -e '@.shorewall.redirect_ports')"
 	[ "$redirect_ports" = "1" ] && redirect_ports_request="enable"
 	[ "$redirect_ports" = "0" ] && redirect_ports_request="disable"
+
+	logger -t "OMR-VPS" "$FUNCNAME redirect_ports_request=${redirect_ports_request}"
+	logger -t "OMR-VPS" "$FUNCNAME redirect_ports=${redirect_ports_current}"
+
 	if [ "$redirect_ports_request" != "$redirect_ports_current" ]; then
 		settings='{"redirect_ports": "'$redirect_ports_request'"}'
 		echo $(_set_json "shorewall" "$settings")
@@ -967,9 +1175,13 @@ _set_redirect_ports_from_vps() {
 
 }
 
+# 从VPS同步MPTCP配置
 _set_mptcp_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	local settings
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	mptcp_enabled_current="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.enabled')"
 	checksum_current="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.checksum')"
@@ -993,7 +1205,22 @@ _set_mptcp_vps() {
 	[ -z "$mptcp_version" ] && mptcp_version="0"
 	[ ! -f /proc/sys/net/mptcp/mptcp_enabled ] && mptcp_version="1"
 	[ -z "$congestion" ] && congestion="bbr"
-	if [ "$mptcp_enabled_current" != "$mptcp_enabled" ] || [ "$checksum_current" != "$checksum" ] || ([ "$path_manager_current" != "" ] && [ "$path_manager_current" != "$path_manager" ]) || ([ "$scheduler_current" != "" ] && [ "$scheduler_current" != "$scheduler" ]) || ([ "$syn_retries_current" != "" ] && [ "$syn_retries_current" != "$syn_retries" ]) || [ "$congestion_control_current" != "$congestion" ] || [ "$mptcp_version_current" != "$mptcp_version" ]; then
+
+	logger -t "OMR-VPS" "$FUNCNAME mptcp_enabled=${mptcp_enabled}"
+	logger -t "OMR-VPS" "$FUNCNAME checksum=${checksum}"
+	logger -t "OMR-VPS" "$FUNCNAME path_manager=${path_manager}"
+	logger -t "OMR-VPS" "$FUNCNAME scheduler=${scheduler}"
+	logger -t "OMR-VPS" "$FUNCNAME syn_retries=${syn_retries}"
+	logger -t "OMR-VPS" "$FUNCNAME congestion=${congestion}"
+	logger -t "OMR-VPS" "$FUNCNAME mptcp_version=${mptcp_version}"
+
+	if [ "$mptcp_enabled_current" != "$mptcp_enabled" ] \
+	|| [ "$checksum_current" != "$checksum" ] \
+	|| ([ "$path_manager_current" != "" ] && [ "$path_manager_current" != "$path_manager" ]) \
+	|| ([ "$scheduler_current" != "" ] && [ "$scheduler_current" != "$scheduler" ]) \
+	|| ([ "$syn_retries_current" != "" ] && [ "$syn_retries_current" != "$syn_retries" ]) \
+	|| [ "$congestion_control_current" != "$congestion" ] \
+	|| [ "$mptcp_version_current" != "$mptcp_version" ]; then
 		settings='{"enabled" : "'$mptcp_enabled'", "checksum": "'$checksum'","path_manager": "'$path_manager'","scheduler": "'$scheduler'","syn_retries": "'$syn_retries'","congestion_control": "'$congestion'","version": "'$mptcp_version'"}'
 		echo $(_set_json "mptcp" "$settings")
 	else
@@ -1001,12 +1228,19 @@ _set_mptcp_vps() {
 	fi
 }
 
+# 设置默认VPN
 _set_vpn_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	local settings
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
-	[ -z "$vps_config" ] && return
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
+	[ -z "$vps_config" ] && logger -t "OMR-VPS" "$FUNCNAME No config..." && return
 	vpn_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
 	vpn="$(uci -q get openmptcprouter.settings.vpn)"
+
+	logger -t "OMR-VPS" "$FUNCNAME vpn=${vpn}"
+	
 	if [ "$vpn_current" != "$vpn" ]; then
 		settings='{"vpn" : "'$vpn'"}'
 		echo $(_set_json "vpn" "$settings")
@@ -1015,12 +1249,19 @@ _set_vpn_vps() {
 	fi
 }
 
+# 从VPS获取默认代理设置
 _set_proxy_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	local settings
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
-	[ -z "$vps_config" ] && return
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
+	[ -z "$vps_config" ] && logger -t "OMR-VPS" "$FUNCNAME No config..." && return
 	proxy_current="$(echo "$vps_config" | jsonfilter -q -e '@.proxy.current')"
 	proxy="$(uci -q get openmptcprouter.settings.proxy)"
+
+	logger -t "OMR-VPS" "$FUNCNAME proxy:${proxy}"
+
 	if [ "$proxy_current" != "$proxy" ]; then
 		settings='{"proxy" : "'$proxy'"}'
 		echo $(_set_json "proxy" "$settings")
@@ -1029,67 +1270,97 @@ _set_proxy_vps() {
 	fi
 }
 
+# 获取网络接口的公网IP地址
 _get_local_wan_ip() {
+	# uci -q get openmptcprouter.wan1.publicip
 	wanip="$(uci -q get openmptcprouter.$1.publicip)"
 	[ -n "$wanip" ] && {
 		[ -z "$wanips" ] && wanips=$wanip || wanips="$wanips"'\n'"$wanip"
 	}
+
+	logger -t "OMR-VPS" "$FUNCNAME interface:$1 wanip:${wanip}"
 }
 
+# 设备和VPS之间同步WAN口IP地址配置
 _set_wan_ip() {
+
 	local settings
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
-	[ -z "$vps_config" ] && return
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
+	[ -z "$vps_config" ] && logger -t "OMR-VPS" "$FUNCNAME No config" && return
 	wanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.wan.ips')"
+
+	logger -t "OMR-VPS" "$FUNCNAME wanips:${wanips}"1
+
+	# wan口IP有变换，重新同步到服务器
 	if [ -n "$wanips" ] && [ "$wanip_current" != "$wanips" ]; then
 		settings='{"ips" : "'$wanips'"}'
 		result=$(_set_json "wan" "$settings")
-		#echo $(_set_json "wan" "$settings")
-	#else
-	#	echo 1
 	fi
 }
 
+# 遍历配置文件中的接口，找到属于LAN防火墙区域的接口，将其IP和掩码保存到全局变量lanips中
 _get_lan_ip() {
 	local intf=$1
+	# 只关注LAN防火墙区域的接口，即只关注LAN口
 	if [ "$(uci -q get firewall.zone_lan.network | grep $intf)" != "" ]; then
 		lanip="$(uci -q get network.${intf}.ipaddr)/$(uci -q get network.${intf}.netmask)"
 		if [ "$lanip" != "/" ]; then
 			if [ -z "$lanips" ]; then
+				# lanips='"192.168.1.1/255.255.255.0"'
 				lanips='"'${lanip}'"'
 			else
+				# 追加，如：lanips='"192.168.1.1/255.255.255.0" "192.168.2.1/255.255.255.0"'
 				lanips='"'$lanips'" "'${lanip}'"'
 			fi
 		fi
+
+		logger -t "OMR-VPS" "$FUNCNAME interface:${intf} lanip:${lanip} lanips:${lanips}"
 	fi
 }
 
+# 设备和VPS之间协商LAN口IP地址配置
 _set_lan_ip() {
-	local settings
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
-	[ -z "$vps_config" ] && return
-	lanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.lan.ips' | sed -e 's:\\::g' -e 's:\[::g' -e 's:\]::g' -e 's/^[[:blank:]]*//;s/[[:blank:]]*$//')"
-	if [ "$lanips" != "" ] && [ "$lanip_current" != "$lanips" ]; then
-	#if [ "$lanips" != "" ]; then
-		settings='{"lanips" : ['$lanips']}'
-		result=$(_set_json "lan" "$settings")
-	fi
+
+	# 将LAN IP发送到服务器端，有服务器端协商分配
+	# uci get network.lan.ipaddr;    uci get network.lan.netmask;
+	settings='{"sn" : "'${serial}'", "ip" : "'$(uci get network.lan.ipaddr)/$(uci get network.lan.netmask)'"}'
+	result=$(_set_json "setLanIP" "${settings}")
+	logger -t "OMR-VPS" "$FUNCNAME result:${result}"
+
+	# 重新从服务器获取LAN IP
+	lanIP=$(_get_json "getLanIP?serial=${serial}")
+	logger -t "OMR-VPS" "$FUNCNAME lanIP:${lanIP}"
+	lanIP=$(echo ${lanIP} | jsonfilter -e '@.lanip') # 192.168.0.1/255.255.255.0
+	logger -t "OMR-VPS" "$FUNCNAME lanIP:${lanIP}"
+	ip=$(echo ${lanIP} | cut -d'/' -f1)
+	mask=$(echo ${lanIP} | cut -d'/' -f2)
+
+	uci set network.lan.ipaddr=${ip}
+	uci set network.lan.netmask=${mask}
+	uci commit network
+	
+	# 立即生效
+	ifdown lan && ifup lan
 }
 
+# 同步设备和VPS的VPN绕过IP地址配置
 _set_bypass_ips() {
 	local settings
 	[ -z "$servername" ] && servername=$1
+	logger -t "OMR-VPS" "$FUNCNAME servername:${servername}"
 	bypassipv4s=$(ipset -q -o save list omr_dst_bypass_srv_vpn1_4 2>/dev/null | awk '/add/ NF {print "\""$3"\""}' | tr '\n' ',' | sed 's/,$//')
+	logger -t "OMR-VPS" "$FUNCNAME bypassipv4s:${bypassipv4s}"
 	[ -z "$bypassipvs4" ] && {
 		bypassipv4slst=$(nft -j list set inet fw4 "omr_dst_bypass_srv_vpn1_4"  2>/dev/null)
+		logger -t "OMR-VPS" "$FUNCNAME bypassipv4slst:${bypassipv4slst}"
 		[ -n "$bypassipv4slst" ] && bypassipv4s=$(echo "$bypassipv4slst" | jsonfilter -q -e @.nftables[1].set.elem[*].prefix | awk '{gsub(/"/,"",$3);gsub(/,/,"/",$3); print $3 $5}')
 	}
 	bypassipv6s=$(ipset -q -o save list omr6_dst_bypass_srv_vpn1_6  2>/dev/null | awk '/add/ NF {print "\""$3"\""}' | tr '\n' ',' | sed 's/,$//')
 	[ -z "$bypassipvs6" ] && {
 		bypassipv6slst=$(nft -j list set inet fw4 "omr_dst_bypass_srv_vpn1_6"  2>/dev/null)
+		logger -t "OMR-VPS" "$FUNCNAME bypassipv6slst:${bypassipv6slst}"
 		[ -n "$bypassipv6slst" ] && bypassipv6s=$(echo "$bypassipv4slst" | jsonfilter -q -e @.nftables[1].set.elem[*].prefix | awk '{gsub(/"/,"",$3);gsub(/,/,"/",$3); print $3 $5}')
 	}
-	# "
 	if [ "$bypassipv4s" != "" ] || [ "$bypassipv6s" != "" ]; then
 		settings='{"ipv4s" : ['$bypassipv4s'],"ipv6s" : ['$bypassipv6s'],"intf" : "vpn1"}'
 		result=$(_set_json "bypass" "$settings")
@@ -1101,24 +1372,44 @@ set_bypass_ips() {
 	config_foreach _set_bypass_ips server
 }
 
+# 设备和VPS之间同步VPN接口的IP地址配置
 _set_vpn_ip() {
 	local settings
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
-	[ -z "$vps_config" ] && return
-	[ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ] && return
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
+	[ -z "$vps_config" ] && logger -t "OMR-VPS" "$FUNCNAME No config..." && return
+	# 未启用任何VPN，return
+	[ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ] && logger -t "OMR-VPS" "openmptcprouter.settings.vpn=none, return now..." && return
+	# 从UCI配置文件获取VPN虚拟网口名称，uci get network.omrvpn.device == tun0
 	vpnifname="$(uci -q get network.omrvpn.device)"
+	# 从服务器获取到的vpn本地IP，服务器的remoteip就是设备的local ip
 	vpnip_local_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.remoteip')"
+	# vpn当前本地IP,即tun0的IP
 	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} 2>/dev/null | awk -F'[ /]+' '{print $3}')
 	[ -z "$vpnip_local" ]  && vpnip_local=$(ip -4 addr show dev "$OMR_TRACKER_DEVICE" | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1)
+	# 服务器端的VPN IP，服务器的local ip就是设备的remote ip
 	vpnip_remote_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
+	# 多种方式尝试获取VPN远端IP，增强程序鲁棒性
 	vpnip_remote=$(ip -4 r show default dev ${vpnifname} | awk '{print $3}' | tr -d "\n")
 	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | grep kernel | awk '{print $1}' | tr -d "\n")
 	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | grep "proto static src" | awk '{print $3}' | tr -d "\n")
 	[ -z "$vpnip_remote" ] && vpnip_remote=$(ifstatus omrvpn | jsonfilter -e '@.route[0].nexthop')
 	[ -z "$vpnip_remote" ] && [ "$vpnifname" = "bonding-omrvpn" ] && vpnip_remote="10.255.248.1"
+	
+	# Unique Local Address，IPv6的唯一本地地址
 	ula="$(uci -q get network.globals.ula_prefix)"
 	ula_current="$(echo "$vps_config" | jsonfilter -q -e '@.ip6in4.ula')"
-	if [ "$vpnip_remote" != "" ] && [ "$vpnip_local" != "" ] && ([ "$vpnip_remote" != "$vpnip_remote_current" ] || [ "$vpnip_local" != "$vpnip_local_current" ] || [ "$ula" != "$ula_current" ]); then
+	
+	logger -t "OMR-VPS" "$FUNCNAME vpnifname:${vpnifname}"
+	logger -t "OMR-VPS" "$FUNCNAME vpnip_local:${vpnip_local}"
+	logger -t "OMR-VPS" "$FUNCNAME vpnip_remote:${vpnip_remote}"
+	logger -t "OMR-VPS" "$FUNCNAME ula:${ula}"
+	
+	# 服务器和客户端的参数不一致，重新将本地配置同步到服务器端
+	if [ "$vpnip_remote" != "" ] \
+	&& [ "$vpnip_local" != "" ] \
+	&& ([ "$vpnip_remote" != "$vpnip_remote_current" ] \
+	|| [ "$vpnip_local" != "$vpnip_local_current" ] \
+	|| [ "$ula" != "$ula_current" ]); then
 		settings='{"remoteip" : "'$vpnip_local'","localip" : "'$vpnip_remote'","ula" : "'$ula'"}'
 		result=$(_set_json "vpnips" "$settings")
 	fi
@@ -1128,7 +1419,7 @@ set_vpn_ip() {
 	_set_vpn_ip
 }
 
-
+# 设备和VPS之间同步SIP ALG（应用层网关）的配置，以支持SIP协议通信
 _set_sipalg() {
 	local settings
 	sipalg="$(uci -q get openmptcprouter.settings.sipalg)"
@@ -1137,20 +1428,26 @@ _set_sipalg() {
 	else
 		sipalg="false"
 	fi
+
+	logger -t "OMR-VPS" "$FUNCNAME sipalg:${sipalg}"
+
 	settings='{"enable" : "'$sipalg'"}'
 	result=$(_set_json "sipalg" "$settings")
 }
 
 
 _delete_client2client() {
+	logger -t "OMR-VPS" "$FUNCNAME $1"
 	if [ -n "$(echo $1 | grep omr_client2client)" ]; then
 		uci -q delete network.$1
 	fi
 }
 
+# 配置置客户端之间的路由
 _set_client2client() {
+	logger -t "OMR-VPS" "$FUNCNAME..."
 	local c2cid=0
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	c2cips="$(echo "$vps_config" | jsonfilter -q -e '@.client2client.lanips[0]')"
 	vpnifname="$(uci -q get network.omrvpn.device)"
@@ -1454,6 +1751,9 @@ _vps_firewall_close_port() {
 }
 
 _set_vps_firewall() {
+	
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	fw3 -q print | grep 'vpn.* -d' |
 	while IFS=$"\n" read -r c; do
 		eval $(echo $c | sed 's/iptables/iptables -w/' | sed 's/-A/-D/') 2>&1 >/dev/null
@@ -1470,7 +1770,6 @@ _set_vps_firewall() {
 		eval $(echo $newrule | sed 's/-A/-D/') || true
 		eval $newrule
 	done
-	#'
 
 	fwservername=$1
 	[ -n "$fwservername" ] && servername=$fwservername
@@ -1603,13 +1902,17 @@ _set_openvpn_server() {
 	fi
 }
 
-
+# 同步VPS配置到本地，更新本地配置
 _set_config_from_vps() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key dsvpn_key
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 
-	logger -t "OMR-VPS" "Get config from server ${servername}..."
+	logger -t "OMR-VPS" "$FUNCNAME Get config from server ${servername}..."
+	
 	noerror=1
 	# get VPS ip
 	vpsip="$(uci -q get openmptcprouter.${servername}.ip | awk '{print $1}')"
@@ -1620,27 +1923,40 @@ _set_config_from_vps() {
 	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
 	[ -z "$user_permission" ] && user_permission="rw"
 
+	logger -t "OMR-VPS" "$FUNCNAME user_permission:${user_permission}"
+
+	logger -t "OMR-VPS" "$FUNCNAME OMR-Tracker..."
 	vpsinternet="$(echo "$vps_config" | jsonfilter -q -e '@.network.internet')"
 	if [ "$vpsinternet" = "false" ] && [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.settings.external_check='0'
 		EOF
-		logger -t "OMR-VPS" "OMR-Tracker restart..."
+		logger -t "OMR-VPS" "$FUNCNAME OMR-Tracker restart"
 		/etc/init.d/omr-tracker restart
 	fi
 
+	logger -t "OMR-VPS" "$FUNCNAME ula..."
 	ula="$(echo "$vps_config" | jsonfilter -q -e '@.ip6in4.ula')"
+	logger -t "OMR-VPS" "$FUNCNAME ula:${ula}"
 	if [ -n "$ula" ] && [[ "$ula" != *" "* ]]; then
+
+		logger -t "OMR-VPS" "$FUNCNAME ula:${ula}"
+
 		uci -q batch <<-EOF >/dev/null
 		set network.globals.ula_prefix=$ula
 		EOF
 	fi
 
 	# Set current VPN
+	logger -t "OMR-VPS" "$FUNCNAME current_vpn..."
 	current_vpn="$(uci -q get openmptcprouter.settings.vpn)"
+	logger -t "OMR-VPS" "$FUNCNAME current_vpn:${current_vpn}"
 	if [ -z "$current_vpn" ] || ([ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$lastchange" ]) || [ "$user_permission" = "ro" ]; then
 		current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
 		if [ -n "$current_vpn" ]; then
+
+			logger -t "OMR-VPS" "$FUNCNAME Set current VPN ${current_vpn}"
+
 			uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.settings.vpn=${current_vpn}
 			commit openmptcprouter
@@ -1649,10 +1965,15 @@ _set_config_from_vps() {
 	fi
 
 	# Set current Proxy
+	logger -t "OMR-VPS" "$FUNCNAME current_proxy..."
 	current_proxy="$(uci -q get openmptcprouter.settings.proxy)"
+	logger -t "OMR-VPS" "$FUNCNAME current_proxy:${current_proxy}"
 	if [ -z "$current_proxy" ] || ([ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$lastchange" ]) || [ "$user_permission" = "ro" ]; then
 		current_proxy="$(echo "$vps_config" | jsonfilter -q -e '@.proxy.current')"
 		if [ -n "$current_proxy" ]; then
+
+			logger -t "OMR-VPS" "$FUNCNAME Set current proxy ${current_proxy}"
+
 			uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.settings.proxy=${current_proxy}
 			commit openmptcprouter
@@ -1729,8 +2050,10 @@ _set_config_from_vps() {
 	# Shadowsocks settings
 	#shadowsocks_disabled="$(uci -q get openmptcprouter.settings.shadowsocks_disable)"
 	#[ -z "$shadowsocks_disabled" ] && shadowsocks_disabled=0
+	logger -t "OMR-VPS" "$FUNCNAME shadowsocks..."
 	ss_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.key')"
 	ss_key="$(echo $ss_key | sed 's/-/+/g; s/_/\//g;')"
+	logger -t "OMR-VPS" "$FUNCNAME shadowsocks_key:${ss_key}"
 	if [ -n "$ss_key" ] && [ "$ss_key" != "$(uci -q get shadowsocks-libev.sss0.key)" ] && [ -n "$(uci -q get shadowsocks-libev.sss0)" ]; then
 		ss_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.method')"
 		ss_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.port')"
@@ -1781,10 +2104,10 @@ _set_config_from_vps() {
 		if [ -n "$(uci -q changes shadowsocks-libev)" ]; then
 			uci -q commit shadowsocks-libev
 			if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ]; then
-				logger -t "OMR-VPS" "Shadowsocks restart..."
+				logger -t "OMR-VPS" "$FUNCNAME Shadowsocks restart..."
 				/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
 			else
-				logger -t "OMR-VPS" "Shadowsocks stop..."
+				logger -t "OMR-VPS" "$FUNCNAME Shadowsocks stop..."
 				/etc/init.d/shadowsocks-libev stop >/dev/null 2>&1
 			fi
 		fi
@@ -1814,10 +2137,10 @@ _set_config_from_vps() {
 		if [ -n "$(uci -q changes shadowsocks-rust)" ]; then
 			uci -q commit shadowsocks-rust
 			if [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]; then
-				logger -t "OMR-VPS" "Shadowsocks Rust restart..."
+				logger -t "OMR-VPS" "$FUNCNAME Shadowsocks Rust restart..."
 				/etc/init.d/shadowsocks-rust restart >/dev/null 2>&1
 			else
-				logger -t "OMR-VPS" "Shadowsocks Rust stop..."
+				logger -t "OMR-VPS" "$FUNCNAME Shadowsocks Rust stop..."
 				/etc/init.d/shadowsocks-rust stop >/dev/null 2>&1
 			fi
 		fi
@@ -1847,10 +2170,10 @@ _set_config_from_vps() {
 		if [ -n "$(uci -q changes v2ray)" ]; then
 			uci -q commit v2ray
 			if [ "$(uci -q get v2ray.main.enabled)" = "1" ]; then
-				logger -t "OMR-VPS" "V2ray restart..."
+				logger -t "OMR-VPS" "$FUNCNAME V2ray restart..."
 				/etc/init.d/v2ray restart >/dev/null 2>&1
 			else
-				logger -t "OMR-VPS" "Stop restart..."
+				logger -t "OMR-VPS" "$FUNCNAME Stop restart..."
 				/etc/init.d/v2ray stop >/dev/null 2>&1
 			fi
 		fi
@@ -1889,10 +2212,10 @@ _set_config_from_vps() {
 		if [ -n "$(uci -q changes xray)" ]; then
 			uci -q commit xray
 			if [ "$(uci -q get xray.main.enabled)" = "1" ]; then
-				logger -t "OMR-VPS" "Xray restart..."
+				logger -t "OMR-VPS" "$FUNCNAME Xray restart..."
 				/etc/init.d/xray restart >/dev/null 2>&1
 			else
-				logger -t "OMR-VPS" "Xray stop..."
+				logger -t "OMR-VPS" "$FUNCNAME Xray stop..."
 				/etc/init.d/xray stop >/dev/null 2>&1
 			fi
 		fi
@@ -1922,7 +2245,7 @@ _set_config_from_vps() {
 		fi
 		if [ -n "$(uci -q changes glorytun)" ]; then
 			uci -q commit glorytun
-			logger -t "OMR-VPS" "Glorytun restart..."
+			logger -t "OMR-VPS" "$FUNCNAME Glorytun restart..."
 			/etc/init.d/glorytun restart >/dev/null 2>&1
 		fi
 	fi
@@ -1947,7 +2270,7 @@ _set_config_from_vps() {
 		fi
 		if [ -n "$(uci -q changes glorytun-udp)" ]; then
 			uci -q commit glorytun-udp
-			logger -t "OMR-VPS" "Glorytun UDP restart..."
+			logger -t "OMR-VPS" "$FUNCNAME Glorytun UDP restart..."
 			/etc/init.d/glorytun-udp restart >/dev/null 2>&1
 		fi
 	fi
@@ -1989,7 +2312,7 @@ _set_config_from_vps() {
 		if [ -n "$(uci -q changes openvpn)" ]; then
 			uci -q commit openvpn
 			if [ "$(uci -q get openvpn.omr.enabled)" = "1" ]; then
-				logger -t "OMR-VPS" "OpenVPN restart..."
+				logger -t "OMR-VPS" "$FUNCNAME OpenVPN restart..."
 				/etc/init.d/openvpn restart
 			fi
 		fi
@@ -2052,7 +2375,7 @@ _set_config_from_vps() {
 		if [ -n "$(uci -q changes openvpn)" ]; then
 			uci -q commit openvpn
 			if [ "$(uci -q get openvpn.omr.enabled)" = "1" ]; then
-				logger -t "OMR-VPS" "OpenVPN restart..."
+				logger -t "OMR-VPS" "$FUNCNAME OpenVPN restart..."
 				/etc/init.d/openvpn restart
 			fi
 		fi
@@ -2076,7 +2399,7 @@ _set_config_from_vps() {
 		fi
 		if [ -n "$(uci -q changes mlvpn)" ]; then
 			uci -q commit mlvpn
-			logger -t "OMR-VPS" "MLVPN restart..."
+			logger -t "OMR-VPS" "$FUNCNAME MLVPN restart..."
 			/etc/init.d/mlvpn restart
 		fi
 	fi
@@ -2100,7 +2423,7 @@ _set_config_from_vps() {
 		fi
 		if [ -n "$(uci -q changes dsvpn)" ]; then
 			uci -q commit dsvpn
-			logger -t "OMR-VPS" "DSVPN restart..."
+			logger -t "OMR-VPS" "$FUNCNAME DSVPN restart..."
 			/etc/init.d/dsvpn restart
 		fi
 	fi
@@ -2150,7 +2473,7 @@ _set_config_from_vps() {
 	vps_ipv6_addr="$(echo "$vps_config" | jsonfilter -q -e '@.network.ipv6')"
 	if [ -z "$vps_ipv6_addr" ]; then
 		if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "0" ]; then
-			logger -t "OMR-VPS" "No IPv6 support on VPS side ?"
+			logger -t "OMR-VPS" "$FUNCNAME No IPv6 support on VPS side ?"
 		fi
 		#uci -q batch <<-EOF >/dev/null
 		#	set openmptcprouter.settings.disable_ipv6=1
@@ -2165,7 +2488,7 @@ _set_config_from_vps() {
 	omr6in4_vps_localip="$(echo "$vps_config" | jsonfilter -q -e '@.ip6in4.localip')"
 	omr6in4_vps_remoteip="$(echo "$vps_config" | jsonfilter -q -e '@.ip6in4.remoteip')"
 	if ([ -n "$omr6in4_vps_localip" ] && [ "$omr6in4_vps_localip" != "$(uci -q get network.omr6in4.gateway)" ]) || ([ -n "$omr6in4_vps_remoteip" ] && [ "$omr6in4_vps_remoteip" != "$(uci -q get network.omr6in4.ip6addr)" ]); then
-		logger -t "OMR-VPS" "Set omr6in4 ip address and gateway"
+		logger -t "OMR-VPS" "$FUNCNAME Set omr6in4 ip address and gateway"
 		uci -q batch <<-EOF >/dev/null
 			set network.omr6in4.ip6addr="$omr6in4_vps_remoteip"
 			set network.omr6in4.gateway="$omr6in4_vps_localip"
@@ -2262,7 +2585,7 @@ _backup_send() {
 	backup_data="$(cat /tmp/backup.tar.gz | base64 | tr -d '\n')"
 	backup_sha256sum="$(sha256sum /tmp/backup.tar.gz | awk '{print $1}')"
 	[ -n "$backup_data" ] && {
-		logger -t "OMR-VPS" "Send backup file to server $servername"
+		logger -t "OMR-VPS" "$FUNCNAME Send backup file to server $servername"
 		local backupjson
 		backupjson='{"data": "'$backup_data'","sha256sum": "'$backup_sha256sum'"}'
 		echo "$backupjson" > /tmp/backupjson
@@ -2296,7 +2619,7 @@ _backup_get_and_apply() {
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${servername} token, try later"
+		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "$FUNCNAME Can't get ${servername} token, try later"
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
@@ -2330,7 +2653,11 @@ backup_get() {
 	fi
 }
 
+# 从VPS获取备份配置
 _backup_list() {
+
+	logger -t "OMR-VPS" "$FUNCNAME..."
+
 	bservername=$1
 	[ -z "$servername" ] && servername=$bservername
 	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
@@ -2340,14 +2667,14 @@ _backup_list() {
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${servername} token, try later"
+		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "$FUNCNAME Can't get ${servername} token, try later"
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
 		return
 	}
 	vps_backup=$(_get_json "backuplist")
-	[ -z "$vps_backup" ] && return
+	[ -z "$vps_backup" ] && logger -t "OMR-VPS" "$FUNCNAME Have no backuplist" && return
 	backup_lastmodif="$(echo "$vps_backup" | jsonfilter -q -e '@.modif')"
 	[ -n "$backup_lastmodif" ] && {
 		uci -q set openmptcprouter.$servername.lastbackup=$backup_lastmodif
@@ -2369,23 +2696,38 @@ backup_list() {
 	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 }
 
-
+# 服务器计数,统计配置文件/etc/config/openmptcprouter中共配置了多少个服务器
+# 默认只有一个servername=vps的服务器
 _count_server() {
+	logger -t "OMR-VPS" "$FUNCNAME servername=$1"
+
 	local servername=$1
+	# uci get openmptcprouter.vps.username
 	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	# uci get openmptcprouter.vps.password
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	# uci get openmptcprouter.vps.port
 	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
 	serversnb=$((serversnb+1))
+
+	logger -t "OMR-VPS" "$FUNCNAME server_number=${serversnb}"
 }
 
+# 获取http token
 _get_token() {
 	servername=$1
+	# uci get openmptcprouter.vps.username
 	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
-	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	# uci get openmptcprouter.vps.password
+	# [ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	# uci get openmptcprouter.vps.port
 	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	# uci get openmptcprouter.vps.ip
 	[ -z "$(uci -q get openmptcprouter.${servername}.ip)" ] && return
-	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
+	# uci get openmptcprouter.vps.disabled
+	# [ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
 	token=""
+	# 认证登录
 	_login
 	if [ -z "$token" ]; then
 		reason=""
@@ -2399,7 +2741,9 @@ _get_token() {
 			fi
 		}
 		config_list_foreach "${servername}" ip test_ping
+		# uci -q get openmptcprouter.vps.port
 		port="$(uci -q get openmptcprouter.${servername}.port)"
+		# 测试后台服务是否存在
 		api_test() {
 			server="$1"
 			resolve="$(resolveip -t 5 $server)"
@@ -2419,10 +2763,12 @@ _get_token() {
 			fi
 		}
 		config_list_foreach "${servername}" ip api_test
+		
+		# uci -q get openmptcprouter.vps.username
 		if [ "$(uci -q get openmptcprouter.${servername}.username)" != "openmptcprouter" ]; then
 			reason="$reason, custom username"
 		fi
-		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${servername} token, try later ($reason)"
+		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "$FUNCNAME Can't get ${servername} token, try later ($reason)"
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
@@ -2435,40 +2781,48 @@ _get_token() {
 	echo "$server:$serverport:$token"
 }
 
+# OpenMPTCRouter VPS配置服务的主要入口函数
 _config_service() {
+	# 默认只有一个服务器，servername=vps
 	servername=$1
-	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
+	logger -t "OMR-VPS" "$FUNCNAME servername:$1"
+
+	# uci get openmptcprouter.vps.disabled
+	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && logger -t "OMR-VPS" "$FUNCNAME servername:$1 disabled" && return
 	vps_config=""
+	# 获取认证信息，并解析出服务器地址、端口和令牌
 	tokenserver=$(_get_token $servername)
 	server="$(echo $tokenserver | cut -f1 -d:)"
 	serverport="$(echo $tokenserver | cut -f2 -d:)"
         token="$(echo $tokenserver | cut -f3 -d:)"
-	[ -z "$token" ] && return
+	[ -z "$token" ] && logger -t "OMR-VPS" "$FUNCNAME Get token error!" && return
 	error=0
+	# 如果设置了序列号，验证其有效性。如果序列号无效，记录错误日志并清除配置
 	if [ -n "$serial" ]; then
+		logger -t "OMR-VPS" "$FUNCNAME serial=${serial}"
 		[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 		if [ -n "$vps_config" ] && [ "$( echo "$vps_config" | jsonfilter -q -e '@.error')" = "False serial number" ]; then
-			logger -t "OMR-VPS" "Invalid serial number"
+			logger -t "OMR-VPS" "$FUNCNAME Invalid serial number"
 			sed -i "s:${server}::g" /etc/config/*
 			return
 		fi
 	fi
+
+	# 从服务器同步配置 uci get openmptcprouter.vps.get_config ; uci get openmptcprouter.vps.master ; uci get openmptcprouter.vps.current
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && ([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q get openmptcprouter.${servername}.current)" = "1" ]) && {
+		logger -t "OMR-VPS" "$FUNCNAME Get config from VPS..."
 		_set_config_from_vps
 		_get_gre_tunnel
 		_get_vps_config
 	}
 
-#	([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q get openmptcprouter.${servername}.current)" = "1" ]) && {
-#		_get_vps_config
-#	}
-
+	# OpenMPTCProuter首次启动时配置加密设置 uci get openmptcprouter.settings.firstboot
 	if [ "$(uci -q get openmptcprouter.settings.firstboot)" != "0" ]; then
 		[ -n "$(cat /proc/cpuinfo | grep aes)" ] && {
 			vps_aes="$(echo "$vps_config" | jsonfilter -q -e '@.vps.aes')"
 			method="$(uci -q get openmptcprouter.settings.encryption)"
 			if [ "$vps_aes" != "false" ] && [ "$user_permission" != "ro" ] && [ "$method" != "aes-256-gcm" ]; then
-				logger -t "OMR-VPS" "CPU support AES, set it by default"
+				logger -t "OMR-VPS" "$FUNCNAME CPU support AES, set it by default"
 				uci -q batch <<-EOF >/dev/null
 					set openmptcprouter.settings.encryption="aes-256-gcm"
 					commit openmptcprouter
@@ -2482,7 +2836,7 @@ _config_service() {
 				config_foreach _set_ssrust_server server "method" "2022-blake3-aes-256-gcm"
 				[ -n "$(uci -q changes shadowsocks-rust)" ] && uci -q commit shadowsocks-rust
 				[ "$method" != "aes-256-gcm" ] && {
-					logger -t "OMR-VPS" "Shadowsocks restart"
+					logger -t "OMR-VPS" "$FUNCNAME Shadowsocks restart"
 					/etc/init.d/shadowsocks-libev restart
 					/etc/init.d/shadowsocks-rust restart
 				}
@@ -2490,15 +2844,20 @@ _config_service() {
 		}
 	fi
 
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	# VPS内核
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && return
 	kernel="$(echo "$vps_config" | jsonfilter -q -e '@.vps.kernel')"
+
+	logger -t "OMR-VPS" "$FUNCNAME vps kernel: ${kernel}"
+
 	[ -z "$kernel" ] && return
 	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
 
+	logger -t "OMR-VPS" "$FUNCNAME user_permission ${user_permission}"
+
+	# 用户权限
 	if [ "$user_permission" != "ro" ]; then
-		#config_load shadowsocks-libev
-		#config_foreach _set_ss_server_vps server
 		[ -n "$(uci -q get shadowsocks-libev.sss0)" ] && _set_ss_server_vps
 		[ -n "$(uci -q get shadowsocks-rust.sss0)" ] && _set_ssgo_server_vps
 		[ -n "$(uci -q get v2ray.omr)" ] && _set_v2ray_server_vps
@@ -2509,40 +2868,61 @@ _config_service() {
 		_set_vps_firewall
 		[ -n "$(uci -q show network | grep wireguard)" ] && [ -z "$(_set_wireguard_vps)" ] && error=1
 	fi
+
+	# 从VPS获取备份配置
 	_backup_list
+
+	# 端口重定向功能
 	redirect_port="0"
 	if [ "$(uci -q get openmptcprouter.${servername}.redirect_ports)" = "1" ] || [ "$(uci -q get upnpd.config.enabled)" = "1" ]; then
 		redirect_port="1"
 	fi
+	logger -t "OMR-VPS" "$FUNCNAME redirect_port=${redirect_port}"
 	if [ "$user_permission" != "ro" ]; then
+		# 从VPS同步端口重定向配置
 		[ -z "$(_set_redirect_ports_from_vps $redirect_port)" ] && error=1
+		# 从VPS同步MPTCP配置
 		[ -z "$(_set_mptcp_vps)" ] && error=1
+		# 设置默认VPN
 		[ -z "$(_set_vpn_vps)" ] && error=1
+		# 从VPS获取默认代理设置
 		[ -z "$(_set_proxy_vps)" ] && error=1
 	fi
-	([ -n "$(uci -q get shadowsocks-libev.sss0)" ] || [ -n "$(uci -q get shadowsocks-rust.sss0)" ]) && [ "$(uci -q get shadowsocks-libev.sss0.key)" = "" ] && [ "$(uci -q get shadowsocks-rust.sss0.password)" = "" ] && uci -q set openmptcprouter.${servername}.get_config=1
+	([ -n "$(uci -q get shadowsocks-libev.sss0)" ] || [ -n "$(uci -q get shadowsocks-rust.sss0)" ]) \
+	&& [ "$(uci -q get shadowsocks-libev.sss0.key)" = "" ] \
+	&& [ "$(uci -q get shadowsocks-rust.sss0.password)" = "" ] \
+	&& uci -q set openmptcprouter.${servername}.get_config=1
 	
 	#_set_pihole
+	# 设备和VPS之间同步WAN口IP地址配置
 	[ -n "$wanips" ] && _set_wan_ip
+	# 设备和VPS之间同步VPN接口的IP地址配置
 	_set_vpn_ip
+	# 设备和VPS之间同步LAN口IP地址配置, 配置文件：/etc/config/network
 	config_load network
 	lanips=""
+	# 设备和VPS之间同步LAN口IP
 	config_foreach _get_lan_ip interface
+	# 和服务器协商LAN IP
 	_set_lan_ip
+	# SIP协议支持
 	_set_sipalg
+	# 同步设备和VPS的VPN绕过IP地址配置
 	_set_bypass_ips
+	# 配置置客户端之间的路由, /etc/config/network中的route段，并没有执行，因为该配置文件中不存在route端
 	config_foreach _delete_client2client route
 	if [ "$(uci -q get openmptcprouter.settings.vpn)" != "openvpn" ] && [ "$(echo "$vps_config" | jsonfilter -q -e '@.client2client.enabled')" = "true" ]; then
 		_set_client2client
 	fi
+	# 记录最后一次更改配置的时间
 	if [ "$error" = 0 ]; then
-		#logger -t "OMR-VPS" "No errors"
+		logger -t "OMR-VPS" "$FUNCNAME No errors"
 		uci -q set openmptcprouter.${servername}.lastchange=$(date "+%s")
 		[ -n "$vps_config" ] && uci -q set openmptcprouter.settings.firstboot=0
 	else
-		logger -t "OMR-VPS" "Setting server config error, try again"
+		logger -t "OMR-VPS" "$FUNCNAME Setting server config error, try again"
 	fi
-	#[ "$error" != 0 ] && logger -t "OMR-VPS" "Error !"
+
 	uci -q batch <<-EOF >/dev/null
 		set openmptcprouter.${servername}.admin_error=$error
 		commit openmptcprouter
@@ -2559,7 +2939,7 @@ _set_pihole_server() {
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get token, try later"
+		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "$FUNCNAME Can't get token, try later"
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${pservername}.admin_error=1
 		EOF
@@ -2579,32 +2959,53 @@ token() {
 }
 
 _fix_server() {
+	logger -t "OMR-VPS" "$FUNCNAME $1"
 	uci -q set openmptcprouter.$1=server
 }
 
 start_service() {
+
+	logger -t "OMR-VPS" "$FUNCNAME Start service..."
+
+	# 服务器数量
 	serversnb=0
+	# WAN口IP
 	wanips=""
+	# 序列号
 	serial=$(cat /proc/cpuinfo | grep Serial | awk '{print $3}')
 	[ -z "$serial" ] && [ -f "/usr/sbin/dmidecode" ] && serial=$(/usr/sbin/dmidecode -t 1 | egrep 'Serial' | awk '{print $3}')
+	# 设置序列号
 	uci -q set openmptcprouter.settings.serial=${serial}
+	# 加载配置/etc/config/openmptcprouter
 	config_load openmptcprouter
-	config_foreach _fix_server openmptcprouter
+	# 对/etc/config/openmptcprouter文件中的每一个openmptcprouter段，都调用函数_fix_server
+	config_foreach _fix_server openmptcprouter	# 这个逻辑没用，因为不存在openmptcprouter配置段
+	# 服务器计数,遍历/etc/config/openmptcprouter中所有server类型的section; uci show openmptcprouter | grep "=server"; uci show openmptcprouter.vps
+	# 默认只有一个名为vps的服务器
 	config_foreach _count_server server
+	# 获取公网IP,遍历/etc/config/openmptcprouter中所有interface类型的section
 	config_foreach _get_local_wan_ip interface
+	# 配置各种服务,遍历/etc/config/openmptcprouter中所有server类型的section,对每个section都指定_config_server函数
 	config_foreach _config_service server
 
+	# 保存配置
 	uci -q batch <<-EOF >/dev/null
 		commit openmptcprouter
 	EOF
+
+	# 软件包升级，需要升级的软件包列表位于/etc/backup/installed_packages.txt文件中
 	if [ "$(ps w | grep sysupgrade)" = "" ]; then
+		logger -t "OMR-VPS" "$FUNCNAME Restart /etc/init.d/sysupgrade..."
 		/etc/init.d/sysupgrade restart
 	fi
 }
 
+# 服务触发器，当相关服务或配置发生变化时，OpenMPTCPRouter的VPS组件能够适当地响应
 service_triggers() {
 	#procd_add_reload_trigger openmptcprouter network shadowsocks-libev v2ray glorytun glorytun-udp mlvpn openvpn dsvpn
+	# 当以下任意一个任务重启或重载时，会触发此服务
 	procd_add_reload_trigger shadowsocks-libev shadowsocks-rust v2ray xray glorytun glorytun-udp mlvpn dsvpn
+	# 当防火墙配置发生变化时，会调用set_vps_firewall
 	procd_add_config_trigger "config.change" "firewall" /etc/init.d/openmptcprouter-vps set_vps_firewall
 	#procd_add_config_trigger "config.change" "network" /etc/init.d/openmptcprouter-vps set_gre_tunnel
 	#procd_add_reload_trigger openmptcprouter shadowsocks-libev network upnpd
