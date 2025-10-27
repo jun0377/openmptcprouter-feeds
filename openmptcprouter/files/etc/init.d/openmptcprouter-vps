@@ -1321,23 +1321,37 @@ _get_lan_ip() {
 # 设备和VPS之间协商LAN口IP地址配置
 _set_lan_ip() {
 
-	# 将LAN IP发送到服务器端，有服务器端协商分配
-	# uci get network.lan.ipaddr;    uci get network.lan.netmask;
-	settings='{"sn" : "'${serial}'", "ip" : "'$(uci get network.lan.ipaddr)/$(uci get network.lan.netmask)'"}'
+	# 将LAN IP发送到服务器端，由服务器端协商分配
+	uci get network.lan.ipaddr;    uci get network.lan.netmask;
+	settings='{"sn" : "'${serial}'", "lanip" : "'$(uci get network.lan.ipaddr)'", "lanmask" : "'$(uci get network.lan.netmask)'"}'
 	result=$(_set_json "setLanIP" "${settings}")
 	logger -t "OMR-VPS" "$FUNCNAME result:${result}"
 
 	# 重新从服务器获取LAN IP
-	lanIP=$(_get_json "getLanIP?serial=${serial}")
+	response=$(_get_json "getLanIP?serial=${serial}")
+	logger -t "OMR-VPS" "$FUNCNAME lanIP:${response}"
+	lanIP=$(echo ${response} | jsonfilter -e '@.lanip') # 192.168.0.1/255.255.255.0
 	logger -t "OMR-VPS" "$FUNCNAME lanIP:${lanIP}"
-	lanIP=$(echo ${lanIP} | jsonfilter -e '@.lanip') # 192.168.0.1/255.255.255.0
-	logger -t "OMR-VPS" "$FUNCNAME lanIP:${lanIP}"
-	ip=$(echo ${lanIP} | cut -d'/' -f1)
-	mask=$(echo ${lanIP} | cut -d'/' -f2)
+	lanMask=$(echo ${response} | jsonfilter -e '@.lanmask')
+	# ip=$(echo ${lanIP} | cut -d'/' -f1)
+	# mask=$(echo ${lanIP} | cut -d'/' -f2)
 
-	uci set network.lan.ipaddr=${ip}
-	uci set network.lan.netmask=${mask}
+	if [ ! -z "${lanIP}" ]; then
+		uci set network.lan.ipaddr=${lanIP}
+		logger -t "OMR-VPS" "$FUNCNAME uci set network.lan.ipaddr=${lanIP}"
+	else
+		logger -t "OMR-VPS" "$FUNCNAME lanIP is null!"
+	fi
+
+	if [ ! -z "${lanMask}" ]; then
+		uci set network.lan.netmask=${lanMask}
+		logger -t "OMR-VPS" "$FUNCNAME uci set network.lan.netmask=${lanMask}"
+	else
+		logger -t "OMR-VPS" "$FUNCNAME lanMask is null!"
+	fi
+
 	uci commit network
+	logger -t "OMR-VPS" "$FUNCNAME uci commit network"
 	
 	# 立即生效
 	ifdown lan && ifup lan
