@@ -2830,6 +2830,10 @@ _config_service() {
 	vps_version=$(_get_json "getserverversion?serial=${serial}") && echo ${vps_version} | jsonfilter -q -e '@.version' | tr -d '\r\n' > /etc/vps_version
 	logger -t "OMR-VPS" "$FUNCNAME vps_version=$(cat /etc/vps_version)"
 
+	# 服务器公告
+	vps_annourcement=$(_get_json "getserverannourcement?serial=${serial}") && echo ${vps_annourcement} | jsonfilter -q -e '@.annourcement' > /etc/vps_annourcement
+	logger -t "OMR-VPS" "$FUNCNAME vps_annourcement=$(cat /etc/vps_annourcement)"
+
 	# 从服务器同步配置 uci get openmptcprouter.vps.get_config ; uci get openmptcprouter.vps.master ; uci get openmptcprouter.vps.current
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && ([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q get openmptcprouter.${servername}.current)" = "1" ]) && {
 		logger -t "OMR-VPS" "$FUNCNAME Get config from VPS..."
