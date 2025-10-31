@@ -1329,25 +1329,23 @@ _set_lan_ip() {
 
 	# 重新从服务器获取LAN IP
 	response=$(_get_json "getLanIP?serial=${serial}")
-	logger -t "OMR-VPS" "$FUNCNAME lanIP:${response}"
+	logger -t "OMR-VPS" "$FUNCNAME response:${response}"
 	lanIP=$(echo ${response} | jsonfilter -e '@.lanip') # 192.168.0.1/255.255.255.0
 	logger -t "OMR-VPS" "$FUNCNAME lanIP:${lanIP}"
 	lanMask=$(echo ${response} | jsonfilter -e '@.lanmask')
-	# ip=$(echo ${lanIP} | cut -d'/' -f1)
-	# mask=$(echo ${lanIP} | cut -d'/' -f2)
 
-	if [ ! -z "${lanIP}" ]; then
+	if [ ! -z "${lanIP}" ] && [ "${lanIP}" != "$(uci get network.lan.ipaddr)" ]; then
 		uci set network.lan.ipaddr=${lanIP}
 		logger -t "OMR-VPS" "$FUNCNAME uci set network.lan.ipaddr=${lanIP}"
 	else
-		logger -t "OMR-VPS" "$FUNCNAME lanIP is null!"
+		logger -t "OMR-VPS" "$FUNCNAME lanIP:${lanIP}!"
 	fi
 
-	if [ ! -z "${lanMask}" ]; then
+	if [ ! -z "${lanMask}" ] && [ "${lanMask}" != "$(uci get network.lan.netmask)"]; then
 		uci set network.lan.netmask=${lanMask}
 		logger -t "OMR-VPS" "$FUNCNAME uci set network.lan.netmask=${lanMask}"
 	else
-		logger -t "OMR-VPS" "$FUNCNAME lanMask is null!"
+		logger -t "OMR-VPS" "$FUNCNAME lanMask:${lanMask}!"
 	fi
 
 	uci commit network
