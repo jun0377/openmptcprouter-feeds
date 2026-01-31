@@ -3,10 +3,12 @@
 
 [ -n "$1" ] || exit
 
+# 引入 OpenWrt UCI/配置函数库
 . /lib/functions.sh
 
 basename="$(basename $0)"
 
+# 优先使用iptables-nft版本
 if [ -e /usr/sbin/iptables-nft ]; then
 	IPTABLES="/usr/sbin/iptables-nft"
 	IPTABLESSAVE="/usr/sbin/iptables-nft-save"
@@ -15,16 +17,17 @@ else
 	IPTABLESSAVE="/usr/sbin/iptables-save"
 fi
 
-export OMR_TRACKER_STATUS
-export OMR_TRACKER_PREV_STATUS
-export OMR_TRACKER_STATUS_MSG
+export OMR_TRACKER_STATUS			# 导出探测状态（OK/ERROR）
+export OMR_TRACKER_PREV_STATUS		# 导出上一次状态
+export OMR_TRACKER_STATUS_MSG		# 导出状态说明文本
 
 
-
+# 简化日志输出
 _log() {
 	logger -p daemon.info -t "${basename}" "$@"
 }
 
+# 后置钩子函数
 _post_tracking() {
 	[ -d /usr/share/omr/ss-post-tracking.d ] && {
 		for tracker_bin in /usr/share/omr/ss-post-tracking.d/*; do
@@ -48,6 +51,7 @@ _post_tracking() {
 	}
 }
 
+# 对服务器 IP 做 ping 以辅助判断
 _ping_server() {
 	local host=$1
 	ret=$(ping \
@@ -61,57 +65,70 @@ _ping_server() {
 }
 
 _get_ip() {
+	# 标记当前 OMPR 角色为“路由器”
 	uci -q set openmptcprouter.omr=router
+	# 需要进行外部检测
 	if [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
+		# 外部 IPv4 检测地址
 		check_ipv4_website="$(uci -q get openmptcprouter.settings.check_ipv4_website)"
 		[ -z "$check_ipv4_website" ] && check_ipv4_website="http://ip.openmptcprouter.com"
+		# 外部 IPv6 检测地址
 		check_ipv6_website="$(uci -q get openmptcprouter.settings.check_ipv6_website)"
 		[ -z "$check_ipv6_website" ] && check_ipv6_website="http://ipv6.openmptcprouter.com"
+		# 直连看到的公网 IPv4
 		public_ipv4="$(curl -s -4 -m 3 $check_ipv4_website)"
 		uci -q set openmptcprouter.omr.detected_public_ipv4="${public_ipv4}"
 		[ -n "$public_ipv4" ] && {
-			uci -q set upnpd.config.external_ip="${public_ipv4}"
+			uci -q set upnpd.config.external_ip="${public_ipv4}"	# 同步给 upnpd
 			uci -q commit upnpd
 		}
+		# 通过代理看到的 IPv4
 		if [ "$(uci -q get openmptcprouter.omr.shadowsocks)" != "down" ]; then
 			uci -q set openmptcprouter.omr.detected_ss_ipv4="$(curl -s -4 --socks5 "${proxy}" --max-time 3 $check_ipv4_website)"
 		else
 			uci -q del openmptcprouter.omr.detected_ss_ipv4
 		fi
+		# IPv6检测
 		if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ]; then
+			# 直连 IPv6
 			uci -q set openmptcprouter.omr.detected_public_ipv6="$(curl -s -6 -m 3 $check_ipv6_website)"
 		else
+			# 代理 IPv6
 			uci -q del openmptcprouter.omr.detected_public_ipv6
 		#	uci -q set openmptcprouter.omr.detected_ss_ipv6=$(curl -s -6 --socks5 ":::1111" --max-time 3 http://ip.openmptcprouter.com)
 		fi
 	fi
+	# 提交变更
 	uci -q commit openmptcprouter
 }
 
-timeout=${OMR_TRACKER_TIMEOUT:-5}
-interval=${OMR_TRACKER_INTERVAL:-10}
-retry=${OMR_TRACKER_TRIES:-4}
-proxy=${OMR_TRACKER_PROXY:-127.0.0.1:1111}
-hosts=${OMR_TRACKER_HOSTS:-1.1.1.1 1.0.0.1}
-#hosts6=${OMR_TRACKER_HOSTS6}
-wait_test=${OMR_TRACKER_WAIT_TEST:-0}
-server=${OMR_TRACKER_SERVER:-sss0}
-type=${OMR_TRACKER_SS_TYPE:-libev}
+timeout=${OMR_TRACKER_TIMEOUT:-5}					# 探测超时（秒）
+interval=${OMR_TRACKER_INTERVAL:-10}				# 循环间隔（秒）
+retry=${OMR_TRACKER_TRIES:-4}						# 连续失败阈值
+proxy=${OMR_TRACKER_PROXY:-127.0.0.1:1111}			# SOCKS5 代理地址
+hosts=${OMR_TRACKER_HOSTS:-1.1.1.1 1.0.0.1}			# 通过代理探测的目标站点（HTTP HEAD）
+#hosts6=${OMR_TRACKER_HOSTS6}						# 可选 IPv6 探测站点
+wait_test=${OMR_TRACKER_WAIT_TEST:-0}				# 失败后等待时间
+server=${OMR_TRACKER_SERVER:-sss0}					# Shadowsocks 服务器配置段 id
+type=${OMR_TRACKER_SS_TYPE:-libev}					# shadowsocks 类型（libev|rust）
 #nodns=0
 
-last=0
-nocontact=""
-uci -q set openmptcprouter.omr=router
-uci -q delete openmptcprouter.omr.shadowsocks=""
-_get_ip
+last=0												# 连续失败次数计数
+nocontact=""										# 累积无法连接的 host 列表
+uci -q set openmptcprouter.omr=router				# 标记角色为 router
+uci -q delete openmptcprouter.omr.shadowsocks=""	# 清除占位键
+_get_ip												# 初始获取公网/代理 IP 视图
 
-OMR_TRACKER_PREV_STATUS=""
+OMR_TRACKER_PREV_STATUS=""							# 初始化前态为空
 
+# 滚动探测 hosts
 while true; do
-	host="${hosts%% *}"
+	host="${hosts%% *}"								# 取队头 host
+	# 轮转队列，避免单点影响
 	[ "$host" = "$hosts" ] || {
 		hosts="${hosts#* } $host"
 	}
+	# IPv6 探测的轮转逻辑（保留示例）
 	#if [ -n "$host6" ]; then
 	#	host6="${hosts6%% *}"
 	#	[ "$host6" = "$hosts6" ] || {
@@ -119,25 +136,34 @@ while true; do
 	#	}
 	#fi
 	#if [ "$(curl -s -I -w %{http_code} --socks5 "${proxy}" --max-time "${timeout}" "$host" -o /dev/null)" != "000" ] || [ "$(curl -s -I -w %{http_code} --socks5 "${proxy}" --max-time "${timeout}" "$host6" -o /dev/null)" != "000" ]; then
+	# 通过 SOCKS5 代理做 HTTP HEAD，返回码非 000 代表连通（curl 成功建立连接/得到响应）
 	if [ "$(curl -s -I -w %{http_code} --socks5 "${proxy}" --max-time "${timeout}" "$host" -o /dev/null)" != "000" ]; then
+		# 清空失败 host 列表
 		nocontact=""
 		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.ss_${server})" != "up" ] && {
+			# 记录恢复日志
 			_log "Shadowsocks $type ${server} is up (can contact via http ${host})"
 			OMR_TRACKER_STATUS_MSG="Shadowsocks $type ${server} is up (can contact via http ${host})"
+			# 标记代理状态为 up
 			uci -q set openmptcprouter.omr.ss_${server}="up"
 			uci -q commit openmptcprouter.omr
 
+			# 针对 shadowsocks-rust：若条目 server 等于给定值，则启用
 			_remove_rule() {
 				[ "$(uci -q get shadowsocks-rust.$1.server)" != "$2" ] && return
 				uci -q set shadowsocks-rust.$1.disabled=0
 			}
+			# 遍历调用（注意：此行形式不常见，通常应传函数名与类型）
 			config_foreach shadowsocks-rust ${server}
 			uci -q commit shadowsocks-rust
+			# 重置规则（确保清洁状态）
 			[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev rules_reset 2> /dev/null
 			[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_reset 2> /dev/null
+			# 如需：直接上规则
 			#[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev rules_up 2> /dev/null
 			#[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_up 2> /dev/null
 
+			# 邮件告警开关
 			mail_alert="$(uci -q get omr-tracker.proxy.mail_alert)"
 			#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
 			[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
@@ -152,10 +178,13 @@ while true; do
 					echo -e "Subject: $OMR_SYSNAME: Shadowsocks Proxy is UP." | sendmail $(uci -q get mail.default.to)
 				fi
 			}
+			# 上行自定义脚本
 			script_alert_up="$(uci -q get omr-tracker.proxy.script_alert_up)"
 			[ -n "$script_alert_up" ] && eval $script_alert_up
+			# 更新公网/代理 IP 视图
 			_get_ip
 		}
+		# 若系统未检测到 ss iptables/nft 规则，尝试加载规则；失败则重启进程
 		if [ -z "$($IPTABLESSAVE 2>/dev/null | grep :ssr)" ] && [ -z "$(nft list ruleset 2>/dev/null | grep 'goto ss_rules_forward_tcp')" ]; then
 			if [ "$type" = "libev" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.${server}.key)" != "" ] && [ "$(uci -q get shadowsocks-libev.${server}.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.${server}.disabled)" != "1" ]; then
 				_log "Reload Shadowsocks rules"
@@ -175,24 +204,29 @@ while true; do
 				_get_ip
 			fi
 		fi
+		# 若缺失外网 IP 视图（含 IPv6），则补做一次获取
 		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || { [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]; } && _get_ip
-		last=0
-		OMR_TRACKER_STATUS="OK"
+		last=0							# 成功后复位连续失败计数
+		OMR_TRACKER_STATUS="OK"			# 设置状态为 OK
 	else
 		last=$((last + 1 ))
+		# 记录失败的 host
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
 		if [ "$type" = "libev" ]; then
-			serverip="$(uci -q get shadowsocks-libev.${server}.server)"
-			disabled="$(uci -q get shadowsocks-libev.${server}.disabled)"
+			serverip="$(uci -q get shadowsocks-libev.${server}.server)"				# 获取服务器 IP
+			disabled="$(uci -q get shadowsocks-libev.${server}.disabled)"			# 是否禁用
 		elif [ "$type" = "rust" ]; then
 			serverip="$(uci -q get shadowsocks-rust.${server}.server)"
 			disabled="$(uci -q get shadowsocks-rust.${server}.disabled)"
 		fi
+		# 达到连续失败阈值，执行降级流程
 		[ "${last}" -ge "${retry}" ] && {
 			#if [ "$OMR_TRACKER_PREV_STATUS" != "ERROR" ] && { [ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ssr)" ] || [ -n "$(nft list ruleset 2>/dev/null | grep ss_r)" ] || [ -n "$(nft list ruleset 2>/dev/null | grep ssr_r)" ]; }; then
 			if [ -n "$(nft list ruleset | grep $serverip)" ] && [ -n "$(nft list ruleset 2>/dev/null | grep 'goto ss_rules_forward_tcp')" ]; then
+				# 记录失败日志
 				_log "Shadowsocks $type ${server} is down (can't contact via http ${nocontact})"
 				OMR_TRACKER_STATUS_MSG="Shadowsocks $type ${server} is down (can't contact via http ${nocontact})"
+				# 标记代理状态为 dow
 				uci -q set openmptcprouter.omr.ss_${server}="down"
 				uci -q commit openmptcprouter.omr
 
@@ -202,24 +236,30 @@ while true; do
 #					[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_down 2> /dev/null
 #				#fi
 #				else
+					# 针对 shadowsocks-rust：匹配 server 即禁用
 					_remove_rule() {
 						[ "$(uci -q get shadowsocks-rust.$1.server)" != "$2" ] && return
 						uci -q set shadowsocks-rust.$1.disabled=1
 					}
+					# 遍历禁用（同上：此行形式不常见）
 					config_foreach shadowsocks-rust ${server}
 					uci -q commit shadowsocks-rust
 #					[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev reload 2> /dev/null
 #					[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust reload 2> /dev/null
+					# 重置规则回到干净状态
 					[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev rules_reset 2> /dev/null
 					[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_reset 2> /dev/null
 #				fi
+				# 更新 IP 视图，便于告警信息更准确
 				_get_ip
 				server_ping=false
+				# 直接 ping 服务器 IP，辅助判断是否服务器侧问题
 				_ping_server $serverip
 				if [ "$server_ping" = false ]; then
 					_log "Server $server ($serverip) seems down, no answer to ping"
 					OMR_TRACKER_STATUS_MSG="${OMR_TRACKER_STATUS_MSG} - Server $server ($serverip) seems down, no answer to ping"
 				fi
+				# 邮件告警
 				mail_alert="$(uci -q get omr-tracker.proxy.mail_alert)"
 				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
 				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
@@ -234,26 +274,33 @@ while true; do
 						echo -e "Subject: $OMR_SYSNAME: Shadowsocks Proxy is down\n\nConnection failure of ShadowSocks proxy detected. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
 					fi
 				}
+				# 下行自定义脚本
 				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_down)"
 				[ -n "$script_alert_down" ] && eval $script_alert_down
+				# 若未禁用且服务器配置有效
 				if [ "$disabled" != "1" ] && [ "$serverip" != "1" ]; then
 					if [ "$type" = "libev" ] && [ "$(pgrep ss-redir)" = "" ] && [ "$(uci -q get shadowsocks-libev.${server}.key)" != "" ]; then
 						_log "Can't find shadowsocks, restart it..."
+						# 重启 libev 进程
 						/etc/init.d/shadowsocks-libev restart
 						sleep 5
 					fi
 					if [ "$type" = "rust" ] && [ "$(pgrep sslocal)" = "" ] && [ "$(uci -q get shadowsocks-rust.${server}.password)" != "" ]; then
 						_log "Can't find shadowsocks rust, restart it..."
+						# 重启 rust 进程
 						/etc/init.d/shadowsocks-rust restart
 						sleep 5
 					fi
 				fi
-				sleep $wait_test
-				OMR_TRACKER_STATUS="ERROR"
+				sleep $wait_test				# 失败后的等待窗口
+				OMR_TRACKER_STATUS="ERROR"		# 置为 ERROR
 			fi
 		}
 	fi
+	# 执行后置钩子（通知联动组件）
 	_post_tracking
+	# 保存当前状态用于下一轮比较
 	OMR_TRACKER_PREV_STATUS="$OMR_TRACKER_STATUS"
+	# 周期性休眠
 	sleep "${interval}"
 done

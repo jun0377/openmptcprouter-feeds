@@ -4,24 +4,28 @@
 name=$0
 basename="$(basename $0)"
 
+# 优先使用iptables-nft
 if [ -e /usr/sbin/iptables-nft ]; then
 	IPTABLES="/usr/sbin/iptables-nft"
 else
 	IPTABLES="/usr/sbin/iptables"
 fi
 
-export OMR_TRACKER_STATUS
-export OMR_TRACKER_PREV_STATUS
-export OMR_TRACKER_STATUS_MSG
+export OMR_TRACKER_STATUS			# 导出：本轮探测状态（OK/ERROR）
+export OMR_TRACKER_PREV_STATUS		# 导出：上一轮探测状态
+export OMR_TRACKER_STATUS_MSG		# 导出：状态消息说明
 
-
+# 统一日志输出
 _log() {
 	logger -p daemon.info -t "${basename}" "$@"
 }
 
+# 后置钩子函数
 _post_tracking() {
+	# 存在 v2ray 钩子目录则逐个执行
 	[ -d /usr/share/omr/v2ray-post-tracking.d ] && {
 		for tracker_bin in /usr/share/omr/v2ray-post-tracking.d/*; do
+			# 仅执行可执行脚本
 			[ -x "$tracker_bin" ] && (
 				_log() {
 					logger -t "v2ray-post-tracking-${tracker_bin##*/}" "$*"
@@ -30,6 +34,7 @@ _post_tracking() {
 			)
 		done
 	}
+	# 通用代理钩子目录
 	[ -d /usr/share/omr/proxy-post-tracking.d ] && {
 		for tracker_bin in /usr/share/omr/proxy-post-tracking.d/*; do
 			[ -x "$tracker_bin" ] && (
@@ -42,6 +47,7 @@ _post_tracking() {
 	}
 }
 
+# ping服务器测试
 _ping_server() {
 	local host=$1
 	ret=$(ping \
@@ -55,23 +61,32 @@ _ping_server() {
 }
 
 _get_ip() {
+	# 标记当前角色为 router
 	uci -q set openmptcprouter.omr=router
+	# 需要进行外部检测
 	if [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
+		# 外部 IPv4 检测地址
 		check_ipv4_website="$(uci -q get openmptcprouter.settings.check_ipv4_website)"
 		[ -z "$check_ipv4_website" ] && check_ipv4_website="http://ip.openmptcprouter.com"
+		# 外部 IPv6 检测地址
 		check_ipv6_website="$(uci -q get openmptcprouter.settings.check_ipv6_website)"
 		[ -z "$check_ipv6_website" ] && check_ipv6_website="http://ipv6.openmptcprouter.com"
+		# 直连看到的公网 IPv4
 		public_ipv4="$(curl -s -4 -m 3 $check_ipv4_website)"
+		# 写入 UCI
 		uci -q set openmptcprouter.omr.detected_public_ipv4="${public_ipv4}"
+		# 更新 UPnP 外网 IP
 		[ -n "${public_ipv4}" ] && {
 			uci -q set upnpd.config.external_ip="${public_ipv4}"
 			uci -q commit upnpd
 		}
+		# 通过代理看到的 IPv4
 		if [ "$(uci -q get openmptcprouter.omr.v2ray)" != "down" ]; then
 			uci -q set openmptcprouter.omr.detected_ss_ipv4="$(curl -s -4 --socks5 "${proxy}" --max-time 3 $check_ipv4_website)"
 		else
 			uci -q del openmptcprouter.omr.detected_ss_ipv4
 		fi
+		# 直连 IPv6
 		if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ]; then
 			uci -q set openmptcprouter.omr.detected_public_ipv6="$(curl -s -6 -m 3 $check_ipv6_website)"
 		else
@@ -79,40 +94,51 @@ _get_ip() {
 		#	uci -q set openmptcprouter.omr.detected_ss_ipv6=$(curl -s -6 --socks5 ":::1111" --max-time 3 http://ip.openmptcprouter.com)
 		fi
 	fi
+	# 提交 UCI 变更
 	uci -q commit openmptcprouter
 }
 
-timeout=${OMR_TRACKER_TIMEOUT:-5}
-interval=${OMR_TRACKER_INTERVAL:-10}
-retry=${OMR_TRACKER_TRIES:-4}
-proxy=${OMR_TRACKER_PROXY:-127.0.0.1:1111}
-hosts=${OMR_TRACKER_HOSTS:-1.1.1.1 1.0.0.1}
-wait_test=${OMR_TRACKER_WAIT_TEST:-0}
+timeout=${OMR_TRACKER_TIMEOUT:-5}					# 探测超时（秒）
+interval=${OMR_TRACKER_INTERVAL:-10}				# 主循环间隔（秒）
+retry=${OMR_TRACKER_TRIES:-4}						# 连续失败阈值
+proxy=${OMR_TRACKER_PROXY:-127.0.0.1:1111}			# SOCKS5 代理地址
+hosts=${OMR_TRACKER_HOSTS:-1.1.1.1 1.0.0.1}			# 通过代理探测的目标站点列表
+wait_test=${OMR_TRACKER_WAIT_TEST:-0}				# 失败后等待时长
 
-nodns=0
+nodns=0												# 保留变量，未使用
 
-last=0
-nocontact=""
-uci -q set openmptcprouter.omr=router
-uci -q delete openmptcprouter.omr.v2ray
-_get_ip
+last=0												# 连续失败计数器
+nocontact=""										# 累积无法连接的主机列表
+uci -q set openmptcprouter.omr=router				# 再次标记角色
+uci -q delete openmptcprouter.omr.v2ray				# 清除旧状态键（若存在）
+_get_ip												# 初始获取 IP 视图
 
-OMR_TRACKER_PREV_STATUS=""
+OMR_TRACKER_PREV_STATUS=""							# 初始化前态为空
+
 while true; do
-	host="${hosts%% *}"
+	host="${hosts%% *}"								# 取队头 host
+	# 轮转队列，避免单点故障影响判定
 	[ "$host" = "$hosts" ] || {
 		hosts="${hosts#* } $host"
 	}
+	# 通过 SOCKS5 HEAD 检测连通性
 	if [ "$(curl -s -I -w %{http_code} --socks5 ${proxy} --max-time ${timeout} $host -o /dev/null)" != "000" ]; then
+		# 清空失败主机列表
 		nocontact=""
+		# 达阈值或首次 up 需要写状态
 		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.v2ray)" = "" ] && {
+			# 记录成功日志
 			_log "V2Ray is up (can contact via http ${host})"
 			OMR_TRACKER_STATUS_MSG="V2Ray is up (can contact via http ${host})"
+			# 标记为 up
 			uci -q set openmptcprouter.omr.v2ray="up"
 			uci -q commit openmptcprouter.omr
+			# 根据状态设置 VPS 防火墙
 			/etc/init.d/openmptcprouter-vps set_vps_firewall
+			# 邮件告警开关
 			mail_alert="$(uci -q get omr-tracker.proxy.mail_alert)"
 			#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
+			# 发送UP邮件
 			[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
 				OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
 				if [ "$(uci -q get omr-tracker.defaults.mail_up_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_up_message)" != "" ]; then
@@ -125,39 +151,57 @@ while true; do
 					echo -e "Subject: $OMR_SYSNAME: V2Ray Proxy is UP." | sendmail $(uci -q get mail.default.to)
 				fi
 			}
+			# 执行自定义上行脚本
 			script_alert_up="$(uci -q get omr-tracker.proxy.script_alert_up)"
 			[ -n "$script_alert_up" ] && eval $script_alert_up
+			# 更新 IP 视图
 			_get_ip
 		}
+		# 若未检测到 v2ray NAT 链，加载规则
 		if [ -z "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ^v2r)" ] && [ -z "$(nft list ruleset 2>/dev/null | grep 'chain v2r')" ]; then
 			_log "Reload V2Ray rules"
 			/etc/init.d/v2ray rules_up 2> /dev/null
+			# 规则变更后再次更新 IP 视图
 			_get_ip
 		fi
 		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || ([ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]) && _get_ip
+		# 成功后清零失败计数
 		last=0
+		# 本轮状态 OK
 		OMR_TRACKER_STATUS="OK"
 	else
+		# 失败计数 +1
 		last=$((last + 1 ))
+		# 累积记录失败主机
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
+		# 达到连续失败阈值，判定 down
 		[ "${last}" -ge "${retry}" ] && {
 			if [ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ^v2r)" ] || [ -n "$(nft list ruleset 2>/dev/null | grep 'chain v2r')" ]; then
+				# 记录失败日志
 				_log "V2Ray is down (can't contact via http ${nocontact})"
 				OMR_TRACKER_STATUS_MSG="V2Ray is down (can't contact via http ${nocontact})"
+				# 标记为 down
 				uci -q set openmptcprouter.omr.v2ray="down"
 				uci -q commit openmptcprouter.omr
+				# 设置防火墙（down 态）
 				/etc/init.d/openmptcprouter-vps set_vps_firewall
+				# 下线 v2ray 规则
 				/etc/init.d/v2ray rules_down 2> /dev/null
+				# 更新 IP 视图
 				_get_ip
 				server_ping=false
+				# 从配置中读取服务器地址以辅助诊断
 				server="$(uci -q get v2ray.omrout.s_vless_address)"
+				# 尝试 ping 服务器，辅助定位是服务端问题还是链路问题
 				_ping_server $server
 				if [ "$server_ping" = false ]; then
 					_log "Server ($server) seems down, no answer to ping"
 					OMR_TRACKER_STATUS_MSG="${OMR_TRACKER_STATUS_MSG} - Server ($server) seems down, no answer to ping"
 				fi
+				# 邮件告警
 				mail_alert="$(uci -q get omr-tracker.proxy.mail_alert)"
 				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
+				# 发送DOWN邮件
 				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
 					OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
 					if [ "$(uci -q get omr-tracker.defaults.mail_down_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_down_message)" != "" ]; then
@@ -170,14 +214,20 @@ while true; do
 						echo -e "Subject: $OMR_SYSNAME: V2Ray Proxy is down\n\nConnection failure of V2Ray proxy detected. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
 					fi
 				}
+				# 执行自定义下行脚本
 				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_down)"
 				[ -n "$script_alert_down" ] && eval $script_alert_down
+				# 失败后的等待窗口
 				sleep $wait_test
 			fi
 		}
+		# 本轮状态 ERROR
 		OMR_TRACKER_STATUS="ERROR"
 	fi
+	# 执行后置钩子（通知联动组件）
 	_post_tracking
+	# 保存当前状态用于下一轮比较
 	OMR_TRACKER_PREV_STATUS="$OMR_TRACKER_STATUS"
+	# 周期性休眠
 	sleep "${interval}"
 done
