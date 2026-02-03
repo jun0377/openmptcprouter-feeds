@@ -1,4 +1,9 @@
 #!/bin/sh
+
+# 作为OpenWrt热插拔iface钩子脚本，在网口状态变化时联动MPTCP配置
+## 接口上线/更新时，按接口配置是否开启 multipath 来触发 MPTCP 的配置重载
+## 接口下线时，关闭该设备的 MPTCP multipath
+
 [ "$ACTION" = ifup -o "$ACTION" = ifupdate -o "$ACTION" = ifdown -o "$ACTION" = iflink -o "$ACTION" = link-up -o "$ACTION" = link-down ] || exit 0
 #[ "$ACTION" = ifupdate -a -z "$IFUPDATE_ADDRESSES" -a -z "$IFUPDATE_DATA" ] && exit 0
 

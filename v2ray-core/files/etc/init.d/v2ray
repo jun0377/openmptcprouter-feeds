@@ -35,6 +35,7 @@ DNSMASQ_RESTART_EXPECTED=0
 
 . /usr/share/libubox/jshn.sh
 
+# 日志封装, 可使用 logread -e v2ray查看v2ray日志
 _log() {
 	local level="$1" ; shift
 	local msg="$@"
@@ -43,14 +44,17 @@ _log() {
 	echo "[$level] $msg" >&2
 }
 
+# info等级日志
 _info() {
 	_log "info" $@
 }
 
+# err等级日志
 _err() {
 	_log "err" $@
 }
 
+# 内核版本是否高于5.14
 version_over_5_4() {
 	MAJOR_VERSION=$(uname -r | awk -F '.' '{print $1}')
 	MINOR_VERSION=$(uname -r | awk -F '.' '{print $2}' | awk -F '-' '{print $1}')
@@ -61,42 +65,47 @@ version_over_5_4() {
 	fi
 }
 
-
+# 从json结构中提取指定的键值
 get_value_from_json() {
-	local json="$1"
-	local key="$2"
+	local json="$1"						# JSON 字符串
+	local key="$2"						# 要提取的键名
 
-	test -n "$json" || return
+	test -n "$json" || return			# 如果 JSON 为空，直接返回
 
 	local value=""
 
 	local old_ns
-	json_set_namespace "json_key" old_ns
-	json_load "$json"
-	json_get_var "$key" value
-	json_cleanup
-	json_set_namespace "$old_ns"
+	json_set_namespace "json_key" old_ns	# 设置 JSON 命名空间,实际上是通过添加前缀来隔离变量的
+	json_load "$json"						# 加载 JSON 数据
+	json_get_var "$key" value				# 提取指定键的值
+	json_cleanup							# 清理 JSON 解析器
+	json_set_namespace "$old_ns"			# 恢复原来的命名空间
 
 	echo "$value"
 }
 
+# 从json结构中提取shell命令
 get_commands_from_json() {
 	local json="$1"
 
 	test -n "$json" || return
 
+	# 使用jshn -r将JSON转换为Shell命令并执行之
 	jshn -r "$json" 2>/dev/null | grep -v "json_init"
 }
 
+# 用于读取配置文件
 get_file_content() {
-	local filename="$1"
+	local filename="$1"		# 文件名
 
-	test -n "$filename" || return
-	test -r "/etc/v2ray/${filename}.txt" || return
+	test -n "$filename" || return					# 如果文件名为空，直接返回
+	test -r "/etc/v2ray/${filename}.txt" || return	# 检查文件是否存在且可读
 
+	# 读取文件内容，过滤空行和注释行
 	cat "/etc/v2ray/${filename}.txt" | grep -v "^$" | grep -v "^#"
 }
 
+# 将IPv4地址追加到一个全局服务器列表中
 append_server_ipv4() {
 	local addr="$1"
 
@@ -113,6 +122,7 @@ append_server_ipv4() {
 	fi
 }
 
+# 将IPv6地址追加到一个全局服务器列表中
 append_server_ipv6() {
 	local addr="$1"
 
@@ -129,6 +139,7 @@ append_server_ipv6() {
 	fi
 }
 
+# 将IPv4或IPv6地址追加到一个全局服务器列表中
 append_server_address() {
 	local addr="$1"
 
@@ -145,6 +156,7 @@ append_server_address() {
 	done
 }
 
+# v2ray uci配置检查,用于验证 V2Ray 配置节的有效性
 v2ray_section_validate() {
 	uci_validate_section "$NAME" "v2ray" "$1" \
 		'enabled:bool:0' \
@@ -161,6 +173,7 @@ v2ray_section_validate() {
 		'outbounds:list(uci("v2ray", "@outbound"))'
 }
 
+# dns uci配置检查
 dns_section_validate() {
 	uci_validate_section "$NAME" "dns" "$1" \
 		'enabled:bool:0' \
@@ -170,6 +183,7 @@ dns_section_validate() {
 		'servers:list(uci("v2ray", "@dns_server"))'
 }
 
+# dns_server uci配置检查
 dns_server_section_validate() {
 	uci_validate_section "$NAME" "dns_server" "$1" \
 		'address:string' \
@@ -178,6 +192,7 @@ dns_server_section_validate() {
 		'expect_ips:list(string)'
 }
 
+# routing uci配置检查
 routing_section_validate() {
 	uci_validate_section "$NAME" "routing" "$1" \
 		'enabled:bool:0' \
@@ -186,6 +201,7 @@ routing_section_validate() {
 		'balancers:list(uci("v2ray", "@routing_balancer"))'
 }
 
+# routing_rule uci配置检查
 routing_rule_section_validate() {
 	uci_validate_section "$NAME" "routing_rule" "$1" \
 		'type:"field"' \
@@ -202,12 +218,14 @@ routing_rule_section_validate() {
 		'balancer_tag:string'
 }
 
+# routing_balancer uci配置检查
 routing_balancer_section_validate() {
 	uci_validate_section "$NAME" "routing_balancer" "$1" \
 		'tag:string' \
 		'selector:list(string)'
 }
 
+# policy uci配置检查
 policy_section_validate() {
 	uci_validate_section "$NAME" "policy" "$1" \
 		'enabled:bool:0' \
@@ -216,6 +234,7 @@ policy_section_validate() {
 		'system_stats_inbound_downlink:bool:0'
 }
 
+# policy_level uci配置检查
 policy_level_section_validate() {
 	uci_validate_section "$NAME" "policy_level" "$1" \
 		'level:uinteger' \
@@ -228,6 +247,7 @@ policy_level_section_validate() {
 		'buffer_size:uinteger'
 }
 
+# reverse uci配置检查
 reverse_section_validate() {
 	uci_validate_section "$NAME" "reverse" "$1" \
 		'enabled:bool:0' \
@@ -235,6 +255,7 @@ reverse_section_validate() {
 		'portals:list(string)'
 }
 
+# inbound uci配置检查
 inbound_section_validate() {
 	uci_validate_section "$NAME" "inbound" "$1" \
 		'port:or(port, portrange, string)' \
@@ -338,6 +359,7 @@ inbound_section_validate() {
 		'allocate_concurrency:uinteger'
 }
 
+# outbound uci配置检查
 outbound_section_validate() {
 	uci_validate_section "$NAME" "outbound" "$1" \
 		'send_through:ipaddr' \
@@ -434,36 +456,51 @@ outbound_section_validate() {
 		'mux_concurrency:uinteger:8'
 }
 
+# 配置 V2Ray 透明代理规则
+## 设置iptables规则：将流量重定向到V2Ray代理
+## 支持IPv4/IPv6：分别处理两种协议
+## 智能直连：通过IP集避免某些流量走代理
+## 集成其他组件：如omr-bypass
+## 可配置性强：通过UCI配置控制各种行为
 add_v2ray_redirect_rules() {
-	local ext_args="$1"
-	local lan_devices="$2"
-	local lan_ipaddrs="$3"
+	local ext_args="$1"			# 额外参数
+	local lan_devices="$2"		# LAN 设备列表
+	local lan_ipaddrs="$3"		# LAN IP 地址列表
 
-	local port="$TRANSPARENT_PROXY_PORT"
-	local addition="$TRANSPARENT_PROXY_ADDITION"
-	local ipset_src_direct="$IPSET_SRC_DIRECT_V4"
-	local ipset_dst_direct="$IPSET_DST_DIRECT_V4"
+	local port="$TRANSPARENT_PROXY_PORT"				# 透明代理端口
+	local addition="$TRANSPARENT_PROXY_ADDITION"		# 额外参数
+	local ipset_src_direct="$IPSET_SRC_DIRECT_V4"		# 直连源IP集合
+	local ipset_dst_direct="$IPSET_DST_DIRECT_V4"		# 直连目标IP集合
 
-	test -n "$port" || return
+	test -n "$port" || return							# 如果端口未设置，直接返回
 
-	# This part need a rewrite
+	# 清理现有IPv4规则 This part need a rewrite
 	v2ray-rules -f
 	#logger -t "v2ray" "v2ray-rules -l ${port} -L ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward"
+	# 构建IPv4规则命令
 	commandline="-l ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward"
+	# 如果需要重定向UDP
 	[ "$(uci -q get v2ray.main_transparent_proxy.redirect_udp)" = "1" ] && [ "$(uci -q get v2ray.omrout.protocol)" != "socks" ] && commandline="$commandline -L ${port}"
+	# 应用IPv4规则
 	v2ray-rules $commandline
+	# 如果启用IPv6且有IPv6服务器
 	[ "$(uci -q get v2ray.main.inbounds | grep omr6)" != "" ] && [ -n "$OUTBOUND_SERVERS_V6" ] && {
+		# 清理IPv6规则
 		v2ray-rules6 -f
+		# 构建IPv6规则命令
 		commandline="-l $((port+1)) -L $((port+1)) -s $OUTBOUND_SERVERS_V6 --rule-name def --src-default forward --dst-default forward --local-default forward"
 		[ "$(uci -q get v2ray.main_transparent_proxy.redirect_udp)" = "1" ] && ([ "$(uci -q get v2ray.omrout.protocol)" = "vless" ] || [ "$(uci -q get v2ray.omrout.protocol)" = "vmess" ]) && commandline="$commandline -L ${port+1}"
+		# 应用IPv6规则
 		v2ray-rules6 $commandline
 	}
+	# 重新加载omr-bypass规则（如果存在）
 	[ -f /etc/init.d/omr-bypass ] && [ -z "$(pgrep -f omr-bypass)" ] && {
 		logger -t "v2ray" "Reload omr-bypass rules"
 		/etc/init.d/omr-bypass reload_rules
 	}
 }
 
+# 初始化 DNS 分流和 IP 集合规则
 init_rules_for_listfile() {
 	local direct_list_dns="$1"
 	local proxy_list_dns="$2"
@@ -539,6 +576,7 @@ init_rules_for_listfile() {
 
 }
 
+# 有必要的话重启dnsmasq
 gracefully_restart_dnsmasq() {
 	if [ "x$DNSMASQ_RESTART_EXPECTED" = "x1" ] && [ -x "/etc/init.d/dnsmasq" ] ; then
 		_info "Restarting dnsmasq..."
@@ -1874,6 +1912,7 @@ add_outbound_setting() {
 	json_close_object
 }
 
+# 读取透明代理配置，把端口、TPROXY、UDP/DNS 等配置设置到环境变量
 init_transparent_proxy() {
 	local tp_cfg="main_transparent_proxy"
 	local redirect_port use_tproxy redirect_udp redirect_dns
@@ -1901,6 +1940,7 @@ init_transparent_proxy() {
 	fi
 }
 
+# 根据透明代理模式和 LAN 接口集合，添加 ipset/dnsmasq 与 v2ray-rules 规则
 setup_transparent_proxy() {
 	if [ -z "$TRANSPARENT_PROXY_PORT" ] ; then
 		#_info "Transparent proxy disabled."
@@ -2035,9 +2075,11 @@ setup_transparent_proxy() {
 	add_v2ray_redirect_rules "$ext_args" "$lan_devices" "$lan_ipaddrs"
 }
 
+# 清理透明代理规则
 clear_transparent_proxy() {
 	v2ray-rules -f
 
+	# /tmp/dnsmasq.d/v2ray
 	if [ -s "$FILE_V2RAY_DNSMASQ" ] ; then
 		rm -f "$FILE_V2RAY_DNSMASQ"
 		DNSMASQ_RESTART_EXPECTED=1
@@ -2192,6 +2234,7 @@ rules_exist() {
 	return 1
 }
 
+# 补齐规则
 rules_up() {
 	rules_exist && {
 		[ -f /bin/blocklanfw ] && /bin/blocklanfw 2>&1 >/dev/null
@@ -2239,22 +2282,26 @@ rules_down() {
 	}
 }
 
+# 启动服务
 start_service() {
-	clear_transparent_proxy
+	clear_transparent_proxy			# 清除旧的透明代理规则
 
-	config_load "$NAME"
+	config_load "$NAME"				# 加载/etc/config/v2ray配置文件到环境变量
 
+	# 读取透明代理配置，把端口、TPROXY、UDP/DNS 等配置设置到环境变量
 	if ! init_transparent_proxy ; then
 		gracefully_restart_dnsmasq
 		return 1
 	fi
 
+	# 启动v2ray实例
 	config_foreach start_instance "v2ray"
 
-	setup_transparent_proxy
-	gracefully_restart_dnsmasq
+	setup_transparent_proxy			# 设置透明代理规则
+	gracefully_restart_dnsmasq		# 重启dnsmasq
 	rules_up
 
+	# 删除变量
 	unset OUTBOUND_SERVERS_V4 \
 		OUTBOUND_SERVERS_V6 \
 		TRANSPARENT_PROXY_EXPECTED \
