@@ -7,6 +7,9 @@
 # See /LICENSE for more information.
 #
 
+# 在 OpenWrt 上以 procd 管理 ss-local/ss-redir/ss-server/ss-tunnel，动态生成 JSON 配置
+# 并通过 ss-rules/ss-rules6 维护透明代理的 iptables 规则
+
 USE_PROCD=1
 EXTRA_COMMANDS="rules_up rules_down rules_exist"
 START=91
@@ -14,227 +17,355 @@ START=91
 ss_confdir=/var/etc/shadowsocks-libev
 ss_bindir=/usr/bin
 
+# 读UCI配置文件,生成JSON
 ss_mkjson_server_conf() {
 	local cfgserver
 
+	# 从当前配置section获取server字段的值
 	config_get cfgserver "$cfg" server
 	[ -n "$cfgserver" ] || return 1
+	# 执行验证并设置相关变量
 	eval "$(validate_server_section "$cfg" ss_validate_mklocal)"
+	# 验证服务器配置section
 	validate_server_section "$cfgserver" || return 1
+	# 检查是否被禁用
 	[ "$disabled" = 0 ] || return 1
+	# 生成服务器json配置
 	ss_mkjson_server_conf_ "$cfgserver"
 }
 
+# 生成Shadowsocks服务器配置的JSON结构
 ss_mkjson_server_conf_() {
+	# 检查服务器端口是否设置，没有则返回错误
 	[ -n "$server_port" ] || return 1
+	# 加密方法不为空，添加到JSON
 	[ -z "$method" ] || json_add_string method "$method"
+	# 服务器地址不为空，添加到JSON
 	[ -z "$server" ] || json_add_string server "$server"
+	# 服务器端口,添加到JSON
 	json_add_int server_port "$server_port"
+	# 密钥不为空,添加到JSON
 	[ -z "$key" ] || {
 		key="$(echo $key | sed 's/+/-/g; s/\//_/g;')"
 		json_add_string key "$key"
 	}
+	# 密码不为空,添加到JSON
 	[ -z "$password" ] || {
 		password="$(echo $password | sed 's/+/-/g; s/\//_/g;')"
 		json_add_string password "$password"
 	}
+	# 必须要有密码或密钥，否则返回错误
 	[ -z "$password" ] && [ -z "$key" ] && return 1
+	# 如果插件不为空，添加到JSON
 	[ -z "$plugin" ] || json_add_string plugin "$plugin"
+	# 如果插件选项不为空，添加到JSON
 	[ -z "$plugin_opts" ] || json_add_string plugin_opts "$plugin_opts"
+	# 处理混淆（obfs）配置
 	if [ "$obfs" = 1 ]; then
+		# simple-obfs插件
 		if [ "$obfs_plugin" = "obfs" ]; then
+			# 初始化混淆选项
 			obfs_options="obfs=$obfs_type"
+			# 添加混淆主机
 			[ -z "$obfs_host" ] || obfs_options="$obfs_options;obfs-host=$obfs_host"
+			# 添加混淆URI
 			[ -z "$obfs_uri" ] || obfs_options="$obfs_options;obfs-uri=$obfs_uri"
+			# 添加TCP Fast Open选项
 			[ "$fast_open" = 1 ] && obfs_options="$obfs_options;fast-open"
+			# 添加MPTCP选项
 			[ "$mptcp" = 1 ] && obfs_options="$obfs_options;mptcp"
+			# 添加超时选项
 			[ -z "$timeout" ] || obfs_options="$obfs_options;t=$timeout"
+			# 设置插件路径
 			json_add_string plugin "/usr/bin/obfs-local"
+			# 设置插件选项
 			json_add_string plugin_opts "$obfs_options"
 		fi
+
+		# v2ray-plugin插件
 		if [ "$obfs_plugin" = "v2ray" ]; then
+			# 默认使用basic日志级别
 			obfs_options="loglevel=default"
+			# 如果混淆类型是TLS，设置为tls模式
 			[ "$obfs_type" = "tls" ] && obfs_options="tls"
+			# 添加主机名
 			[ -z "$obfs_host" ] || obfs_options="$obfs_options;host=$obfs_host"
+			# 添加路径
 			[ -z "$obfs_uri" ] || obfs_options="$obfs_options;path=$obfs_uri"
+			# 添加TCP Fast Open选项
 			[ "$fast_open" = 1 ] && obfs_options="$obfs_options;fast-open"
+			# 设置插件路径
 			json_add_string plugin "/usr/bin/v2ray-plugin"
+			# 设置插件选项
 			json_add_string plugin_opts "$obfs_options"
 		fi
 	fi
 }
 
+# 生成用于 ss-local 的 JSON 配置
+# ss-local 监听本地端口，将流量转发到远程 Shadowsocks 服务器
 ss_mkjson_ss_local_conf() {
 	ss_mkjson_server_conf
 }
 
+# 生成用于 ss-redir 的 JSON 配置
+# ss-redir 配合 iptables 规则实现透明代理, 常用于路由器上的全局代理
 ss_mkjson_ss_redir_conf() {
 	ss_mkjson_server_conf
 }
 
+# 生成用于 ss-server 的 JSON 配置
+# ss-server 监听服务器端口，接收客户端连接
 ss_mkjson_ss_server_conf() {
 	ss_mkjson_server_conf_
 }
 
+# 生成 ss-tunnel 配置
+# ss-tunnel 创建加密隧道，用于转发特定流量
 ss_mkjson_ss_tunnel_conf() {
+	# 先生成基本服务器配置
 	ss_mkjson_server_conf || return 1
+	# 检查隧道地址是否设置
 	[ -n "$tunnel_address" ] || return 1
+	# 添加隧道地址到 JSON
 	json_add_string tunnel_address "$tunnel_address"
 }
 
+# 通用的Shadowsocks服务启动函数
 ss_xxx() {
+	# 配置节名称，如 "proxy", "transparent", "dns"
 	local cfg="$1"
+	# 配置类型，如 "ss_local", "ss_redir"
 	local cfgtype="$2"
+	# 二进制文件路径
 	local bin="$ss_bindir/${cfgtype/_/-}"
+	# 配置文件路径
 	local confjson="$ss_confdir/$cfgtype.$cfg.json"
 
+	# 检查二进制文件是否存在且可执行
 	[ -x "$bin" ] || return
+	# 验证配置节并设置局部变量
 	eval "$("validate_${cfgtype}_section" "$cfg" ss_validate_mklocal)"
+	# 再次验证配置节（检查验证结果）
 	"validate_${cfgtype}_section" "$cfg" || return
+	# 检查是否启用
 	[ "$disabled" = 0 ] || return
 
+	# 初始化 JSON 配置
 	json_init
+	# 生成特定类型的配置
 	ss_mkjson_${cfgtype}_conf || return
+	# 使用系统日志
 	json_add_boolean use_syslog 1
+	# IPv6优先
 	json_add_boolean ipv6_first "$ipv6_first"
+	# TCP Fast Open
 	json_add_boolean fast_open "$fast_open"
+	# 端口重用
 	json_add_boolean reuse_port "$reuse_port"
+	# TCP_NODELAY
 	json_add_boolean no_delay "$no_delay"
+	# 多路径TCP
 	json_add_boolean mptcp "$mptcp"
+	# 本地地址
 	[ -z "$local_address" ] || json_add_string local_address "$local_address"
+	# 本地端口
 	[ -z "$local_port" ] || json_add_int local_port "$local_port"
+	# tcp/udp模式
 	[ -z "$mode" ] || json_add_string mode "$mode"
+	# 最大传输单元
 	[ -z "$mtu" ] || json_add_int mtu "$mtu"
+	# 超时时间
 	[ -z "$timeout" ] || json_add_int timeout "$timeout"
+	# 运行用户
 	[ -z "$user" ] || json_add_string user "$user"
+
+	# 将 JSON 配置写入文件
 	json_dump -i >"$confjson"
 
+	# 配置 procd 进程管理
 	procd_open_instance "$cfgtype.$cfg"
+	# 设置命令和参数
 	procd_set_param command "$bin" -c "$confjson"
+	# 详细日志
 	[ "$verbose" = 0 ] || procd_append_param command -v
+	# 绑定地址
 	[ -z "$bind_address" ] || procd_append_param command -b "$bind_address"
+	# 设置 procd 监控, 监控配置文件变化
 	procd_set_param file "$confjson"
+	# 文件描述符限制
 	procd_set_param limits nofile="512000 512000"
+	# 进程崩溃时自动重启
 	procd_set_param respawn
+	# 关闭 procd 实例
 	procd_close_instance
+	# 调用规则回调函数（配置防火墙规则等）
 	ss_rules_cb
 }
 
+# 当 ss-redir 配置变更时，重新应用防火墙规则
 ss_rules_restart() {
-	local cfg="$1"
-	local cfgtype="$2"
+	local cfg="$1"			# 配置节名称，如 "transparent"
+	local cfgtype="$2"		# 配置类型，应为 "ss_redir"
 
+	# 验证配置节并设置局部变量
 	eval "$("validate_${cfgtype}_section" "$cfg" ss_validate_mklocal)"
+	# 再次验证配置节
 	"validate_${cfgtype}_section" "$cfg" || return 1
+	# 调用规则回调函数,重新配置防火墙规则
 	ss_rules_cb
 }
 
+# 规则回调函数,收集所有 ss-redir 配置信息，为后续规则生成做准备
 ss_rules_cb() {
+	# 局部变量：引用的服务器配置和服务器地址
 	local cfgserver server
 
+	# ss-redir 是透明代理，需要配置 iptables 规则
 	if [ "$cfgtype" = ss_redir ]; then
+		# 获取引用的服务器配置
 		config_get cfgserver "$cfg" server
 		config_get server "$cfgserver" server
+		# 将服务器地址添加到列表,用于生成直连（bypass）规则
 		ss_redir_servers="$ss_redir_servers $server"
+		# 处理 TCP 模式
 		if [ "$mode" = "tcp_only" -o "$mode" = "tcp_and_udp" ]; then
+			# 动态创建变量，记录 TCP 重定向端口
 			eval "ss_rules_redir_tcp_$cfg=$local_port"
 			eval "ss_rules6_redir_tcp_$cfg=$local_port"
 		fi
+		# 处理 UDP 模式
 		if [ "$mode" = "udp_only" -o "$mode" = "tcp_and_udp" ]; then
+			# 动态创建变量，记录 UDP 重定向端口
 			eval "ss_rules_redir_udp_$cfg=$local_port"
 			eval "ss_rules6_redir_udp_$cfg=$local_port"
 		fi
 	fi
 }
 
+# 遍历所有 ss-redir 配置，找出最小和最大的监听端口
 ss_redir_ports() {
-	port=$(uci -q get shadowsocks-libev.$1.local_port)
-	server=$(uci -q get shadowsocks-libev.$1.server)
-	disabled=$(uci -q get shadowsocks-libev.$1.disabled)
+	port=$(uci -q get shadowsocks-libev.$1.local_port)		# 本地端口
+	server=$(uci -q get shadowsocks-libev.$1.server)		# 引用的服务器
+	disabled=$(uci -q get shadowsocks-libev.$1.disabled)	# 是否禁用
+
 	if [ "$disabled" != "1" ] && ([ "$server" = "$2" ] || [ "$2" = "" ]); then
+		# 更新最小端口
 		if [ "$port" -lt "$min_ss_redir_ports" ]; then
 			min_ss_redir_ports=$port
 		fi
+		# 更新最大端口
 		if [ "$port" -gt "$max_ss_redir_ports" ]; then
 			max_ss_redir_ports=$port
 		fi
 	fi
 }
 
+# 主规则生成函数
 ss_rules() {
 	local cfg="$1"
-	local bin="$ss_bindir/ss-rules"
-	local bin6="$ss_bindir/ss-rules6"
-	local cfgtype
-	local cfgrulesserver
-	local local_port_tcp local_port_udp
-	local local_port_tcp6 local_port_udp6
-	local args
-	local rule_name
+	local bin="$ss_bindir/ss-rules"				# IPv4 规则生成器
+	local bin6="$ss_bindir/ss-rules6"			# IPv6 规则生成器
+	local cfgtype								# 配置类型
+	local cfgrulesserver						# 规则引用的服务器
+	local local_port_tcp local_port_udp			# TCP/UDP 端口 (IPv4)
+	local local_port_tcp6 local_port_udp6		# TCP/UDP 端口 (IPv6)
+	local args									# 额外参数
+	local rule_name								# 规则名称
+
+	# 确定规则名称
 	if [ "$cfg" = "ss_rules" ]; then
-		rule_name="def"
+		rule_name="def"												# 默认规则
 	else
-		rule_name="$(echo $cfg | sed 's/_rule//' | cut -c -7)"
+		rule_name="$(echo $cfg | sed 's/_rule//' | cut -c -7)"		# 从配置节名称提取规则名（最多7个字符）
 	fi
 
+	# 检查二进制文件是否存在
 	[ -x "$bin" ] || return 1
 	#"$bin" -f
 	[ -x "$bin6" ] || return 1
 	#"$bin6" -f
 
+	# 验证配置类型是否为 ss_rules
 	config_get cfgtype "$cfg" TYPE
 	[ "$cfgtype" = ss_rules ] || return 1
 
+	# 获取规则引用的服务器
 	config_get cfgrulesserver "$cfg" server
 
+	# 验证配置节并设置局部变量
 	eval "$(validate_ss_rules_section "$cfg" ss_validate_mklocal)"
 	validate_ss_rules_section "$cfg" || return 1
+	# 检查是否禁用
 	[ "$disabled" != "1" ] || return 0
+	# 检查引用的服务器是否禁用
 	[ "$(uci -q get shadowsocks-libev.${cfgrulesserver}.disabled)" != "1" ] || return 0
+	# 处理 "all" 端口模式, 全局代理
 	if [ "$ss_rules_redir_tcp_$redir_tcp" = "all" ]; then
+		# 端口范围 0 ~ 65535
 		min_ss_redir_ports="65535"
 		max_ss_redir_ports="0"
+		# 遍历所有 ss-redir 配置，统计端口范围
 		config_load shadowsocks-libev
 		config_foreach ss_redir_ports ss_redir $cfgrulesserver
+		# 确定端口范围
 		if [ "$min_ss_redir_ports" != "$max_ss_redir_ports" ]; then
 			all_ss_redir_ports=$min_ss_redir_ports-$max_ss_redir_ports
 		else
 			all_ss_redir_ports=$min_ss_redir_ports
 		fi
+		# 设置 TCP 端口
 		local_port_tcp="$all_ss_redir_ports"
+		# 处理 UDP 端口
 		if [ "$ss_rules_redir_udp_$redir_udp" = "all" ] || [ "$ss_rules_redir_udp_$redir_udp" = "hi1" ]; then
 			local_port_udp="$min_ss_redir_ports"
 		fi
 		#eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
+		# 设置 IPv6 端口
 		local_port_tcp6="$all_ss_redir_ports"
 		if [ "$ss_rules_redir_udp_$redir_udp" = "all" ] || [ "$ss_rules_redir_udp_$redir_udp" = "hi1" ]; then
 			local_port_udp6="$min_ss_redir_ports"
 		fi
 		#eval local_port_udp6="\$ss_rules6_redir_udp_$redir_udp"
 	else
+		# 非 "all" 模式，从变量中获取端口
 		eval local_port_tcp="\$ss_rules_redir_tcp_$redir_tcp"
 		eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
 		eval local_port_tcp6="\$ss_rules6_redir_tcp_$redir_tcp"
 		eval local_port_udp6="\$ss_rules6_redir_udp_$redir_udp"
 	fi
+	# 检查是否有有效的端口配置
 	[ -n "$local_port_tcp" -o -n "$local_port_udp" ] || return 1
+	# 分离 IPv4 和 IPv6 服务器地址
 	ss_redir_servers4="$(echo "$ss_redir_servers" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sort -u)"
 	ss_redir_servers6="$(echo "$ss_redir_servers" | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}' | sort -u)"
+	# 如果没有分离出地址，使用原始值
 	[ -z "$ss_redir_servers4" ] && [ -z "$ss_redir_servers6" ] && {
 		ss_redir_servers4="$ss_redir_servers"
 		ss_redir_servers6="$ss_redir_servers"
 	}
 	#ss_redir_servers="$(echo "$ss_redir_servers" | tr ' ' '\n' | sort -u)"
+	# IPv4直连列表
 	dst_ips_bypass4="$(echo "$dst_ips_bypass" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sort -u)"
+	# IPv4代理列表
 	dst_ips_forward4="$(echo "$dst_ips_forward" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sort -u)"
+	# IPv4源地址直连列表
 	src_ips_bypass4="$(echo "$src_ips_bypass" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sort -u)"
+	# IPv4源地址代理列表
 	src_ips_forward4="$(echo "$src_ips_forward" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sort -u)"
+	# IPv4源地址检查列表
 	src_ips_checkdst4="$(echo "$src_ips_checkdst" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sort -u)"
+	# IPv6直连列表
 	dst_ips_bypass6="$(echo "$dst_ips_bypass" | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}' | sort -u)"
+	# IPv6代理列表
 	dst_ips_forward6="$(echo "$dst_ips_forward" | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}' | sort -u)"
+	# IPv6源地址直连列表
 	src_ips_bypass6="$(echo "$src_ips_bypass" | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}' | sort -u)"
+	# IPv6源地址代理列表
 	src_ips_forward6="$(echo "$src_ips_forward" | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}' | sort -u)"
+	# IPv6源地址检查列表
 	src_ips_checkdst6="$(echo "$src_ips_checkdst" | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}' | sort -u)"
+	# 处理空列表的情况
 	[ -z "$dst_ips_bypass4" ] && [ -z "$dst_ips_bypass6" ] && {
 		dst_ips_bypass4="$dst_ips_bypass"
 		dst_ips_bypass6="$dst_ips_bypass"
@@ -255,12 +386,15 @@ ss_rules() {
 		src_ips_checkdst4="$src_ips_checkdst"
 		src_ips_checkdst6="$src_ips_checkdst"
 	}
+	# 添加额外参数
 	[ "$dst_forward_recentrst" = 0 ] || args="$args --dst-forward-recentrst"
 
+	# 调用规则生成
 	ss_rules_call
 	ss_rules_call6
 }
 
+# 构建和执行 ss-rules命令, IPv4
 ss_rules_call() {
 	"$bin" "$@" \
 			-s "$ss_redir_servers4" \
@@ -283,6 +417,7 @@ ss_rules_call() {
 		|| "$bin" "$@" -f
 }
 
+# 构建和执行 ss-rules命令, IPv6
 ss_rules_call6() {
 	"$bin6" "$@" \
 			-s "$ss_redir_servers6" \
@@ -305,17 +440,27 @@ ss_rules_call6() {
 		|| "$bin6" "$@" -f
 }
 
+# 启动所有 Shadowsocks 服务和相关网络配置
 start_service() {
 	local cfgtype
 
 	mkdir -p "$ss_confdir"
 	config_load shadowsocks-libev
+	# ss_local:  SOCKS5 代理客户端
+	# ss_redir: 透明代理（用于 iptables 重定向）
+	# ss_server: Shadowsocks 服务器端
+    # ss_tunnel: 隧道代理（用于 DNS 等）
 	for cfgtype in ss_local ss_redir ss_server ss_tunnel; do
+		# 为每种类型的每个配置节调用 ss_xxx 函数
 		config_foreach ss_xxx "$cfgtype" "$cfgtype"
 	done
 	# Add rule to match traffic marked by firewall for bypass
+	# 添加高级路由规则
+	# 为标记为 0x539 的流量添加特殊路由规则, 目的是让防火墙标记的流量绕过代理
 	ip rule add prio 1 fwmark 0x539 lookup 991337 > /dev/null 2>&1
+	# 启动防火墙规则
 	rules_up
+	# 启动 GRE 隧道
 	[ -f /etc/firewall.gre-tunnel ] && sh /etc/firewall.gre-tunnel > /dev/null 2>&1
 }
 
@@ -333,70 +478,96 @@ rules_exist() {
 	return 1
 }
 
+# 检查 Shadowsocks 服务器配置的状态和认证信息
 server_state() {
+	# 是否禁用
 	config_get disabled "$1" disabled "0"
 	[ "$disabled" = "0" ] && enabled="1"
+	# 获取密钥 (key) 配置
 	config_get key "$1" key
 	[ -n "$key" ] && passkey=$key
+	# 获取密码 (password) 配置
 	config_get password "$1" password
 	[ -n "$password" ] && passkey=$password
 }
 
+# 启动 Shadowsocks 规则, 设置 iptables 规则，启用透明代理
 rules_up() {
+	# 检查规则是否已存在, 如果规则已存在，执行一些维护操作后返回
 	rules_exist && {
 		[ -f /bin/blocklanfw ] && /bin/blocklanfw 2>&1 >/dev/null
 		return 0
 	}
+	# 检查是否禁用了规则配置
 	[ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" = "1" ] && return 0
 	enabled="0"
 	passkey=""
 	config_load shadowsocks-libev
-	config_foreach server_state server
-	[ "$enabled" = "0" ] && return
-	[ -z "$passkey" ] && return
+	config_foreach server_state server	# 遍历所有服务器配置，检查是否有启用的服务器
+	[ "$enabled" = "0" ] && return		# 没有启用的服务器，返回
+	[ -z "$passkey" ] && return			# 没有认证密钥，返回
 	logger -t "Shadowsocks" "Rules UP"
+	# 重启 ss-redir 规则, 为每个 ss_redir 配置调用 ss_rules_restart
 	for cfgtype in ss_redir; do
 		config_foreach ss_rules_restart "$cfgtype" "$cfgtype"
 	done
+	# 应用主规则, 处理所有 ss_rules 配置
 	config_foreach ss_rules ss_rules
+	# 验证规则是否应用成功, 检查 iptables 中是否有 ssr 链
 	[ -z "$(iptables-save 2>/dev/null | grep :ssr)" ] && logger -t "Shadowsocks" "Rules not applied"
+	# 重新加载 omr-bypass 规则
 	[ -f /etc/init.d/omr-bypass ] && [ -z "$(pgrep -f omr-bypass)" ] && {
 		logger -t "Shadowsocks" "Reload omr-bypass rules"
 		/etc/init.d/omr-bypass reload_rules
 	}
+	# 执行局域网防火墙阻止
 	[ -f /bin/blocklanfw ] && /bin/blocklanfw 2>&1 >/dev/null
 }
 
+# 停止 Shadowsocks 规则, 清理 iptables 规则，停止透明代理
 rules_down() {
-	rules_exist || return 0
+	rules_exist || return 0					# 如果规则不存在，直接返回（无需清理）
 	enabled="0"
-	config_load shadowsocks-rust
-	config_foreach server_state server
-	[ "$enabled" = "1" ] && return
+	config_load shadowsocks-rust			# 加载 shadowsocks-rust 配置
+	config_foreach server_state server		# 遍历所有服务器配置,检查服务器状态
+	[ "$enabled" = "1" ] && return			# 如果有启用的服务器，不清理规则
 	logger -t "Shadowsocks" "Rules DOWN"
+
+	# 清理 IPv4 规则
 	local bin="$ss_bindir/ss-rules"
 	[ -x "$bin" ] && {
 		"$bin" -f >/dev/null 2>&1
 	}
+
+	# 清理 IPv6 规则
 	local bin6="$ss_bindir/ss-rules6"
 	[ -x "$bin6" ] && {
 		"$bin6" -f >/dev/null 2>&1
 	}
 }
 
+# 配置服务的触发器和验证规则
 service_triggers() {
+	# 添加网络接口触发器, 当任何以 "wan" 开头的接口状态变化时，重新加载服务
 	procd_add_reload_interface_trigger wan*
+	# 添加配置变化触发器, 当 shadowsocks-libev 配置变化时，重新加载服务
 	procd_add_reload_trigger shadowsocks-libev
+	# 开始验证配置
 	procd_open_validate
+	# 注册各个配置节的验证函数
 	validate_server_section
 	validate_ss_local_section
 	validate_ss_redir_section
 	validate_ss_rules_section
 	validate_ss_server_section
 	validate_ss_tunnel_section
+	# 结束验证配置
 	procd_close_validate
 }
 
+# 用从验证结果中提取变量名，生成 local 声明
+# 例如: 输入 "enabled:0" "server:example.com"
+# 输出: "local enabled server"
 ss_validate_mklocal() {
 	local tuple opts
 
@@ -407,17 +578,22 @@ ss_validate_mklocal() {
 	[ -z "$opts" ] || echo "local $opts"
 }
 
+# 调用 UCI 验证函数验证配置节
 ss_validate() {
 	uci_validate_section shadowsocks-libev "$@"
 }
 
+# 验证通用服务器选项
 validate_common_server_options_() {
 	local cfgtype="$1"; shift
 	local cfg="$1"; shift
 	local func="$1"; shift
+	# 定义流加密方法列表
 	local stream_methods='"none", "table", "rc4", "rc4-md5", "aes-128-cfb", "aes-192-cfb", "aes-256-cfb", "aes-128-ctr", "aes-192-ctr", "aes-256-ctr", "bf-cfb", "camellia-128-cfb", "camellia-192-cfb", "camellia-256-cfb", "salsa20", "chacha20", "chacha20-ietf"'
+	# 定义 AEAD 加密方法列表
 	local aead_methods='"aes-128-gcm", "aes-192-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "xchacha20-ietf-poly1305"'
 
+	# 调用验证函数
 	"${func:-ss_validate}" "$cfgtype" "$cfg" "$@" \
 		'disabled:bool:0' \
 		'server:host' \
@@ -432,6 +608,7 @@ validate_common_server_options_() {
 		'obfs_type:or("http","tls"):http'
 }
 
+# 验证通用客户端选项
 validate_common_client_options_() {
 	validate_common_options_ "$@" \
 		'server:uci("shadowsocks-libev", "@server")' \
@@ -439,6 +616,7 @@ validate_common_client_options_() {
 		'local_port:port'
 }
 
+# 验证所有 Shadowsocks 组件共享的通用选项
 validate_common_options_() {
 	local cfgtype="$1"; shift
 	local cfg="$1"; shift
@@ -458,18 +636,22 @@ validate_common_options_() {
 		'user:string'
 }
 
+# 验证服务器配置
 validate_server_section() {
 	validate_common_server_options_ server "$1" "$2"
 }
 
+# 验证 ss-local 配置
 validate_ss_local_section() {
 	validate_common_client_options_ ss_local "$1" "$2"
 }
 
+# 验证 ss-redir 配置
 validate_ss_redir_section() {
 	validate_common_client_options_ ss_redir "$1" "$2"
 }
 
+# 验证 ss-rules 配置, 处理防火墙规则配置
 validate_ss_rules_section() {
 	"${2:-ss_validate}" ss_rules "$1" \
 		'disabled:bool:0' \
@@ -490,6 +672,7 @@ validate_ss_rules_section() {
 		'ipt_args:string'
 }
 
+# 验证 ss-server 配置
 validate_ss_server_section() {
 	validate_common_server_options_ ss_server "$1" \
 		validate_common_options_ \
@@ -497,6 +680,7 @@ validate_ss_server_section() {
 		'bind_address:ipaddr'
 }
 
+# 验证 ss-tunnel 配置
 validate_ss_tunnel_section() {
 	validate_common_client_options_ ss_tunnel "$1" \
 		"$2" \
