@@ -11,8 +11,15 @@
 'require tools.widgets as widgets';
 'require tools.network as nettools';
 
+var versionx = 20260226;
+
+// 检查当前用户是否为只读权限
 var isReadonlyView = !L.hasViewPermission() || null;
 
+/**
+ * 计算指定网络接口（section_id）待提交的变更数量
+ * 遍历 ui.changes 中的 network 和 dhcp 配置，统计涉及该接口的变更
+ */
 function count_changes(section_id) {
 	var changes = ui.changes.changes, n = 0;
 
@@ -30,6 +37,7 @@ function count_changes(section_id) {
 	return n;
 }
 
+// 生成一个包含接口图标和鼠标悬停提示信息的 DOM 元素
 function render_iface(dev, alias) {
 	var type = dev ? dev.getType() : 'ethernet',
 	    up   = dev ? dev.isUp() : false;
@@ -53,6 +61,8 @@ function render_iface(dev, alias) {
 	]);
 }
 
+// 渲染接口的详细状态信息列表
+// 显示协议、运行时间、MAC、RX/TX 流量、IPv4/IPv6 地址、错误信息等。如果接口有未提交的变更，会显示变更提示链接。
 function render_status(node, ifc, with_device) {
 	var desc = null, c = [];
 
@@ -98,6 +108,7 @@ function render_status(node, ifc, with_device) {
 	]);
 }
 
+// 专门为模态框（编辑窗口）顶部渲染状态区域
 function render_modal_status(node, ifc) {
 	var dev = ifc ? (ifc.getDevice() || ifc.getL3Device() || ifc.getL3Device()) : null;
 
@@ -112,6 +123,7 @@ function render_modal_status(node, ifc) {
 	return node;
 }
 
+// 渲染概览列表中“网络”列的内容
 function render_ifacebox_status(node, ifc) {
 	var dev = ifc.getL3Device() || ifc.getDevice(),
 	    subdevs = dev ? dev.getPorts() : null,
@@ -140,6 +152,7 @@ function render_ifacebox_status(node, ifc) {
 	}, node.previousElementSibling));
 }
 
+// 处理“重启/停止”按钮的点击事件
 function iface_updown(up, id, ev, force) {
 	var row = document.querySelector('.cbi-section-table-row[data-sid="%s"]'.format(id)),
 	    dsc = row.querySelector('[data-name="_ifacestat"] > div'),
@@ -152,13 +165,15 @@ function iface_updown(up, id, ev, force) {
 	btns[1].disabled = true;
 
 	if (!up) {
+		// 断开连接前，调用 luci-peeraddr 检查当前会话是否通过此接口
 		L.resolveDefault(fs.exec_direct('/usr/libexec/luci-peeraddr')).then(function(res) {
 			var info = null; try { info = JSON.parse(res); } catch(e) {}
 
 			if (L.isObject(info) &&
 			    Array.isArray(info.inbound_interfaces) &&
 			    info.inbound_interfaces.filter(function(i) { return i == id })[0]) {
-
+				
+				// 如果是，弹出警告模态框
 				ui.showModal(_('Confirm disconnect'), [
 					E('p', _('You appear to be currently connected to the device via the "%h" interface. Do you really want to shut down the interface?').format(id)),
 					E('div', { 'class': 'button-row' }, [
@@ -197,6 +212,7 @@ function iface_updown(up, id, ev, force) {
 	}
 }
 
+// 从配置中提取子网掩码
 function get_netmask(s, use_cfgvalue) {
 	var readfn = use_cfgvalue ? 'cfgvalue' : 'formvalue',
 	    addrs = L.toArray(s[readfn](s.section, 'ipaddr')),
@@ -214,6 +230,7 @@ function get_netmask(s, use_cfgvalue) {
 	return subnetmask;
 }
 
+// 简单的查找表，判断特定协议是否支持“对端 DNS”或“源地址过滤”功能
 function has_peerdns(proto) {
 	switch (proto) {
 	case 'dhcp':
@@ -231,6 +248,9 @@ function has_peerdns(proto) {
 	return false;
 }
 
+/**
+ * 判断协议是否支持源过滤
+ */
 function has_sourcefilter(proto) {
 	switch (proto) {
 	case '3g':
@@ -251,6 +271,7 @@ function has_sourcefilter(proto) {
 }
 
 return view.extend({
+	// 定时轮询更新界面状态
 	poll_status: function(map, networks) {
 		var resolveZone = null;
 
@@ -319,6 +340,7 @@ return view.extend({
 		return Promise.all([ resolveZone, network.flushCache() ]);
 	},
 
+	// 页面加载时预取数据：获取防火墙配置、网络接口状态、DSL状态等
 	load: function() {
 		return Promise.all([
 			network.getDSLModemType(),
@@ -328,24 +350,28 @@ return view.extend({
 		]);
 	},
 
+	// 筛选出所有配置为 桥接模式 (bridge) 且 使用了旧式 ifname 选项 （而不是新式 ports 选项）的网络接口配置段
 	interfaceBridgeWithIfnameSections: function() {
 		return uci.sections('network', 'interface').filter(function(ns) {
 			return ns.type == 'bridge' && !ns.ports && ns.ifname;
 		});
 	},
 
+	// 其作用与前一个函数非常相似，但它是针对 网络设备定义 (device section) 而非逻辑接口 (interface section) 的
 	deviceWithIfnameSections: function() {
 		return uci.sections('network', 'device').filter(function(ns) {
 			return ns.type == 'bridge' && !ns.ports && ns.ifname;
 		});
 	},
 
+	// 筛选出使用旧式 ifname 配置方式的 普通网络接口
 	interfaceWithIfnameSections: function() {
 		return uci.sections('network', 'interface').filter(function(ns) {
 			return !ns.device && ns.ifname;
 		});
 	},
 
+	// 将 旧式的桥接配置自动迁移到新式配置
 	handleBridgeMigration: function(ev) {
 		var tasks = [];
 
@@ -376,6 +402,7 @@ return view.extend({
 			.then(L.bind(ui.changes.apply, ui.changes));
 	},
 
+	// 显示一个模态对话框，提示用户进行网络桥接配置迁移
 	renderBridgeMigration: function() {
 		ui.showModal(_('Network bridge configuration migration'), [
 			E('p', _('The existing network configuration needs to be changed for LuCI to function properly.')),
@@ -388,6 +415,7 @@ return view.extend({
 		]);
 	},
 
+	// 处理从旧式 option ifname 配置到新式 OpenWrt 网络配置语法的迁移
 	handleIfnameMigration: function(ev) {
 		var tasks = [];
 
@@ -410,6 +438,7 @@ return view.extend({
 			.then(L.bind(ui.changes.apply, ui.changes));
 	},
 
+	// 显示 网络接口名称配置迁移 的提示模态框
 	renderIfnameMigration: function() {
 		ui.showModal(_('Network ifname configuration migration'), [
 			E('p', _('The existing network configuration needs to be changed for LuCI to function properly.')),
@@ -514,6 +543,7 @@ return view.extend({
 			return tdEl;
 		};
 
+		// 定义“添加新接口”时的弹窗选项（名称、协议、物理接口）
 		s.addModalOptions = function(s) {
 			var protoval = uci.get('network', s.section, 'proto') || 'none',
 			    o, proto_select, proto_switch, type, stp, igmp, ss, so;

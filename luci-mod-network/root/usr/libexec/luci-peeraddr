@@ -1,30 +1,51 @@
 #!/bin/sh
 
+# - 这是 LuCI 网络模块的一个辅助脚本，用来判断“当前这次 Web 访问是通过哪些网络设备/接口进来的”，并返回 JSON 给前端。
+# 前端在“网络 → 接口”页面点击“停止/删除”某接口时会先执行它，如果要断开的接口正是你当前访问用的接口，前端会弹出二次确认，避免把自己断掉。
+
+# 换行符NewLine
 NL="
 "
 
+# 根据物理设备名（如 eth0）查找对应的逻辑接口名（如 lan, wan）
 function ifaces_by_device() {
+
+	# 调用 ubus 获取所有网络接口的详细信息，错误输出丢弃
+	# 使用 jsonfilter 过滤出 device 或 l3_device 字段匹配参数 $1 的接口名称
 	ubus call network.interface dump 2>/dev/null | \
 		jsonfilter -e "@.interface[@.device='$1' || @.l3_device='$1'].interface"
 }
 
+# 根据目标 IP 地址查找路由出口设备, 获知路由器要访问某个 IP 时，会走哪个网卡、哪个网关、用哪个源 IP、实际生效的路由, 示例如下:
+	# root@MP-Router:~# ip route get 192.168.16.1
+	# 192.168.16.1 dev eth1 table 6 src 192.168.16.26 uid 0
+	#    cache
 function device_by_addr() {
 	set -- $(ip route get "$1" ${2:+from "$2"} 2>/dev/null)
 	echo "$5"
 }
 
+# 根据客户端 IP ($REMOTE_ADDR) 和服务端 IP ($SERVER_ADDR) 查找当前连接的入站设备
 for inbound_device in $(device_by_addr "$REMOTE_ADDR" "$SERVER_ADDR"); do
-	inbound_devices="$inbound_device"
-	inbound_interfaces=""
+	inbound_devices="$inbound_device"		# 初始化入站设备列表
+	inbound_interfaces=""					# 初始化入站接口列表为空
 
+	# 查找该物理设备对应的所有逻辑接口, 如eth1 => wan1
 	for iface in $(ifaces_by_device "$inbound_device"); do
+		# 将找到的接口追加到列表中，使用换行符 $NL 分隔
 		inbound_interfaces="${inbound_interfaces:+$inbound_interfaces$NL}$iface"
 
+		# 检查该接口是否有 peeraddr 配置（通常用于隧道接口，如 6in4, gre 等）
 		for peeraddr in $(uci get "network.$iface.peeraddr"); do
+			# 解析 peeraddr 域名为 IP 地址（如果是 IP 则原样返回）
 			for ipaddr in $(resolveip -t 1 "$peeraddr" 2>/dev/null); do
+				# 查找到达该对端 IP 需要经过的路由设备（即隧道的承载设备）
 				for peerdev in $(device_by_addr "$ipaddr"); do
+					# 查找承载设备对应的逻辑接口
 					for iface in $(ifaces_by_device "$peerdev"); do
+						# 将承载设备加入设备列表
 						inbound_devices="${inbound_devices:+$inbound_devices$NL}$peerdev"
+						# 将承载接口加入接口列表
 						inbound_interfaces="${inbound_interfaces:+$inbound_interfaces$NL}$iface"
 					done
 				done
@@ -33,9 +54,13 @@ for inbound_device in $(device_by_addr "$REMOTE_ADDR" "$SERVER_ADDR"); do
 	done
 done
 
+# 对设备列表去重，并将换行符替换为 JSON 数组所需的 ", " 格式
 inbound_devices="$(echo "$inbound_devices" | sort -u | sed ':a;N;$!ba;s/\n/", "/g')"
+# 对接口列表去重，并进行同样的 JSON 格式化处理
 inbound_interfaces="$(echo "$inbound_interfaces" | sort -u | sed ':a;N;$!ba;s/\n/", "/g')"
 
+# 输出 JSON 格式结果，包含客户端/服务端 IP 以及识别出的入站设备和接口列表
+# 前端 (JS) 会根据这个列表来判断用户是否正在断开自己当前的连接
 cat <<JSON
 {
 	"remote_addr": "$REMOTE_ADDR",

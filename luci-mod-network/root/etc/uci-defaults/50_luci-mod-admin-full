@@ -1,15 +1,27 @@
 #!/bin/sh
 
+# 这是一个一次性初始化脚本，用于在首次启动或安装包时写入 LuCI 的诊断默认目标配置。
+# 它在 UCI 的 luci 配置中创建一个名为 diag 的内部段，并设置默认的 DNS、Ping、Route 测试目标域名，供 LuCI“状态 → 诊断”页面使用
+
+# 避免重复执行
 if [ "$(uci -q get luci.diag)" != "internal" ]; then
 	host=""
 
+	# 获取发行信息
 	if [ -s /etc/os-release ]; then
 		. /etc/os-release
+		
+		# /etc/os-release中的内容如下
+		# HOME_URL="https://openwrt.org/"
+		# BUG_URL="https://bugs.openwrt.org/"
+		# OPENWRT_DEVICE_MANUFACTURER_URL="https://openwrt.org/"
+
 		host="${HOME_URL:-${BUG_URL:-$OPENWRT_DEVICE_MANUFACTURER_URL}}"
 		host="${host#*://}"
 		host="${host%%/*}"
 	fi
 
+	# 写入UCI配置文件
 	uci -q batch <<-EOF >/dev/null
 		set luci.diag=internal
 		set luci.diag.dns='${host:-openwrt.org}'
