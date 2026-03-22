@@ -5,20 +5,32 @@
 {
 	START=99
 	STOP=10
-	USE_PROCD=1
+	USE_PROCD=1		# 启用OpenWrt的procd进程管理框架
 }
 
 start_service()
-{
+{	
+	# 检查是否存在已安装软件包的备份文件（记录需要恢复的软件包）
 	if [ -f /etc/backup/installed_packages.txt ]; then
+		# 判断系统是否使用apk包管理器（Alpine Linux/部分OpenWrt衍生版）
 		if [ -e /usr/bin/apk ]; then
+			# 更新apk软件源
 			apk update >/dev/null 2>&1
+			# 1. 过滤备份文件中标记为overlay的软件包（仅取包名）
+			# 2. 批量安装这些软件包（xargs -r：无参数时不执行apk add）
+			# 3. 判断安装命令输出是否为空（即所有包安装成功）
 			if [ -z "$(grep '\toverlay' /etc/backup/installed_packages.txt | cut -f1 | xargs -r apk add)" ]; then
 				rm /etc/backup/installed_packages.txt
 			fi
 		else
+			# 系统使用opkg包管理器（标准OpenWrt）
+			# 更新opkg软件源（-V0：最低日志级别，静默执行）
 			opkg -V0 update >/dev/null 2>&1
+			# 1. 过滤备份文件中标记为overlay的软件包（仅取包名）
+			# 2. 批量安装这些软件包（xargs -r：无参数时不执行opkg install）
+			# 3. 判断安装命令输出是否为空（即所有包安装成功）
 			if [ -z "$(grep '\toverlay' /etc/backup/installed_packages.txt | cut -f1 | xargs -r opkg -V0 install)" ]; then
+				# 安装完成后删除备份文件（避免重复安装）
 				rm /etc/backup/installed_packages.txt
 			fi
 		fi
