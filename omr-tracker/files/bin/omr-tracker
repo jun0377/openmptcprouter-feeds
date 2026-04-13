@@ -13,13 +13,14 @@ OMR_TRACKER_INTERFACE="$1"
 shift
 
 # export vars
+# 以下变量用于：把当前探测上下文传给 post-tracking 钩子脚本，以及某些工具调用时复用
 export OMR_TRACKER_INTERFACE
 export OMR_TRACKER_HOST
 export OMR_TRACKER_HOST6
-export OMR_TRACKER_TIMEOUT
-export OMR_TRACKER_SIZE
-export OMR_TRACKER_MAX_TTL
-export OMR_TRACKER_LOSS
+export OMR_TRACKER_TIMEOUT				# ping/httping命令总超时时间
+export OMR_TRACKER_SIZE					# ping命令包负载大小payload
+export OMR_TRACKER_MAX_TTL				# ping命令携带的TTL
+export OMR_TRACKER_LOSS					# ping命令探测到的丢包率
 export OMR_TRACKER_STATUS
 export OMR_TRACKER_STATUS_MSG
 export OMR_TRACKER_PREV_STATUS
@@ -38,12 +39,8 @@ export OMR_TRACKER_INTERVAL
 export OMR_TRACKER_NO_BIND
 export OMR_TRACKER_TYPE
 
-#dscp=56   # set DSCP CS7 (56) in outgoing packets
-
-#initial_hosts="$OMR_TRACKER_HOSTS"
-#initial_hosts6="$OMR_TRACKER_HOSTS6"
-initial_timeout="$OMR_TRACKER_TIMEOUT"
-wait_test=${OMR_TRACKER_WAIT_TEST:-0}
+initial_timeout="$OMR_TRACKER_TIMEOUT"		# 保存初始超时时间，供 RTO 初始化使用(单位秒)
+wait_test=${OMR_TRACKER_WAIT_TEST:-0}		# 如果未设置 OMR_TRACKER_WAIT_TEST，则默认 0(错误时额外等待时间)
 
 # set constants for rto updating
 # we've changed the default values of the RFC to K=3 and beta=0.25 instead of K=4 and beta=0.125
@@ -54,12 +51,12 @@ wait_test=${OMR_TRACKER_WAIT_TEST:-0}
 # 这样的调整能够在延迟快速上升时，缩小RTT与RTO之间的差距，
 # 因为我们的测量频率低于TCP协议栈标准的超时计算频率
 
-# 将 rto 设置为初始超时时间 ( initial_timeout * 1000 毫秒)。RTO 用于动态调整探测的超时时间,适应网络波动
+# 将 rto 设置为初始超时时间initial_timeout, RTO用于动态调整探测的超时时间,适应网络波动
 _init_rto() {
-	srtt=
-	rttvar=
-	rto_init=$(( initial_timeout * 1000 ))
-	rto=$rto_init
+	srtt=										# 平滑 RTT（SRTT
+	rttvar=										# RTT 方差（RTTVAR）
+	rto_init=$(( initial_timeout * 1000 ))		# 初始 RTO（毫秒）
+	rto=$rto_init								# 当前 RTO = 初始 RTO
 }
 
 # update rto as explained in rfc6298
@@ -81,54 +78,58 @@ _init_rto() {
 
 # 根据实测的 RTT (Round Trip Time，往返时延) 更新 RTO
 # 原理 ：使用类似 TCP 的算法（参考 RFC6298），但修改了系数（K=3, beta=0.25），使其对延迟变化的反应比标准 TCP 更快。这是为了在探测频率较低的情况下也能快速适应网络抖动
+# 根据本次测得的 RTT（$1，毫秒）更新 srtt/rttvar/rto
 _update_rto() {
+	# 第一次样本：直接初始化
 	if [ -z "$srtt" ]; then
 		srtt=$1
 		rttvar=$(echo "$(($1 / 2))" | cut -d. -f1)
-		#"
+	# 非第一次：用指数加权法更新
 	else
-		diff=$((srtt - $1))
-		rttvar=$(echo "$(((75 * rttvar + 25 * (diff >= 0 ? diff : -diff)) / 100))" | cut -d. -f1)
-		srtt=$(echo "$(((75 * srtt + 25 * $1) / 100))" | cut -d. -f1)
+		diff=$((srtt - $1))																			# diff = 旧 srtt - 新 rtt（可能为负）
+		rttvar=$(echo "$(((75 * rttvar + 25 * (diff >= 0 ? diff : -diff)) / 100))" | cut -d. -f1)	# rttvar = 0.75 * rttvar + 0.25 * |diff|
+		srtt=$(echo "$(((75 * srtt + 25 * $1) / 100))" | cut -d. -f1)								# srtt = 0.75*srtt + 0.25*rtt
 	fi
-	rto=$((tmp = srtt + 3 * rttvar, tmp > rto_init ? tmp : rto_init))
+	rto=$((tmp = srtt + 3 * rttvar, tmp > rto_init ? tmp : rto_init))								# rto = max(srtt + 3 * rttvar, rto_init)
 }
 
 # 作用 ： 轮询探测目标
-# 细节 ：将当前的探测目标主机 ( OMR_TRACKER_HOST ) 移到列表末尾，取出下一个主机作为下一次探测的目标。这样可以避免因单一探测目标（如某个 DNS 服务器）故障而误判线路中断
+# 细节 ：将当前的探测目标主机 (OMR_TRACKER_HOST) 移到列表末尾，取出下一个主机作为下一次探测的目标。这样可以避免因单一探测目标（如某个 DNS 服务器）故障而误判线路中断
 _restart() {
-	OMR_TRACKER_HOST="${OMR_TRACKER_HOSTS%% *}"
-	OMR_TRACKER_HOST6="${OMR_TRACKER_HOSTS6%% *}"
+	OMR_TRACKER_HOST="${OMR_TRACKER_HOSTS%% *}"				# 取 IPv4 hosts 列表的第一个（按空格分隔）
+	OMR_TRACKER_HOST6="${OMR_TRACKER_HOSTS6%% *}"			# 取 IPv6 hosts 列表的第一个
+	
+	# 如果当前 IPv4 host 不是唯一元素，说明列表里还有其它 host；将当前 host 移到末尾，实现轮询
 	[ "$OMR_TRACKER_HOST" = "$OMR_TRACKER_HOSTS" ] || {
 		OMR_TRACKER_HOSTS="${OMR_TRACKER_HOSTS#* } $OMR_TRACKER_HOST"
-		_init_rto
+		_init_rto											# 切换目标后重新初始化 RTO
 	}
+
+	# 如果当前 IPv6 host 不是唯一元素，说明列表里还有其它 host；将当前 host 移到末尾，实现轮询
 	[ "$OMR_TRACKER_HOST6" = "$OMR_TRACKER_HOSTS6" ] || {
 		OMR_TRACKER_HOSTS6="${OMR_TRACKER_HOSTS6#* } $OMR_TRACKER_HOST6"
 		_init_rto
 	}
 }
 
-# 作用 ： 钩子函数 ，执行探测后的回调脚本
-# 细节 ：它会遍历并执行 /usr/share/omr/post-tracking.d/ 目录下的所有脚本
-# 重要性 ：这是 omr-tracker 与系统其他部分交互的关键。当探测结果（OK 或 ERROR）出来后，正是通过这里调用的脚本（如 003-up , 002-error ）去通知 MPTCP 内核模块上线或下线该接口
+# 重要性 ：这是 omr-tracker 与系统其他部分交互的关键。
+# 当探测结果(OK 或 ERROR)出来后，正是通过这里调用的脚本(如 003-up , 002-error)去通知 MPTCP 内核模块上线或下线该接口
+
+# 探测结束后执行钩子：依次运行 /usr/share/omr/post-tracking.d/ 下的可执行脚本
 _post_tracking() {
 	for tracker_bin in /usr/share/omr/post-tracking.d/*; do
 		[ -x "$tracker_bin" ] && (
 			_log() {
 				logger -t "post-tracking-${tracker_bin##*/}" "$*"
 			}
+
+			# 在子 shell 中执行(避免污染当前 shell 的环境/变量)
 			. "$tracker_bin" 2>&1
-			#tmp=$(mktemp)
-			#. "$tracker_bin" 2>&1 > "$tmp"
-			#trackresult=$(< "$tmp")
-			#[ -n "$trackresult" ] && _log $trackresult
-			#rm -f "$tmp"
 		)
 	done
 }
 
-# 作用 ：检测到 特定 VPS 服务器 的连通性。它会读取 UCI 配置中定义的服务器 IP，并调用 _ping 或 _httping
+# ping检测特定VPS服务器的连通性, 更新平均RTT和丢包率
 _ping_server() {
 	local servername="$1"
 	[ -z "$servername" ] && return
@@ -151,31 +152,42 @@ _ping_server() {
 	fi
 }
 
-# 检测到 所有已配置 VPS 服务器 的连通性
+# ping检测所有VPS服务器的连通性
 _ping_server_all() {
+	# 判断是否存在至少一个启用且有IP的server
 	count_server() {
-		config_get disabled $1 disabled
-		config_get serverip $1 ip
+		config_get disabled $1 disabled		# 从当前 section 取 disabled
+		config_get serverip $1 ip			# 从当前 section 取 ip（可能是 list）
+
+		# 标记存在可用 server
 		if [ "$disabled" != "1" ] && [ -n "$serverip" ]; then
 			servers=true
 		fi
 	}
+	
 	config_load openmptcprouter
 	config_foreach count_server server
+
+	# 只有存在server才继续
 	if [ "$servers" = true ]; then
+		# 从multipath工具输出中提取默认路径对应的接口列表(每条default 一行，取第1列), 每个接口都进行ping VPS检测
 		for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
 			config_foreach _ping_server server $intf
 		done
 	fi
 }
 
+# 使用httping探测特定server API/端口
 _httping_server() {
 	local servername="$1"
 	[ -z "$servername" ] && return
-	local disabled=$(uci -q get openmptcprouter."$servername".disabled)
-	local port=$(uci -q get openmptcprouter."$servername".port)
-	local device="$2"
+	local disabled=$(uci -q get openmptcprouter."$servername".disabled)		# 是否禁用
+	local port=$(uci -q get openmptcprouter."$servername".port)				# server 端口（给 httping 用）
+	local device="$2"														# 指定接口/设备
+
+
 	if [ -n "$device" ] && [ "$disabled" != "1" ]; then
+		# 以https模式(true)对serverip:port进行探测(这里的https语义取决于_httping实现)
 		check_ping() {
 			serverip="$1"
 			if [ -n "$serverip" ]; then
@@ -192,6 +204,7 @@ _httping_server() {
 	fi
 }
 
+# 使用httping探测所有server API/端口
 _httping_server_all() {
 	count_server() {
 		config_get disabled $1 disabled
@@ -212,12 +225,19 @@ _httping_server_all() {
 # 作用 ：执行 ICMP Ping 探测
 # 解析结果 ：从 ping 的输出中提取 丢包率 (loss) 和 延迟 (latency)
 # 如果丢包率不是 100%，则认为链路通畅，更新全局变量 OMR_TRACKER_LATENCY 和 OMR_TRACKER_LOSS ，并返回 0 (成功)
+
+# 执行ICMP ping探测，并解析丢包率 (loss) 和 延迟 (latency); 非 100% 丢包视为可用
 _ping() {
 	local host="$1"
 	[ -z "$host" ] && return
 	local device="$2"
 	local localip="$3"
+
+	# 3G / QMI / NCM / ... 用不带-B的ping方式
 	if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ "$OMR_TRACKER_NO_BIND" = "1" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; }; then
+		
+		# -I device：绑定接口; -w timeout：总超时; -c count：次数; -s size：payload 大小; -t ttl：TTL
+		# -Q 184：TOS/DSCP（184=0xB8，常见对应 EF/高优先级，作者注释里说 CS7 但 56 才是 CS7；此处需结合实现理解）
 		ret=$(ping -I "${device}" \
 			-w "$OMR_TRACKER_TIMEOUT" \
 			-c "$OMR_TRACKER_COUNT" \
@@ -226,19 +246,25 @@ _ping() {
 			-Q 184 \
 			"${host}" 2>&1
 		)
+
+		# 从 ping 输出中提取丢包百分比
 		loss=$(echo "$ret" | awk '/packet loss/ && !/errors/ {gsub("%","");print $6}' | tr -d '\n')
 		
+		# 非100%丢包视为 可达
 		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
 			if [ "$localip" = "yes" ]; then
+
+				# 从 rtt 行提取平均值（字段依赖于格式：min/avg/max/...）
 				latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
 				[ -n "$latency" ] && {
 					OMR_TRACKER_LATENCY="$latency"
-					#_update_rto "$OMR_TRACKER_LATENCY"
 				}
+
 				OMR_TRACKER_LOSS="$loss"
 			fi
 			return 0
 		fi
+	# 其它场景使用 ping -B (要求源地址必须在接口上，避免走错路由)
 	else
 		ret=$(ping -B -I "${device}" \
 			-w "$OMR_TRACKER_TIMEOUT" \
@@ -248,52 +274,64 @@ _ping() {
 			-Q 184 \
 			"${host}" 2>&1
 		)
+
+		# 检测是否出现“地址不可用”（可能接口未拿到地址或不支持绑定）
 		bindcheck=$(echo "$ret" | grep "Address not available")
+		# 如果无法绑定，设置标志，后续改用不严格绑定方式
 		[ -n "$bindcheck" ] && OMR_TRACKER_NO_BIND=1
+		# 提取丢包率
 		loss=$(echo "$ret" | awk '/packet loss/ && !/errors/  {gsub("%","");print $6}' | tr -d '\n')
+		# 非 100% 丢包即认为通
 		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
 			if [ "$localip" = "yes" ]; then
-				#latency=$(echo "$ret" | grep rtt | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
+				# 提取平均 RTT 并取整
 				latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
 				[ -n "$latency" ] && {
 					OMR_TRACKER_LATENCY="$latency"
-					#_update_rto "$OMR_TRACKER_LATENCY"
 				}
 				OMR_TRACKER_LOSS="$loss"
 			fi
 			return 0
 		fi
 	fi
-	return 1
+	return 1		# 失败（100% 丢包或解析不到 loss）
 }
 
-# 作用 ：执行 HTTP/HTTPS 探测（使用 httping 工具）
-# 逻辑 ：模拟 HTTP 请求来检测连通性。适用于某些防火墙屏蔽 ICMP 但允许 HTTP 的场景。同样会解析延迟和丢包率
+# 作用: 执行 HTTP/HTTPS 探测（使用 httping 工具）
+# 逻辑: 模拟 HTTP 请求来检测连通性。适用于某些防火墙屏蔽ICMP但允许HTTP的场景。同样会解析延迟和丢包率
 _httping() {
-	local host=$1
-	local deviceip=$2
-	local localip=$3
-	local https=$4
+	local host=$1			# 目标 host（可以是 "ip:port"）
+	local deviceip=$2		# 本地绑定的源 IP（httping -y）
+	local localip=$3		# 是否需要记录 latency/loss（"yes" 才记录）
+	local https=$4			# 是否使用 https 模式（true 表示 -l）
+
+	# HTTP模式
 	if [ -z "$https" ] || [ "$https" = false ]; then
+		# -y：绑定源地址; -t：超时; -c：次数
 		ret=$(httping "${host}" \
 			-y "${deviceip}" \
 			-t "$OMR_TRACKER_TIMEOUT" \
 			-c "$OMR_TRACKER_COUNT" 2>&1
 		)
+		# 检测绑定失败
 		bindcheck=$(echo "$ret" | grep "Address not available")
+		# 标记不能绑定
 		[ -n "$bindcheck" ] && OMR_TRACKER_NO_BIND=1
+		# 从 httping 输出提取失败率（字段位置依赖于 httping 版本）
 		loss=$(echo "$ret" | awk '/failed/ {gsub("%",""); print int($5)}' | tr -d '\n')
+		# 非 100% 失败视为可用
 		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
 			if [ "$localip" = "yes" ]; then
+				# 提取平均延迟（依赖 httping 输出格式）
 				latency=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
 				[ -n "$latency" ] && {
 					OMR_TRACKER_LATENCY="$latency"
-					#_update_rto "$OMR_TRACKER_LATENCY"
 				}
 				OMR_TRACKER_LOSS="$loss"
 			fi
 			return 0
 		fi
+	# HTTPS模式
 	else
 		ret=$(httping -l "${host}" \
 			-y "${deviceip}" \
@@ -308,7 +346,6 @@ _httping() {
 				latency=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
 				[ -n "$latency" ] && {
 					OMR_TRACKER_LATENCY="$latency"
-					#_update_rto "$OMR_TRACKER_LATENCY"
 				}
 				OMR_TRACKER_LOSS="$loss"
 			fi
@@ -318,11 +355,11 @@ _httping() {
 	return 1
 }
 
-# 作用 ：执行 DNS 探测
-# 逻辑 ：使用 dig 命令通过指定接口向目标服务器（如 1.1.1.1）查询域名。如果能收到解析结果，则认为链路正常，并以查询耗时作为延迟
+# 作用: 执行DNS探测
+# 逻辑: 使用dig命令通过指定接口向目标服务器1.1.1.1查询域名。如果能收到解析结果，则认为链路正常，并以查询耗时作为延迟
 _dns() {
-	local host=$1
-	local deviceip=$2
+	local host=$1				# DNS 服务器地址（作为 dig 的 @server）
+	local deviceip=$2			# 本地源 IP（dig -b 绑定源地址）
 	ret=$(dig @"${host}" \
 		-b "${deviceip}" \
 		    +time="$OMR_TRACKER_TIMEOUT" \
@@ -330,7 +367,6 @@ _dns() {
 		    one.one.one.one
 	) && echo "$ret" | grep -sq "1.1.1.1" && {
 		OMR_TRACKER_LATENCY=$(echo "$ret" | awk '/Query time/{print $4}')
-		#_update_rto "$OMR_TRACKER_LATENCY"
 		return 0
 	}
 	return 1
@@ -341,10 +377,14 @@ _none() {
 	return 0
 }
 
+# 初始化/轮换一次探测目标（从 hosts 列表取首个 host/host6）
 _restart
 
+# 读取接口的 proto（dhcp/pppoe/qmi/3g/等）
 OMR_TRACKER_INTERFACE_PROTO="$(uci -q get network.${OMR_TRACKER_INTERFACE}.proto)"
+# 初始化 上一次状态（空，后面用于决定重试次数/状态变化）
 OMR_TRACKER_PREV_STATUS=""
+# 若是 modemmanager，按配置 delay 等待（默认 120 秒）以便拨号稳定
 [ "$OMR_TRACKER_INTERFACE_PROTO" = "modemmanager" ] && sleep $(uci -q get network.${OMR_TRACKER_INTERFACE}.delay || echo '120')
 
 # main loop
@@ -389,10 +429,6 @@ while true; do
 				if [ -z "$OMR_TRACKER_DEVICE_IP" ]; then
 					OMR_TRACKER_DEVICE_IP=$(ip -4 addr show dev "$OMR_TRACKER_DEVICE" | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1)
 				fi
-				#OMR_TRACKER_DEVICE_IP=$(ubus call network.interface.$OMR_TRACKER_INTERFACE status | jsonfilter -q -e '@["ipv4-address"][0].address' | tr -d "\n")
-				#if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-				#	OMR_TRACKER_DEVICE_GATEWAY=$(ip -4 r list dev "$OMR_TRACKER_DEVICE" | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
-				#fi
 
 				# 尝试多种方式来获取网关
 				# 特殊处理 bonding-omrvpn 的网关
@@ -450,10 +486,9 @@ while true; do
 
 			# IPv6地址和网关
 			if { [ "$OMR_TRACKER_IPV6" = "1" ] || [ "$OMR_TRACKER_IPV6" = "auto" ]; } && { [ "$OMR_TRACKER_FAMILY" = "ipv6" ] || [ "$OMR_TRACKER_FAMILY" = "ipv4ipv6" ]; }; then
-				#OMR_TRACKER_DEVICE_IP6=$(ip -6 -br addr ls dev "$OMR_TRACKER_DEVICE" | awk -F'[ /]+' '{print $3}')
-				#if [ -z "$OMR_TRACKER_DEVICE_IP6" ]; then
-					OMR_TRACKER_DEVICE_IP6=$(ip -6 addr show dev "$OMR_TRACKER_DEVICE" scope global | sort -r | grep -m 1 inet6 | awk '{print $2}' | cut -d'/' -s -f1)
-				#fi
+
+				OMR_TRACKER_DEVICE_IP6=$(ip -6 addr show dev "$OMR_TRACKER_DEVICE" scope global | sort -r | grep -m 1 inet6 | awk '{print $2}' | cut -d'/' -s -f1)
+
 				# 尝试从 UCI 获取 IPv6 网关
 				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
 					OMR_TRACKER_DEVICE_GATEWAY6=$(uci -q get "network.$OMR_TRACKER_INTERFACE.ip6gw")
@@ -631,13 +666,10 @@ while true; do
 				fi
 				# loop until tries attempts have been reached
 				while [ "$tries" -gt 0 ]; do
-					#if [ -n "$OMR_TRACKER_DEVICE_ROUTE" ]; then
-					#	_ping "$OMR_TRACKER_DEVICE_ROUTE" "$OMR_TRACKER_DEVICE" "no"
-					#	status=$?
-					#else
-						_ping "$OMR_TRACKER_DEVICE_GATEWAY6" "$OMR_TRACKER_DEVICE" "no"
-						status=$?
-					#fi
+
+					_ping "$OMR_TRACKER_DEVICE_GATEWAY6" "$OMR_TRACKER_DEVICE" "no"
+					status=$?
+
 					if $(exit $status) && [ "$OMR_TRACKER_TYPE" = "none" ]; then
 						OMR_TRACKER_STATUS_MSG=""
 						OMR_TRACKER_STATUS="OK"
@@ -788,9 +820,6 @@ while true; do
 		fi
 	fi
 
-	#[ "$OMR_TRACKER_HOSTS" = "$initial_hosts" ] || [ "$OMR_TRACKER_STATUS" = "OK" ] && _post_tracking
-	#[ "$OMR_TRACKER_STATUS" = "ERROR" ] && _restart
-	#[ "$OMR_TRACKER_STATUS" != "$OMR_TRACKER_PREV_STATUS" ] && _post_tracking
 	# 执行钩子脚本，通知系统状态变化
 	_post_tracking
 	# 保存当前状态，供下一次循环比对
