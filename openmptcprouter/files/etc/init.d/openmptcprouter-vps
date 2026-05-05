@@ -6,7 +6,7 @@ START=99
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel token set_bypass_ips set_vpn_ip"
+EXTRA_COMMANDS="work_mode_change set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel token set_bypass_ips set_vpn_ip"
 
 . /usr/lib/unbound/iptools.sh
 
@@ -1355,7 +1355,7 @@ _set_lan_ip() {
 		logger -t "OMR-VPS" "$FUNCNAME lanIP:${lanIP}!"
 	fi
 
-	if [ ! -z "${lanMask}" ] && [ "${lanMask}" != "$(uci get network.lan.netmask)"]; then
+	if [ ! -z "${lanMask}" ] && [ "${lanMask}" != "$(uci get network.lan.netmask)" ]; then
 		uci set network.lan.netmask=${lanMask}
 		logger -t "OMR-VPS" "$FUNCNAME uci set network.lan.netmask=${lanMask}"
 	else
@@ -2934,7 +2934,7 @@ _config_service() {
 		([ -n "$(uci -q get glorytun.vpn)" ] || [ -n "$(uci -q get glorytun-udp.vpn)" ]) && [ -z "$(_set_glorytun_vps)" ] && error=1
 		[ -n "$(uci -q get openvpn.omr)" ] && [ -z "$(_set_openvpn_vps)" ] && error=1
 		[ -n "$(uci -q get mlvpn.general)" ] && [ -z "$(_set_mlvpn_vps)" ] && error=1
-		_set_vps_firewall
+		# _set_vps_firewall
 		[ -n "$(uci -q show network | grep wireguard)" ] && [ -z "$(_set_wireguard_vps)" ] && error=1
 	fi
 
@@ -2978,7 +2978,7 @@ _config_service() {
 	# SIP协议支持
 	_set_sipalg
 	# 同步设备和VPS的VPN绕过IP地址配置
-	_set_bypass_ips
+	# _set_bypass_ips
 	# 配置置客户端之间的路由, /etc/config/network中的route段，并没有执行，因为该配置文件中不存在route端
 	config_foreach _delete_client2client route
 	if [ "$(uci -q get openmptcprouter.settings.vpn)" != "openvpn" ] && [ "$(echo "$vps_config" | jsonfilter -q -e '@.client2client.enabled')" = "true" ]; then
@@ -3028,16 +3028,8 @@ token() {
 	config_foreach _get_token server
 }
 
-start_service() {
-
-	logger -t "OMR-VPS" "$FUNCNAME start service..."
-
-	# WAN口IP
-	wanips=""
-	# 序列号,使用CPU序列号作为整机序列号
-	serial=$(cat /proc/cpuinfo | grep Serial | awk '{print $3}')
-	# 记录序列号到/etc/config/openmptcprouter
-	uci -q set openmptcprouter.settings.serial=${serial}
+# 聚合模式
+mode_aggregate() {
 	# 加载配置/etc/config/openmptcprouter
 	config_load openmptcprouter
 	# 获取公网IP,遍历/etc/config/openmptcprouter中所有interface类型的section
@@ -3049,7 +3041,64 @@ start_service() {
 	uci -q batch <<-EOF >/dev/null
 		commit openmptcprouter
 	EOF
+}
 
+# 负载均衡模式
+mode_balance() {
+	logger -t "OMR-VPS" "$FUNCNAME mode: balance"
+}
+
+# 单卡模式
+mode_single() {
+	
+	logger -t "OMR-VPS" "$FUNCNAME mode: single"
+
+	# 单卡模式逻辑在单独的文件中实现
+	if [ -f /usr/lib/openmptcprouter-vps/mode_single.sh ]; then
+		. /usr/lib/openmptcprouter-vps/mode_single.sh
+	fi
+	
+	# 单卡模式入口函数
+	if type mode_single_handler >/dev/null 2>&1; then
+		mode_single_handler
+		return
+	fi
+}
+
+# 工作模式: 单卡模式 / 聚合模式 / 负载均衡模式
+work_mode() {
+	local mode="$(uci -q get global.global.mode)"
+	logger -t "OMR-VPS" "$FUNCNAME mode: ${mode}"
+	case "$mode" in
+		'single')
+			mode_single
+			;;
+		'aggregate')
+			mode_aggregate
+			;;
+		'balance')
+			mode_balance
+			;;
+		*)
+			logger -t "OMR-VPS" "$FUNCNAME unknown mode:${mode}! reset to mode single"
+			mode_single
+			;;
+	esac
+}
+
+# 服务入口
+start_service() {
+
+	logger -t "OMR-VPS" "$FUNCNAME start service..."
+
+	# WAN口IP
+	wanips=""
+	# 序列号,使用CPU序列号作为整机序列号
+	serial=$(cat /proc/cpuinfo | grep Serial | awk '{print $3}')
+	# 记录序列号到/etc/config/openmptcprouter
+	uci -q set openmptcprouter.settings.serial=${serial}
+	# 工作模式管理
+	work_mode
 	# 系统启动时自动恢复备份的 overlay 层软件包
 	if [ "$(ps w | grep sysupgrade)" = "" ]; then
 		logger -t "OMR-VPS" "$FUNCNAME Restart /etc/init.d/sysupgrade..."
@@ -3060,7 +3109,7 @@ start_service() {
 # 服务触发器，当相关服务或配置发生变化时，OpenMPTCPRouter的VPS组件能够适当地响应
 service_triggers() {
 	# 当如下服务发生reload时, 会自动触发当前服务的reload
-	procd_add_reload_trigger shadowsocks-libev shadowsocks-rust v2ray xray glorytun glorytun-udp mlvpn dsvpn
+	procd_add_reload_trigger shadowsocks-libev shadowsocks-rust v2ray xray mlvpn dsvpn
 	# 当防火墙配置/etc/config/firewall发生变化时，会调用set_vps_firewall
-	procd_add_config_trigger "config.change" "firewall" /etc/init.d/openmptcprouter-vps set_vps_firewall
+	# procd_add_config_trigger "config.change" "firewall" /etc/init.d/openmptcprouter-vps set_vps_firewall
 }
