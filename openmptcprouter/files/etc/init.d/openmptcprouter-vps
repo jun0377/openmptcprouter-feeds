@@ -1984,10 +1984,6 @@ _set_config_from_vps() {
 	lastchange="$(uci -q get openmptcprouter.${servername}.lastchange)"
 	[ -z "$lastchange" ] && lastchange=0
 	#[ -n "$lastchange" ] && [ -n "$vps_lastchange" ] && [ "$lastchange" -gt "$vps_lastchange" ] && return
-	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
-	[ -z "$user_permission" ] && user_permission="rw"
-
-	logger -t "OMR-VPS" "$FUNCNAME user_permission:${user_permission}"
 
 	logger -t "OMR-VPS" "$FUNCNAME OMR-Tracker..."
 	vpsinternet="$(echo "$vps_config" | jsonfilter -q -e '@.network.internet')"
@@ -2015,7 +2011,7 @@ _set_config_from_vps() {
 	logger -t "OMR-VPS" "$FUNCNAME current_vpn..."
 	current_vpn="$(uci -q get openmptcprouter.settings.vpn)"
 	logger -t "OMR-VPS" "$FUNCNAME current_vpn:${current_vpn}"
-	if [ -z "$current_vpn" ] || ([ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$lastchange" ]) || [ "$user_permission" = "ro" ]; then
+	if [ -z "$current_vpn" ] || ([ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$lastchange" ]); then
 		current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
 		if [ -n "$current_vpn" ]; then
 
@@ -2032,7 +2028,7 @@ _set_config_from_vps() {
 	logger -t "OMR-VPS" "$FUNCNAME current_proxy..."
 	current_proxy="$(uci -q get openmptcprouter.settings.proxy)"
 	logger -t "OMR-VPS" "$FUNCNAME current_proxy:${current_proxy}"
-	if [ -z "$current_proxy" ] || ([ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$lastchange" ]) || [ "$user_permission" = "ro" ]; then
+	if [ -z "$current_proxy" ] || ([ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$lastchange" ]); then
 		current_proxy="$(echo "$vps_config" | jsonfilter -q -e '@.proxy.current')"
 		if [ -n "$current_proxy" ]; then
 
@@ -2592,36 +2588,21 @@ _set_config_from_vps() {
 		del openmptcprouter.${servername}.available_proxy
 	EOF
 
-	if [ "$user_permission" = "ro" ]; then
-		current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
-		if [ -n "$current_vpn" ]; then
+	if [ -n "$available_vpn" ]; then
+		for vpn in $available_vpn; do
 			uci -q batch <<-EOF >/dev/null
-				set openmptcprouter.${servername}.available_vpn=${current_vpn}
+				add_list openmptcprouter.${servername}.available_vpn=$vpn
 			EOF
-		fi
-		current_proxy="$(echo "$vps_config" | jsonfilter -q -e '@.proxy.current')"
-		if [ -n "$current_proxy" ]; then
-			uci -q batch <<-EOF >/dev/null
-				set openmptcprouter.${servername}.available_proxy=${current_proxy}
-			EOF
-		fi
-	
-	else
-		if [ -n "$available_vpn" ]; then
-			for vpn in $available_vpn; do
-				uci -q batch <<-EOF >/dev/null
-					add_list openmptcprouter.${servername}.available_vpn=$vpn
-				EOF
-			done
-		fi
-		if [ -n "$available_proxy" ]; then
-			for proxy in $available_proxy; do
-				uci -q batch <<-EOF >/dev/null
-					add_list openmptcprouter.${servername}.available_proxy=$proxy
-				EOF
-			done
-		fi
+		done
 	fi
+	if [ -n "$available_proxy" ]; then
+		for proxy in $available_proxy; do
+			uci -q batch <<-EOF >/dev/null
+				add_list openmptcprouter.${servername}.available_proxy=$proxy
+			EOF
+		done
+	fi
+
 	if [ "$noerror" = "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.get_config=0
@@ -2844,7 +2825,7 @@ _config_service() {
 	serverport="$(echo $tokenserver | cut -f2 -d:)"
         token="$(echo $tokenserver | cut -f3 -d:)"
 	[ -z "$token" ] && logger -t "OMR-VPS" "$FUNCNAME Get token error!" && return
-	error=0
+	error=0 && logger -t "OMR-VPS" "$FUNCNAME error = ${error}!"
 
 	# 如果设置了序列号，验证其有效性。如果序列号无效，记录错误日志并清除配置
 	if [ -n "$serial" ]; then
@@ -2888,7 +2869,7 @@ _config_service() {
 		[ -n "$(cat /proc/cpuinfo | grep aes)" ] && {
 			vps_aes="$(echo "$vps_config" | jsonfilter -q -e '@.vps.aes')"
 			method="$(uci -q get openmptcprouter.settings.encryption)"
-			if [ "$vps_aes" != "false" ] && [ "$user_permission" != "ro" ] && [ "$method" != "aes-256-gcm" ]; then
+			if [ "$vps_aes" != "false" ] && [ "$method" != "aes-256-gcm" ]; then
 				logger -t "OMR-VPS" "$FUNCNAME CPU support AES, set it by default"
 				uci -q batch <<-EOF >/dev/null
 					set openmptcprouter.settings.encryption="aes-256-gcm"
@@ -2920,23 +2901,16 @@ _config_service() {
 	kernel="$(echo "$vps_config" | jsonfilter -q -e '@.vps.kernel')"
 	[ -z "$kernel" ] && logger -t "OMR-VPS" "$FUNCNAME vps kernel unknown! return now..." && return
 	logger -t "OMR-VPS" "$FUNCNAME vps kernel: ${kernel}"
-	
-	# 用户权限, 可读可写rw
-	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
-	logger -t "OMR-VPS" "$FUNCNAME user_permission ${user_permission}"
 
-	# 用户权限
-	if [ "$user_permission" != "ro" ]; then
-		[ -n "$(uci -q get shadowsocks-libev.sss0)" ] && _set_ss_server_vps
-		[ -n "$(uci -q get shadowsocks-rust.sss0)" ] && _set_ssgo_server_vps
-		[ -n "$(uci -q get v2ray.omr)" ] && _set_v2ray_server_vps
-		[ -n "$(uci -q get xray.omr)" ] && _set_xray_server_vps
-		([ -n "$(uci -q get glorytun.vpn)" ] || [ -n "$(uci -q get glorytun-udp.vpn)" ]) && [ -z "$(_set_glorytun_vps)" ] && error=1
-		[ -n "$(uci -q get openvpn.omr)" ] && [ -z "$(_set_openvpn_vps)" ] && error=1
-		[ -n "$(uci -q get mlvpn.general)" ] && [ -z "$(_set_mlvpn_vps)" ] && error=1
-		# _set_vps_firewall
-		[ -n "$(uci -q show network | grep wireguard)" ] && [ -z "$(_set_wireguard_vps)" ] && error=1
-	fi
+	[ -n "$(uci -q get shadowsocks-libev.sss0)" ] && _set_ss_server_vps
+	[ -n "$(uci -q get shadowsocks-rust.sss0)" ] && _set_ssgo_server_vps
+	[ -n "$(uci -q get v2ray.omr)" ] && _set_v2ray_server_vps
+	[ -n "$(uci -q get xray.omr)" ] && _set_xray_server_vps
+	([ -n "$(uci -q get glorytun.vpn)" ] || [ -n "$(uci -q get glorytun-udp.vpn)" ]) && [ -z "$(_set_glorytun_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_glorytun_vps error!"
+	[ -n "$(uci -q get openvpn.omr)" ] && [ -z "$(_set_openvpn_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_openvpn_vps error!"
+	[ -n "$(uci -q get mlvpn.general)" ] && [ -z "$(_set_mlvpn_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_mlvpn_vps error!"
+	# _set_vps_firewall
+	[ -n "$(uci -q show network | grep wireguard)" ] && [ -z "$(_set_wireguard_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_wireguard_vps error!"
 
 	# 从VPS获取备份配置
 	_backup_list
@@ -2948,16 +2922,15 @@ _config_service() {
 	fi
 	logger -t "OMR-VPS" "$FUNCNAME redirect_port=${redirect_port}"
 
-	if [ "$user_permission" != "ro" ]; then
-		# 和VPS同步端口重定向配置
-		[ -z "$(_set_redirect_ports_from_vps $redirect_port)" ] && error=1
-		# 和VPS同步MPTCP配置
-		[ -z "$(_set_mptcp_vps)" ] && error=1
-		# 设置默认VPN
-		[ -z "$(_set_vpn_vps)" ] && error=1
-		# 从VPS获取默认代理设置
-		[ -z "$(_set_proxy_vps)" ] && error=1
-	fi
+	# 和VPS同步端口重定向配置
+	[ -z "$(_set_redirect_ports_from_vps $redirect_port)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_redirect_ports_from_vps error!"
+	# 和VPS同步MPTCP配置
+	[ -z "$(_set_mptcp_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_mptcp_vps error!"
+	# 设置默认VPN
+	[ -z "$(_set_vpn_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_vpn_vps error!"
+	# 从VPS获取默认代理设置
+	[ -z "$(_set_proxy_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_proxy_vps error!"
+
 	([ -n "$(uci -q get shadowsocks-libev.sss0)" ] || [ -n "$(uci -q get shadowsocks-rust.sss0)" ]) \
 	&& [ "$(uci -q get shadowsocks-libev.sss0.key)" = "" ] \
 	&& [ "$(uci -q get shadowsocks-rust.sss0.password)" = "" ] \
@@ -2990,7 +2963,7 @@ _config_service() {
 		uci -q set openmptcprouter.${servername}.lastchange=$(date "+%s")
 		[ -n "$vps_config" ] && uci -q set openmptcprouter.settings.firstboot=0
 	else
-		logger -t "OMR-VPS" "$FUNCNAME Setting server config error, try again"
+		logger -t "OMR-VPS" "$FUNCNAME Set server config error, try again"
 	fi
 
 	uci -q batch <<-EOF >/dev/null
