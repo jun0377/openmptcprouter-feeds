@@ -398,40 +398,6 @@ _get_ss_server() {
 	logger -t "OMR-VPS" "$FUNCNAME obfs_type=${obfs_type}"
 }
 
-# 从VPS获取xray相关配置
-_set_xray_server_vps() {
-
-	logger -t "OMR-VPS" "$FUNCNAME..."
-
-	enabled=$(uci -q get xray.main.enabled)
-	userid=$(uci -q get xray.omrout.s_vless_user_id)
-	protocol=$(uci -q get xray.omrout.protocol)
-	ss_method=$(uci -q get xray.omrout.s_shadowsocks_method)
-	if [ "$protocol" = "vless-reality" ] && [ "$enabled" = "1" ]; then
-		vless_reality='true'
-	else
-		vless_reality='false'
-	fi
-	[ -z "$userid" ] && return
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
-	[ -z "$vps_config" ] && return
-	current_userid="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.key')"
-	current_vlessreality="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.vless_reality')"
-	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.ss_method')"
-
-	if [ "$current_userid" != "$userid" ] || [ "$current_vlessreality" != "$vless_reality" ] || [ "$current_method" != "$ss_method" ]; then
-
-		logger -t "OMR-VPS" "$FUNCNAME userid:${userid}"
-		logger -t "OMR-VPS" "$FUNCNAME protocol:${protocol}"
-		logger -t "OMR-VPS" "$FUNCNAME ss_method:${ss_method}"
-		logger -t "OMR-VPS" "$FUNCNAME vless_reality:${vless_reality}"
-
-		local settings
-		settings='{"userid": "'$userid'","vless_reality": '$vless_reality',"ss_method": "'$ss_method'"}'
-		echo $(_set_json "xray" "$settings")
-	fi
-}
-
 # 从VPS获取配置，同步到本地
 _get_vps_config() {
 
@@ -2742,7 +2708,6 @@ _config_service() {
 	[ -z "$kernel" ] && logger -t "OMR-VPS" "$FUNCNAME vps kernel unknown! return now..." && return
 	logger -t "OMR-VPS" "$FUNCNAME vps kernel: ${kernel}"
 
-	[ -n "$(uci -q get xray.omr)" ] && _set_xray_server_vps
 	([ -n "$(uci -q get glorytun.vpn)" ] || [ -n "$(uci -q get glorytun-udp.vpn)" ]) && [ -z "$(_set_glorytun_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_glorytun_vps error!"
 	[ -n "$(uci -q get openvpn.omr)" ] && [ -z "$(_set_openvpn_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_openvpn_vps error!"
 	[ -n "$(uci -q get mlvpn.general)" ] && [ -z "$(_set_mlvpn_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_mlvpn_vps error!"
