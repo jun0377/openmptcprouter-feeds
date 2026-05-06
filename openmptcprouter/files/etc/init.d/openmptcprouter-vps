@@ -398,51 +398,6 @@ _get_ss_server() {
 	logger -t "OMR-VPS" "$FUNCNAME obfs_type=${obfs_type}"
 }
 
-# 从VPS获取ShadowSocks-go相关配置
-_set_ssgo_server_vps() {
-
-	logger -t "OMR-VPS" "$FUNCNAME..."
-
-	local disabled port key method
-	config_load shadowsocks-rust
-	config_get disabled sss0 disabled
-	[ "$disabled" = "1" ] && return
-	config_get port sss0 server_port
-	#config_get server $1 server
-	config_get key sss0 key
-	key="$(echo $key | sed 's/+/-/g; s/\//_/g;')"
-	[ -z "$key" ] && return
-	config_get method sss0 method
-	local current_port current_key current_method
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
-	[ -z "$vps_config" ] && return
-	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.port')"
-	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.password')"
-	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.protocol')"
-	
-	ebpf="false"
-	fast_open="false"
-	no_delay="false"
-	mptcp="false"
-	config_load shadowsocks-rust
-	config_foreach _get_ss_redir ss_redir
-	config_foreach _get_ss_server server
-	# Force disable fast open for now du to problem on 6.1 with MPTCP
-	fast_open="false"
-
-	if [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ]; then
-
-		logger -t "OMR-VPS" "$FUNCNAME port:${port}"
-		logger -t "OMR-VPS" "$FUNCNAME method:${method}"
-		logger -t "OMR-VPS" "$FUNCNAME fast_open:${fast_open}"
-		logger -t "OMR-VPS" "$FUNCNAME mptcp:${mptcp}"
-
-		local settings
-		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":false,"mptcp":'$mptcp'}'
-		result=$(_set_json "shadowsocks-go" "$settings")
-	fi
-}
-
 # 从VPS获取V2ray相关配置
 _set_v2ray_server_vps() {
 
@@ -2810,7 +2765,6 @@ _config_service() {
 	[ -z "$kernel" ] && logger -t "OMR-VPS" "$FUNCNAME vps kernel unknown! return now..." && return
 	logger -t "OMR-VPS" "$FUNCNAME vps kernel: ${kernel}"
 
-	[ -n "$(uci -q get shadowsocks-rust.sss0)" ] && _set_ssgo_server_vps
 	[ -n "$(uci -q get v2ray.omr)" ] && _set_v2ray_server_vps
 	[ -n "$(uci -q get xray.omr)" ] && _set_xray_server_vps
 	([ -n "$(uci -q get glorytun.vpn)" ] || [ -n "$(uci -q get glorytun-udp.vpn)" ]) && [ -z "$(_set_glorytun_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_glorytun_vps error!"
