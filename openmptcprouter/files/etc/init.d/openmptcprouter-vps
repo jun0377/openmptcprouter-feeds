@@ -398,98 +398,6 @@ _get_ss_server() {
 	logger -t "OMR-VPS" "$FUNCNAME obfs_type=${obfs_type}"
 }
 
-# 从VPS获取ShadowSocks相关配置
-_set_ss_server_vps() {
-
-	logger -t "OMR-VPS" "$FUNCNAME..."
-
-	local disabled port key method
-	config_load shadowsocks-libev
-	config_get disabled sss0 disabled
-	[ "$disabled" = "1" ] && return
-	config_get port sss0 server_port
-	#config_get server $1 server
-	config_get key sss0 key
-	key="$(echo $key | sed 's/+/-/g; s/\//_/g;')"
-	[ -z "$key" ] && return
-	config_get method sss0 method
-	local current_port current_key current_method
-	# 发起http GET请求，获取shadowshocks配置
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
-	[ -z "$vps_config" ] && logger -t "OMR-VPS" "$FUNCNAME vps_config is empty! return now..." && return
-	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.port')"
-	# logger -t "OMR-VPS" "$FUNCNAME port:${current_port}"
-	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.key')"
-	# logger -t "OMR-VPS" "$FUNCNAME key:${current_key}"
-	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.method')"
-	# logger -t "OMR-VPS" "$FUNCNAME method:${current_method}"
-	current_ebpf="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.ebpf')"
-	# logger -t "OMR-VPS" "$FUNCNAME ebpf:${current_ebpf}"
-	current_obfs="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs')"
-	# logger -t "OMR-VPS" "$FUNCNAME obfs:${current_obfs}"
-	current_obfs_plugin="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs_plugin')"
-	# logger -t "OMR-VPS" "$FUNCNAME obfs_plugin:${current_obfs_plugin}"
-	current_obfs_type="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs_type')"
-	# logger -t "OMR-VPS" "$FUNCNAME obfs_type:${current_obfs_type}"
-	current_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
-	# logger -t "OMR-VPS" "$FUNCNAME fast_open:${current_fast_open}"
-	current_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
-	# logger -t "OMR-VPS" "$FUNCNAME no_delay:${current_no_delay}"
-	current_mptcp="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.mptcp')"
-	# logger -t "OMR-VPS" "$FUNCNAME mptcp:${current_mptcp}"
-	
-	ebpf="false"
-	fast_open="false"
-	no_delay="false"
-	mptcp="false"
-	obfs="false"
-	obfs_plugin="v2ray"
-	obfs_type="http"
-	config_load shadowsocks-libev
-	# 遍历/etc/config/shadowsocks-libev的所有ss_redir节点
-	config_foreach _get_ss_redir ss_redir
-	# 遍历/etc/config/shadowsocks-libev的所有server节点
-	config_foreach _get_ss_server server
-
-	if [ "$current_mptcp" != "$mptcp" ] \
-	|| [ "$current_obfs_plugin" != "$obfs_plugin" ] \
-	|| [ "$current_obfs_type" != "$obfs_type" ] \
-	|| [ "$current_port" != "$port" ] \
-	|| [ "$current_method" != "$method" ] \
-	|| [ "$current_key" != "$key" ] \
-	|| [ "$current_ebpf" != "$ebpf" ] \
-	|| [ "$current_obfs" != "$obfs" ] \
-	|| [ "$current_fast_open" != "$fast_open" ] \
-	|| [ "$current_no_delay" != "$no_delay" ]; then
-
-		# logger -t "OMR-VPS" "$FUNCNAME port:${port}"
-		# logger -t "OMR-VPS" "$FUNCNAME key:${key}"
-		# logger -t "OMR-VPS" "$FUNCNAME method:${method}"
-		# logger -t "OMR-VPS" "$FUNCNAME ebpf:${ebpf}"
-		# logger -t "OMR-VPS" "$FUNCNAME obfs:${obfs}"
-		# logger -t "OMR-VPS" "$FUNCNAME obfs_plugin:${obfs_plugin}"
-		# logger -t "OMR-VPS" "$FUNCNAME obfs_type:${obfs_type}"
-		# logger -t "OMR-VPS" "$FUNCNAME fast_open:${fast_open}"
-		# logger -t "OMR-VPS" "$FUNCNAME no_delay:${no_delay}"
-		# logger -t "OMR-VPS" "$FUNCNAME mptcp:${mptcp}"
-
-		local settings
-		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"no_delay":'$no_delay',"mptcp":'$mptcp',"key":"'$key'","ebpf":'$ebpf',"obfs":'$obfs',"obfs_plugin":"'$obfs_plugin'","obfs_type":"'$obfs_type'"}'
-		result=$(_set_json "shadowsocks" "$settings")
-	fi
-
-	logger -t "OMR-VPS" "$FUNCNAME 	port:${port} 
-									key:${key} 
-									method:${method} 
-									ebpf:${ebpf} 
-									obfs:${obfs} 
-									obfs_plugin:${obfs_plugin}
-									obfs_type:${obfs_type}
-									fast_open:${fast_open}
-									no_delay:${no_delay}
-									mptcp:${mptcp}"
-}
-
 # 从VPS获取ShadowSocks-go相关配置
 _set_ssgo_server_vps() {
 
@@ -2902,7 +2810,6 @@ _config_service() {
 	[ -z "$kernel" ] && logger -t "OMR-VPS" "$FUNCNAME vps kernel unknown! return now..." && return
 	logger -t "OMR-VPS" "$FUNCNAME vps kernel: ${kernel}"
 
-	[ -n "$(uci -q get shadowsocks-libev.sss0)" ] && _set_ss_server_vps
 	[ -n "$(uci -q get shadowsocks-rust.sss0)" ] && _set_ssgo_server_vps
 	[ -n "$(uci -q get v2ray.omr)" ] && _set_v2ray_server_vps
 	[ -n "$(uci -q get xray.omr)" ] && _set_xray_server_vps
