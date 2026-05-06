@@ -450,50 +450,6 @@ _get_vps_config() {
 	# Glorytun TCP配置：包括端口、IP地址、协议
 	glorytun_state=0
 	glorytun_change=0
-	if [ "$vpn" = "glorytun_tcp" ]; then
-		glorytun_state=1
-		uci -q set glorytun.vpn.proto='tcp'
-		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.client_ip')"
-		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.host_ip')"
-		port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.port')"
-		if [ "$(uci -q get glorytun.vpn.port)" != "$port" ] && [ "$port" != "" ]; then
-			uci -q batch <<-EOF >/dev/null
-				set glorytun.vpn.port=$port
-			EOF
-			glorytun_change=1
-		fi
-		if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
-			if [ "$host_ip" != "$(uci -q get glorytun.vpn.remoteip)" ] || [ "$client_ip" != "$(uci -q get glorytun.vpn.localip)" ]; then
-				uci -q batch <<-EOF >/dev/null
-					set glorytun.vpn.localip=$client_ip
-					set glorytun.vpn.remoteip=$host_ip
-				EOF
-				glorytun_change=1
-			fi
-			if [ "$(uci -q get network.omrvpn.proto)" != 'none' ]; then
-				uci -q batch <<-EOF >/dev/null
-					set network.omrvpn.proto='none'
-					commit network
-				EOF
-				glorytun_change=1
-			fi
-		else
-			if [ "$(uci -q get glorytun.vpn.remoteip)" != "" ] || [ "$(uci -q get glorytun.vpn.localip)" != "" ]; then
-				uci -q batch <<-EOF >/dev/null
-					delete glorytun.vpn.localip
-					delete glorytun.vpn.remoteip
-				EOF
-				glorytun_change=1
-			fi
-			if [ "$(uci -q get network.omrvpn.proto)" != 'dhcp' ]; then
-				uci -q batch <<-EOF >/dev/null
-					set network.omrvpn.proto='dhcp'
-					commit network
-				EOF
-				glorytun_change=1
-			fi
-		fi
-	fi
 
 	# Glorytun UDP配置：包括端口、IP地址、协议
 	if [ "$vpn" = "glorytun_udp" ]; then
@@ -901,20 +857,6 @@ _get_pihole() {
 		EOF
 	fi
 
-	if [ "$vpn" = "glorytun_tcp" ]; then
-		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.host_ip')"
-		if [ "$pihole" = "true" ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep $host_ip)" ]; then
-			uci -q del_list dhcp.@dnsmasq[0].server="$(uci -q get dhcp.@dnsmasq[0].server | tr ' ' '\n' | grep '#53' | grep '10.2')"
-			uci -q batch <<-EOF >/dev/null
-				del_list dhcp.@dnsmasq[0].server="127.0.0.1#5353"
-				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
-				set dhcp.@dnsmasq[0].rebind_protection='0'
-				commit dhcp
-			EOF
-			logger -t "OMR-VPS" "Restart dnsmasq..."
-			/etc/init.d/dnsmasq restart >/dev/null 2>&1
-		fi
-	fi
 	if [ "$vpn" = "glorytun_udp" ]; then
 		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.host_ip')"
 		if [ "$pihole" = "true" ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep $host_ip)" ]; then
@@ -2093,9 +2035,6 @@ _set_config_from_vps() {
 	if [ -n "$(uci -q get glorytun.vpn)" ] && ( ([ -n "$glorytun_key" ] && [ "$glorytun_key" != "$(uci -q get glorytun.vpn.key)" ]) || ([ -n "$glorytun_port" ] || [ "$glorytun_port" != "$(uci -q get glorytun.vpn.port)" ]) ); then
 		vpn="$(uci -q get openmptcprouter.settings.vpn)"
 		glorytun_state=0
-		if [ "$vpn" = "glorytun_tcp" ]; then
-			glorytun_state=1
-		fi
 		[ -z "$glorytun_port" ] && glorytun_port="65001"
 		glorytun_chacha="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.chacha')"
 		[ -z "$glorytun_chacha" ] || [ "$glorytun_chacha" = "true" ] && glorytun_chacha=1
