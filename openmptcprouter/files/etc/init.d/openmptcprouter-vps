@@ -398,29 +398,6 @@ _get_ss_server() {
 	logger -t "OMR-VPS" "$FUNCNAME obfs_type=${obfs_type}"
 }
 
-# 从VPS获取V2ray相关配置
-_set_v2ray_server_vps() {
-
-	logger -t "OMR-VPS" "$FUNCNAME..."
-
-	enabled=$(uci -q get v2ray.main.enabled)
-	[ "$enabled" != "1" ] && return
-	userid=$(uci -q get v2ray.omrout.s_vless_user_id)
-	[ -z "$userid" ] && return
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
-	[ -z "$vps_config" ] && return
-	current_userid="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.key')"
-
-	if [ "$current_userid" != "$userid" ]; then
-
-		logger -t "OMR-VPS" "$FUNCNAME userid:${userid}"
-
-		local settings
-		settings='{"userid": "'$userid'"}'
-		echo $(_set_json "v2ray" "$settings")
-	fi
-}
-
 # 从VPS获取xray相关配置
 _set_xray_server_vps() {
 
@@ -2765,7 +2742,6 @@ _config_service() {
 	[ -z "$kernel" ] && logger -t "OMR-VPS" "$FUNCNAME vps kernel unknown! return now..." && return
 	logger -t "OMR-VPS" "$FUNCNAME vps kernel: ${kernel}"
 
-	[ -n "$(uci -q get v2ray.omr)" ] && _set_v2ray_server_vps
 	[ -n "$(uci -q get xray.omr)" ] && _set_xray_server_vps
 	([ -n "$(uci -q get glorytun.vpn)" ] || [ -n "$(uci -q get glorytun-udp.vpn)" ]) && [ -z "$(_set_glorytun_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_glorytun_vps error!"
 	[ -n "$(uci -q get openvpn.omr)" ] && [ -z "$(_set_openvpn_vps)" ] && error=1 && logger -t "OMR-VPS" "$FUNCNAME _set_openvpn_vps error!"
