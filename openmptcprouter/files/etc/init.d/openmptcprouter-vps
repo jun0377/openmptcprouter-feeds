@@ -1289,8 +1289,15 @@ token() {
 mode_aggregate() {
 	if [ -f /usr/lib/openmptcprouter-vps/mode_aggregate.sh ]; then
 		. /usr/lib/openmptcprouter-vps/mode_aggregate.sh
+		. /usr/lib/openmptcprouter-vps/mode_single.sh
 	fi
 
+	# 停止单卡模式
+	if type stop_mode_single >/dev/null 2>&1; then
+		stop_mode_single
+	fi
+
+	# 启动聚合模式
 	if type mode_aggregate_handler >/dev/null 2>&1; then
 		mode_aggregate_handler
 		return

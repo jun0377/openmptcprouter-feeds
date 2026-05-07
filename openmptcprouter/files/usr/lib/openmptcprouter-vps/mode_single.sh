@@ -131,13 +131,41 @@ nft_snat() {
 	}
 
 	local current_networks="$(uci -q get firewall.zone_wan.network)"
-	case " $current_networks " in *" $channel "*) ;; *) uci -q add_list firewall.zone_wan.network="$channel" ;; esac
+	[ -n "$current_networks" ] && [ -z "$(uci -q get openmptcprouter.settings.single_wan_networks_backup)" ] && {
+		uci -q set openmptcprouter.settings.single_wan_networks_backup="$current_networks"
+		uci -q commit openmptcprouter
+	}
+	uci -q del firewall.zone_wan.network
+	uci -q add_list firewall.zone_wan.network="$channel"
 
 	[ "$(uci -q get firewall.zone_wan.masq)" = "1" ] || uci -q set firewall.zone_wan.masq="1"
 
 	uci -q commit firewall
 	/etc/init.d/firewall reload >/dev/null 2>&1
 	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/firewall reload"
+}
+
+# 停止单卡模式, 删除SNAT规则和路由
+stop_mode_single() {
+	logger -t "OMR-VPS" "<$FUNCNAME>"
+	uci -q delete network.omr_single_lan
+	uci -q commit network
+	/etc/init.d/network reload >/dev/null 2>&1
+
+	[ "$(uci -q get firewall.zone_wan)" = "zone" ] || return
+	local backup_networks="$(uci -q get openmptcprouter.settings.single_wan_networks_backup)"
+	[ -z "$backup_networks" ] && return
+
+	uci -q del firewall.zone_wan.network
+	local net
+	for net in $backup_networks; do
+		uci -q add_list firewall.zone_wan.network="$net"
+	done
+	uci -q commit firewall
+	/etc/init.d/firewall reload >/dev/null 2>&1
+
+	uci -q delete openmptcprouter.settings.single_wan_networks_backup
+	uci -q commit openmptcprouter
 }
 
 # 单卡模式处理逻辑
