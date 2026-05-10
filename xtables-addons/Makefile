@@ -70,7 +70,7 @@ define BuildTemplate
     $$(call Package/xtables-addons)
     CATEGORY:=Network
     TITLE:=$(2) iptables extension
-    DEPENDS:=iptables $(if $(4),+kmod-ipt-$(1))
+    DEPENDS:=+libxtables +iptables $(if $(4),+kmod-ipt-$(1))
   endef
 
   define Package/iptables-mod-$(1)/install
