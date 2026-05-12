@@ -239,8 +239,22 @@ _config_service() {
 	EOF
 }
 
+# 停止负载均衡模式
+function stop_mode_balance() {
+	echo ""
+}
+
 mode_aggregate_handler() {
-    
+
+	# 停止单卡模式
+	[ -f /usr/lib/openmptcprouter-vps/mode_single.sh ] && {
+		. /usr/lib/openmptcprouter-vps/mode_single.sh
+		stop_mode_single
+	}
+
+	# 停止负载均衡模式
+	stop_mode_balance
+
     logger -t "OMR-VPS" "<$FUNCNAME>..."
 
 	config_load openmptcprouter

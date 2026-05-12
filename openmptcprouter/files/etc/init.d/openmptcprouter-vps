@@ -1289,12 +1289,6 @@ token() {
 mode_aggregate() {
 	if [ -f /usr/lib/openmptcprouter-vps/mode_aggregate.sh ]; then
 		. /usr/lib/openmptcprouter-vps/mode_aggregate.sh
-		. /usr/lib/openmptcprouter-vps/mode_single.sh
-	fi
-
-	# 停止单卡模式
-	if type stop_mode_single >/dev/null 2>&1; then
-		stop_mode_single
 	fi
 
 	# 启动聚合模式
@@ -1381,6 +1375,9 @@ start_service() {
 service_triggers() {
 	# 当如下服务发生reload时, 会自动触发当前服务的reload
 	procd_add_reload_trigger openvpn
+	# 当工作模式发生变化时, 自动触发当前服务的work_mode, 这一行似乎没有正常工作
+	# procd_add_config_trigger "config.change" "global" /etc/init.d/openmptcprouter-vps work_mode
+
 	# 当防火墙配置/etc/config/firewall发生变化时，会调用set_vps_firewall
 	# procd_add_config_trigger "config.change" "firewall" /etc/init.d/openmptcprouter-vps set_vps_firewall
 }

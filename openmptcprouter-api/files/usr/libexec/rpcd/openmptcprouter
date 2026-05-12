@@ -8,11 +8,15 @@ local net   = require "luci.model.network".init()
 local ucic  = require "luci.model.uci".cursor()
 local jsonc  = require "luci.jsonc"
 
+-- 检查文件是否存在
 function file_exists(name)
 	local f = io.open(name, "r")
 	return f ~= nil and io.close(f)
 end
 
+-- 根据设备名查找对应的接口名
+-- @param dev 设备名(如 eth0, wlan0)
+-- @return string 接口名(如 wan, lan)，未找到返回空字符串
 function interface_from_device(dev)
 	for _, iface in ipairs(net:get_networks()) do
 		local ifacen = iface:name()
@@ -24,12 +28,16 @@ function interface_from_device(dev)
 	return ""
 end
 
+-- 添加服务器配置到 openmptcprouter 配置
+-- @param add_server_name 服务器名称
 function add_server(add_server_name)
 	ucic:set("openmptcprouter",add_server_name:gsub("[^%w_]+","_"),"server")
 	ucic:save("openmptcprouter")
 	ucic:commit("openmptcprouter")
 end
 
+-- 删除服务器配置及相关路由
+-- @param serverdel 要删除的服务器名称
 function remove_server(serverdel)
 	-- Remove existing server
 	ucic:foreach("network", "interface", function(s)
@@ -44,10 +52,13 @@ function remove_server(serverdel)
 	ucic:commit("network")
 end
 
+-- 添加网络接口(使用macvlan创建新的WAN接口)
+-- @param add_interface_ifname 物理设备名，为空则自动检测
 function add_interface(add_interface_ifname)
-	-- Add new interface
+	-- Add new interface -- 添加新接口
 	local i = 1
 	local multipath_master = false
+	-- 查找现有WAN接口数量
 	ucic:foreach("network", "interface", function(s)
 		local sectionname = s[".name"]
 		if sectionname:match("^wan(%d+)$") then
@@ -76,6 +87,7 @@ function add_interface(add_interface_ifname)
 		wanif = "wan" .. i
 	end
 
+	-- 配置网络接口
 	ucic:set("network","wan" .. i,"interface")
 	ucic:set("network","wan" .. i,"device",defif)
 	ucic:set("network","wan" .. i,"proto","static")
@@ -95,6 +107,7 @@ function add_interface(add_interface_ifname)
 	ucic:save("network")
 	ucic:commit("network")
 
+	-- 配置QoS
 	ucic:set("qos","wan" .. i,"interface")
 	ucic:set("qos","wan" .. i,"classgroup","Default")
 	ucic:set("qos","wan" .. i,"enabled","0")
@@ -103,6 +116,7 @@ function add_interface(add_interface_ifname)
 	ucic:save("qos")
 	ucic:commit("qos")
 
+	-- 配置SQM队列管理
 	ucic:set("sqm","wan" .. i,"queue")
 	if ointf ~= "" then
 		ucic:set("sqm","wan" .. i,"interface","wan" .. i)
@@ -121,16 +135,20 @@ function add_interface(add_interface_ifname)
 	ucic:save("sqm")
 	ucic:commit("sqm")
 
+	-- 添加到vnstat监控
 	sys.exec("uci -q add_list vnstat.@vnstat[-1].interface=" .. wanif)
 	sys.exec("uci -q commit vnstat")
 
 	-- Dirty way to add new interface to firewall...
+	-- 添加到防火墙区域
 	sys.exec("uci -q add_list firewall.@zone[1].network=wan" .. i)
 	sys.exec("uci -q commit firewall")
 
 	sys.exec("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
 end
 
+-- 删除网络接口及相关配置
+-- @param intf 要删除的接口名
 function remove_interface(intf)
 	-- Remove existing interface
 	local defif = ucic:get("network",intf,"device")
@@ -152,6 +170,15 @@ function remove_interface(intf)
 	sys.exec("uci -q commit firewall")
 end
 
+-- 配置接口参数(IP、网关、QoS等)
+-- @param intf 接口名
+-- @param proto 协议类型(dhcp/static/other)
+-- @param ipaddr IP地址
+-- @param netmask 子网掩码
+-- @param gateway 网关
+-- @param sqmenabled SQM是否启用(0/1)
+-- @param downloadspeed 下载速度(Kbps)
+-- @param uploadspeed 上传速度(Kbps)
 function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspeed,uploadspeed)
 	-- Set interfaces settings
 	if proto ~= "other" then
@@ -232,6 +259,8 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 	ucic:commit("openmptcprouter")
 end
 
+-- 配置默认VPN
+-- @param default_vpn VPN类型(glorytun_tcp/glorytun_udp/dsvpn/mlvpn/openvpn/none)
 function default_vpn(default_vpn)
 	-- Get VPN set by default
 	local vpn_port = ""
@@ -318,6 +347,10 @@ function default_vpn(default_vpn)
 
 end
 
+-- 配置VPS服务器连接参数
+-- @param server 服务器名称
+-- @param server_ip 服务器IP地址
+-- @param openmptcprouter_vps_key VPS认证密钥
 function server_settings(server,server_ip,openmptcprouter_vps_key)
 	-- OpenMPTCProuter VPS
 	ucic:set("openmptcprouter",server,"server")
@@ -363,6 +396,8 @@ function server_settings(server,server_ip,openmptcprouter_vps_key)
 	end
 end
 
+-- 配置Shadowsocks加密密钥
+-- @param shadowsocks_key Shadowsocks密钥
 function set_shadowsocks(shadowsocks_key)
 	-- Set ShadowSocks settings
 	ucic:set("shadowsocks-libev","sss0","key",shadowsocks_key)
@@ -370,6 +405,8 @@ function set_shadowsocks(shadowsocks_key)
 	ucic:commit("shadowsocks-libev")
 end
 
+-- 禁用Shadowsocks服务
+-- @param shadowsocks_disable 禁用标志(0/1)
 function disable_shadowsocks(shadowsocks_disable)
 	-- Set ShadowSocks settings
 	ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
@@ -377,6 +414,8 @@ function disable_shadowsocks(shadowsocks_disable)
 	ucic:commit("shadowsocks-libev")
 end
 
+-- 配置Glorytun VPN密钥
+-- @param glorytun_key Glorytun密钥
 function set_glorytun(glorytun_key)
 	ucic:set("glorytun","vpn","port","65001")
 	ucic:set("glorytun","vpn","key",glorytun_key)
@@ -386,6 +425,8 @@ function set_glorytun(glorytun_key)
 	ucic:commit("glorytun")
 end
 
+-- 配置DSVPN密钥
+-- @param dsvpn_key DSVPN密钥
 function set_dsvpn(dsvpn_key)
 	ucic:set("dsvpn","vpn","port","65011")
 	ucic:set("dsvpn","vpn","key",dsvpn_key)
@@ -393,6 +434,8 @@ function set_dsvpn(dsvpn_key)
 	ucic:commit("glorytun")
 end
 
+-- 配置MLVPN密码
+-- @param mlvpn_password MLVPN密码
 function set_mlvpn(mlvpn_password)
 	-- Set MLVPN settings
 	local mlvpn_password = luci.http.formvalue("mlvpn_password")
@@ -403,6 +446,8 @@ function set_mlvpn(mlvpn_password)
 	ucic:commit("mlvpn")
 end
 
+-- 配置OpenVPN密钥(需要上传文件)
+-- @param openvpn_key OpenVPN密钥
 function set_openvpn(openvpn_key)
 	-- Set OpenVPN settings
 	local openvpn_key_path = "/etc/luci-uploads/openvpn.key"
@@ -424,6 +469,7 @@ function set_openvpn(openvpn_key)
 	ucic:commit("openvpn")
 end
 
+-- 重启所有相关服务(网络、VPN、代理等)
 function restart_all()
 	-- Restart all
 	sys.exec("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
@@ -445,35 +491,48 @@ function restart_all()
 	sys.exec("/etc/init.d/xray restart >/dev/null 2>/dev/null")
 end
 
+-- 配置端口重定向
+-- @param server 服务器名称
+-- @param redirect_ports 端口重定向规则
 function redirectports(server,redirect_ports)
 	ucic:set("openmptcprouter",server,"redirect_ports",value)
 	ucic:commit("openmptcprouter")
 end
 
+-- 设置TCP keepalive时间
+-- @param tcp_keepalive_time keepalive时间(秒)
 function tcpkeepalivetime(tcp_keepalive_time)
 	-- Set tcp_keepalive_time
 	sys.exec("sysctl -w net.ipv4.tcp_keepalive_time=%s" % tcp_keepalive_time)
 	sys.exec("sed -i 's:^net.ipv4.tcp_keepalive_time=[0-9]*:net.ipv4.tcp_keepalive_time=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_keepalive_time)
 end
 
+-- 设置TCP FIN超时时间
+-- @param tcp_fin_timeout FIN超时时间(秒)
 function tcpfintimeout(tcp_fin_timeout)
 	-- Set tcp_fin_timeout
 	sys.exec("sysctl -w net.ipv4.tcp_fin_timeout=%s" % tcp_fin_timeout)
 	sys.exec("sed -i 's:^net.ipv4.tcp_fin_timeout=[0-9]*:net.ipv4.tcp_fin_timeout=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fin_timeout)
 end
 
+-- 设置TCP SYN重试次数
+-- @param tcp_syn_retries SYN重试次数
 function tcpsynretries(tcp_syn_retries)
 	-- Set tcp_syn_retries
 	sys.exec("sysctl -w net.ipv4.tcp_syn_retries=%s" % tcp_syn_retries)
 	sys.exec("sed -i 's:^net.ipv4.tcp_syn_retries=[0-9]*:net.ipv4.tcp_syn_retries=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_syn_retries)
 end
 
+-- 设置TCP Fast Open
+-- @param tcp_fastopen Fast Open值(0-3)
 function tcpfastopen(tcp_fastopen)
 	-- Set tcp_fastopen
 	sys.exec("sysctl -w net.ipv4.tcp_fastopen=%s" % tcp_fastopen)
 	sys.exec("sed -i 's:^net.ipv4.tcp_fastopen=[0-3]*:net.ipv4.tcp_fastopen=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fastopen)
 end
 
+-- 禁用IPv6
+-- @param disable_ipv6 禁用标志(0/1)
 function disableipv6(disable_ipv6)
 	-- Disable IPv6
 	ucic:set("openmptcprouter","settings","disable_ipv6",disable_ipv6)
@@ -482,18 +541,24 @@ function disableipv6(disable_ipv6)
 	sys.exec("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 end
 
+-- 启用/禁用外部连接检查
+-- @param externalcheck 启用标志(0/1)
 function externalcheck(externalcheck)
 	-- Enable/disable external check
 	ucic:set("openmptcprouter","settings","external_check",externalcheck)
 	ucic:commit("openmptcprouter")
 end
 
+-- 配置vnstat数据备份
+-- @param savevnstat 备份启用标志
 function savevnstat(savevnstat)
 	-- Enable/disable save vnstat
 	sys.exec("uci -q set vnstat.@vnstat[0].backup=%s" % savevnstat)
 	ucic:commit("vnstat")
 end
 
+-- 禁用TCP Fast Open
+-- @param disablefastopen 禁用标志(0=启用Fast Open)
 function disablefastopen(disablefastopen)
 	-- Enable/disable fast open
 	if disablefastopen == "0" then
@@ -509,6 +574,10 @@ function disablefastopen(disablefastopen)
 	end)
 end
 
+-- 启用Shadowsocks混淆
+-- @param obfs 启用标志
+-- @param obfs_plugin 混淆插件
+-- @param obfs_type 混淆类型
 function enableobfs(obfs,obfs_plugin,obfs_type)
 	-- Enable/disable obfs
 	ucic:foreach("shadowsocks-libev", "server", function (section)
@@ -520,12 +589,16 @@ function enableobfs(obfs,obfs_plugin,obfs_type)
 	ucic:commit("shadowsocks-libev")
 end
 
+-- 设置Master类型(动态/静态)
+-- @param master_type master类型
 function setmastertype(master_type)
 	-- Set master to dynamic or static
 	ucic:set("openmptcprouter","settings","master",master_type)
 	ucic:commit("openmptcprouter")
 end
 
+-- 设置CPU最小频率
+-- @param scaling_min_freq 最小频率(KHz)
 function cpuscalingmin(scaling_min_freq)
 	-- Set CPU scaling minimum frequency
 	ucic:set("openmptcprouter","settings","scaling_min_freq",scaling_min_freq)
@@ -533,6 +606,8 @@ function cpuscalingmin(scaling_min_freq)
 	ucic:commit("openmptcprouter")
 end
 
+-- 设置CPU最大频率
+-- @param scaling_max_freq 最大频率(KHz)
 function cpuscalingmax(scaling_max_freq)
 	-- Set CPU scaling maximum frequency
 	ucic:set("openmptcprouter","settings","scaling_max_freq",scaling_max_freq)
@@ -540,6 +615,8 @@ function cpuscalingmax(scaling_max_freq)
 	ucic:commit("openmptcprouter")
 end
 
+-- 设置CPU频率调节策略
+-- @param scaling_governor 调节器(conservative/ondemand/userspace/powersave/performance/schedutil)
 function cpuscalinggovernor(scaling_governor)
 	-- Set CPU governor
 	ucic:set("openmptcprouter","settings","scaling_governor",scaling_governor)
@@ -547,6 +624,7 @@ function cpuscalinggovernor(scaling_governor)
 	ucic:commit("openmptcprouter")
 end
 
+-- 更新VPS服务器信息
 function update_vps()
 	-- Update VPS
 	local vpsgettoken = sys.exec("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
@@ -563,10 +641,16 @@ function update_vps()
 	local vpsgettoken = sys.exec("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
 end
 
+-- 获取接口的MPTCP配置状态
+-- @param interface 接口名
+-- @return string MPTCP配置状态(on/off/master)
 function get_mptcp_config(interface)
 	return ucic:get("network",interface,"multipath")
 end
 
+-- 设置接口的MPTCP配置
+-- @param interface 接口名
+-- @param state MPTCP状态(on/off/master)
 function set_mptcp_config(interface,state)
 	ucic:set("network",interface,"multipath",state)
 	ucic:save("network")
@@ -576,19 +660,25 @@ function set_mptcp_config(interface,state)
 	ucic:commit("openmptcprouter")
 end
 
-
+-- 获取根文件系统格式
+-- @return table 包含format字段(文件系统类型)
 function get_rootfs()
 	local rootfs = {}
 	rootfs['format'] = luci.util.trim(sys.exec("mount | awk 'NR==1{print $5}'"))
 	return rootfs
 end
 
+-- 检测是否使用EFI启动
+-- @return table 包含efi_enabled字段(boolean)
 function get_efi()
 	local efi = {}
 	efi['efi_enabled'] = nixio.fs.access("/sys/firmware/efi")
 	return efi
 end
 
+-- 获取接口的IPv4地址
+-- @param interface 接口名
+-- @return string IPv4地址
 function get_ip(interface)
 	local ut      = require "luci.util"
 	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
@@ -618,6 +708,9 @@ function get_ip(interface)
 	return ip
 end
 
+-- 获取接口的IPv6地址
+-- @param interface 接口名
+-- @return string IPv6地址
 function get_ip6(interface)
 	local ut      = require "luci.util"
 	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
@@ -647,6 +740,9 @@ function get_ip6(interface)
 	return ip
 end
 
+-- 获取接口的物理设备名
+-- @param interface 接口名
+-- @return string 物理设备名(如eth0)
 function get_device(interface)
 	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
 	if dump then
@@ -656,6 +752,9 @@ function get_device(interface)
 	end
 end
 
+-- 获取接口的IPv4网关地址
+-- @param interface 接口名
+-- @return string 网关IP
 function get_gateway(interface)
 	local gateway = ""
 	local dump = nil
@@ -706,6 +805,9 @@ function get_gateway(interface)
 	return gateway
 end
 
+-- 获取接口的IPv6网关地址
+-- @param interface 接口名
+-- @return string IPv6网关地址
 function get_gateway6(interface)
 	local gateway = ""
 	local dump = nil
@@ -762,6 +864,8 @@ end
 -- Sebastien Duponcheel <sebastien.duponcheel@ovh.net>
 -- Modified by Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter project
 -- Under GPL3+
+-- 获取所有网络接口的完整状态(核心状态聚合函数)
+-- @return table 包含openmptcprouter信息、wans列表、tunnels列表的完整状态
 function interfaces_status()
 	local ut      = require "luci.util"
 	local ntm     = require "luci.model.network".init()

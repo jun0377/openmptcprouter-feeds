@@ -41,6 +41,10 @@ stop_all_vpn() {
 	# omr-tracker
 	/etc/init.d/omr-tracker stop >/dev/null 2>&1
 	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/omr-tracker stop"
+
+	# 负载均衡mwan3
+	/etc/init.d/mwan3 stop >/dev/null 2>&1
+	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/omr-tracker stop"
 }
 
 # 更新nft snat规则
@@ -71,6 +75,7 @@ nft_snat() {
 
 	logger -t "OMR-VPS" "<$FUNCNAME> lan_ip:${lan_ip}"
 
+	# LAN口br-lan的掩码
 	local lan_netmask="$(uci -q get network.lan.netmask)"
 	[ -z "$lan_netmask" ] && { 
 		logger -t "OMR-VPS" "<$FUNCNAME> unknown lan_netmask! return now..."
@@ -79,6 +84,7 @@ nft_snat() {
 
 	logger -t "OMR-VPS" "<$FUNCNAME> lan_netmask:${lan_netmask}"
 
+	# LAN口br-lan的物理网口名
 	local lan_dev="$(uci -q get network.lan.device)"
 	[ -z "$lan_dev" ] && { 
 		logger -t "OMR-VPS" "<$FUNCNAME> unknown lan_dev! return now..."
@@ -87,6 +93,7 @@ nft_snat() {
 
 	logger -t "OMR-VPS" "<$FUNCNAME> lan_dev:${lan_dev}"
 
+	# 当前单卡链路的物理网口名
 	local wan_dev="$(ifstatus "$channel" 2>/dev/null | jsonfilter -q -e '@.l3_device')"
 	[ -z "$wan_dev" ] && wan_dev="$(ifstatus "$channel" 2>/dev/null | jsonfilter -q -e '@.device')"
 	[ -z "$wan_dev" ] && {
@@ -96,8 +103,8 @@ nft_snat() {
 
 	logger -t "OMR-VPS" "<$FUNCNAME> wan_dev:${wan_dev}"
 
+	# 添加nft SNAT规则
 	logger -t "OMR-VPS" "<$FUNCNAME> snat from ${lan_dev}:${lan_ip}/${lan_netmask} to ${wan_dev}"
-
 	local ip4table="$(uci -q get network.${channel}.ip4table)"
 	[ -z "$ip4table" ] && {
 		logger -t "OMR-VPS" "<$FUNCNAME> unknown ip4table for ${channel}! return now..."
@@ -113,6 +120,7 @@ nft_snat() {
 		logger -t "OMR-VPS" "<$FUNCNAME> warning: table ${ip4table} has no default route now! omr-tracker may fix later..."
 	}
 
+	# 添加单卡模式路由规则
 	[ "$(uci -q get network.omr_single_lan)" = "rule" ] || uci -q set network.omr_single_lan=rule
 	uci -q set network.omr_single_lan.family="ipv4"
 	uci -q set network.omr_single_lan.priority="50"
@@ -130,32 +138,41 @@ nft_snat() {
 		return
 	}
 
+	# 添加单卡模式防火墙规则,先备份一下, 然后只允许当前选择的这个链路作为出口
+	# 备份防火墙wan zone配置
 	local current_networks="$(uci -q get firewall.zone_wan.network)"
 	[ -n "$current_networks" ] && [ -z "$(uci -q get openmptcprouter.settings.single_wan_networks_backup)" ] && {
 		uci -q set openmptcprouter.settings.single_wan_networks_backup="$current_networks"
 		uci -q commit openmptcprouter
 	}
+	# 删除防火墙wan zone
 	uci -q del firewall.zone_wan.network
+	# 只允许当前选择的单卡链路作为出口wan
 	uci -q add_list firewall.zone_wan.network="$channel"
-
+	# 开启防火墙masquerade(SNAT)
 	[ "$(uci -q get firewall.zone_wan.masq)" = "1" ] || uci -q set firewall.zone_wan.masq="1"
-
 	uci -q commit firewall
 	/etc/init.d/firewall reload >/dev/null 2>&1
 	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/firewall reload"
 }
 
 # 停止单卡模式, 删除SNAT规则和路由
-stop_mode_single() {
+function stop_mode_single() {
+
 	logger -t "OMR-VPS" "<$FUNCNAME>"
+	
+	# 1. 清除单卡模式路由规则
 	uci -q delete network.omr_single_lan
 	uci -q commit network
 	/etc/init.d/network reload >/dev/null 2>&1
+
+	logger -t "OMR-VPS" "<$FUNCNAME> uci -q delete network.omr_single_lan"
 
 	[ "$(uci -q get firewall.zone_wan)" = "zone" ] || return
 	local backup_networks="$(uci -q get openmptcprouter.settings.single_wan_networks_backup)"
 	[ -z "$backup_networks" ] && return
 
+	# 2. 恢复防火墙 zone_wan 的 network 配置
 	uci -q del firewall.zone_wan.network
 	local net
 	for net in $backup_networks; do
@@ -166,6 +183,8 @@ stop_mode_single() {
 
 	uci -q delete openmptcprouter.settings.single_wan_networks_backup
 	uci -q commit openmptcprouter
+
+	logger -t "OMR-VPS" "<$FUNCNAME> done..."
 }
 
 # 单卡模式处理逻辑
