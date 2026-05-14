@@ -12,6 +12,29 @@
 OMR_TRACKER_INTERFACE="$1"
 shift
 
+# 避免相同接口的进程重复启动
+_omr_tracker_lock_base="/var/run/omr-tracker"
+_omr_tracker_lock_id="$(printf '%s' "$OMR_TRACKER_INTERFACE" | tr -c 'A-Za-z0-9._-@' '_')"
+_omr_tracker_lock_dir="$_omr_tracker_lock_base/${_omr_tracker_lock_id}.lock"
+_omr_tracker_lock_pid="$_omr_tracker_lock_dir/pid"
+
+_omr_tracker_release_lock() {
+	[ -f "$_omr_tracker_lock_pid" ] && [ "$(cat "$_omr_tracker_lock_pid" 2>/dev/null)" = "$$" ] && rm -rf "$_omr_tracker_lock_dir" 2>/dev/null
+}
+
+mkdir -p "$_omr_tracker_lock_base" 2>/dev/null
+if ! mkdir "$_omr_tracker_lock_dir" 2>/dev/null; then
+	_omr_tracker_existing_pid="$(cat "$_omr_tracker_lock_pid" 2>/dev/null)"
+	if [ -n "$_omr_tracker_existing_pid" ] && kill -0 "$_omr_tracker_existing_pid" 2>/dev/null; then
+		exit 0
+	fi
+	rm -rf "$_omr_tracker_lock_dir" 2>/dev/null
+	mkdir "$_omr_tracker_lock_dir" 2>/dev/null || exit 0
+fi
+
+printf '%s\n' "$$" >"$_omr_tracker_lock_pid" 2>/dev/null || exit 0
+trap _omr_tracker_release_lock EXIT INT TERM
+
 # export vars
 # 以下变量用于：把当前探测上下文传给 post-tracking 钩子脚本，以及某些工具调用时复用
 export OMR_TRACKER_INTERFACE
@@ -120,7 +143,7 @@ _post_tracking() {
 	for tracker_bin in /usr/share/omr/post-tracking.d/*; do
 		[ -x "$tracker_bin" ] && (
 			_log() {
-				logger -t "post-tracking-${tracker_bin##*/}" "$*"
+				logger -t "OMR" "<omr-tracker> post-tracking-${tracker_bin##*/}" "$*"
 			}
 
 			# 在子 shell 中执行(避免污染当前 shell 的环境/变量)
@@ -572,7 +595,7 @@ while true; do
 									# Check if route is not used
 									while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2>&1
 									do
-										logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
+										logger -t "OMR" "<omr-tracker> Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
 										sleep 2
 										ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
 										_restart
@@ -695,7 +718,7 @@ while true; do
 									# Check if route is not used
 									while ! ip -6 route add $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6 > /dev/null 2>&1
 									do
-										logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6. waiting..."
+										logger -t "OMR" "<omr-tracker> Can't create route to $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6. waiting..."
 										sleep 2
 										ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
 										_restart

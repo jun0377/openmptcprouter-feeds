@@ -15,7 +15,7 @@ _get_lan_ip() {
 			fi
 		fi
 
-		logger -t "OMR-VPS" "<$FUNCNAME> interface:${intf} lanip:${lanip} lanips:${lanips}"
+		logger -t "OMR" "<$FUNCNAME> interface:${intf} lanip:${lanip} lanips:${lanips}"
 	fi
 }
 
@@ -26,35 +26,35 @@ _set_lan_ip() {
 	uci get network.lan.ipaddr;    uci get network.lan.netmask;
 	local settings='{"sn" : "'${serial}'", "lanip" : "'$(uci get network.lan.ipaddr)'", "lanmask" : "'$(uci get network.lan.netmask)'"}'
 	local result=$(_set_json "setLanIP" "${settings}")
-	logger -t "OMR-VPS" "<$FUNCNAME> result:${result}"
+	logger -t "OMR" "<$FUNCNAME> result:${result}"
 
 	# 重新从服务器获取LAN IP
 	local response=$(_get_json "getLanIP?serial=${serial}")
-	logger -t "OMR-VPS" "<$FUNCNAME> response:${response}"
+	logger -t "OMR" "<$FUNCNAME> response:${response}"
 	local lanIP=$(echo ${response} | jsonfilter -e '@.lanip') # 192.168.0.1/255.255.255.0
-	# logger -t "OMR-VPS" "<$FUNCNAME> lanIP:${lanIP}"
+	# logger -t "OMR" "<$FUNCNAME> lanIP:${lanIP}"
 	local lanMask=$(echo ${response} | jsonfilter -e '@.lanmask')
 
     # lan ip
 	if [ ! -z "${lanIP}" ] && [ "${lanIP}" != "$(uci get network.lan.ipaddr)" ]; then
-        logger -t "OMR-VPS" "<$FUNCNAME> lan ip changed from $(uci get network.lan.ipaddr) to ${lanIP}"
+        logger -t "OMR" "<$FUNCNAME> lan ip changed from $(uci get network.lan.ipaddr) to ${lanIP}"
 		uci set network.lan.ipaddr=${lanIP}
-		logger -t "OMR-VPS" "<$FUNCNAME> uci set network.lan.ipaddr=${lanIP}"
+		logger -t "OMR" "<$FUNCNAME> uci set network.lan.ipaddr=${lanIP}"
 	else
-		logger -t "OMR-VPS" "<$FUNCNAME> lanIP:${lanIP}"
+		logger -t "OMR" "<$FUNCNAME> lanIP:${lanIP}"
 	fi
 
     # lan mask
 	if [ ! -z "${lanMask}" ] && [ "${lanMask}" != "$(uci get network.lan.netmask)" ]; then
-        logger -t "OMR-VPS" "<$FUNCNAME> lan netmask changed from $(uci get network.lan.netmask) to ${lanMask}"
+        logger -t "OMR" "<$FUNCNAME> lan netmask changed from $(uci get network.lan.netmask) to ${lanMask}"
 		uci set network.lan.netmask=${lanMask}
-		logger -t "OMR-VPS" "<$FUNCNAME> uci set network.lan.netmask=${lanMask}"
+		logger -t "OMR" "<$FUNCNAME> uci set network.lan.netmask=${lanMask}"
 	else
-		logger -t "OMR-VPS" "<$FUNCNAME> lanMask:${lanMask}"
+		logger -t "OMR" "<$FUNCNAME> lanMask:${lanMask}"
 	fi
 
 	uci commit network
-	logger -t "OMR-VPS" "<$FUNCNAME> uci commit network"
+	logger -t "OMR" "<$FUNCNAME> uci commit network"
 	
 	# 立即生效
 	ifdown lan && ifup lan
@@ -64,9 +64,9 @@ _set_lan_ip() {
 _set_vpn_ip() {
 	local settings
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
-	[ -z "$vps_config" ] && logger -t "OMR-VPS" "<$FUNCNAME> No config..." && return
+	[ -z "$vps_config" ] && logger -t "OMR" "<$FUNCNAME> No config..." && return
 	# 未启用任何VPN，return
-	[ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ] && logger -t "OMR-VPS" "openmptcprouter.settings.vpn=none, return now..." && return
+	[ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ] && logger -t "OMR" "openmptcprouter.settings.vpn=none, return now..." && return
 	# 从UCI配置文件获取VPN虚拟网口名称，uci get network.omrvpn.device == tun0
 	vpnifname="$(uci -q get network.omrvpn.device)"
 	# 从服务器获取到的vpn本地IP，服务器的remoteip就是设备的local ip
@@ -87,7 +87,7 @@ _set_vpn_ip() {
 	ula="$(uci -q get network.globals.ula_prefix)"
 	ula_current="$(echo "$vps_config" | jsonfilter -q -e '@.ip6in4.ula')"
 	
-	logger -t "OMR-VPS" "<$FUNCNAME> vpnifname:${vpnifname}" "vpnip_local:${vpnip_local}" "vpnip_remote:${vpnip_remote}" "ula:${ula}"
+	logger -t "OMR" "<$FUNCNAME> vpnifname:${vpnifname}" "vpnip_local:${vpnip_local}" "vpnip_remote:${vpnip_remote}" "ula:${ula}"
 	
 	# 服务器和客户端的参数不一致，重新将本地配置同步到服务器端
 	if [ "$vpnip_remote" != "" ] \
@@ -96,7 +96,7 @@ _set_vpn_ip() {
 	|| [ "$vpnip_local" != "$vpnip_local_current" ] \
 	|| [ "$ula" != "$ula_current" ]); then
 		settings='{"remoteip" : "'$vpnip_local'","localip" : "'$vpnip_remote'","ula" : "'$ula'"}'
-		logger -t "OMR-VPS" "<$FUNCNAME> set VPS vpn ip:${settings}"
+		logger -t "OMR" "<$FUNCNAME> set VPS vpn ip:${settings}"
 		result=$(_set_json "vpnips" "$settings")
 	fi
 }
@@ -107,29 +107,29 @@ set_vpn_ip() {
 
 _config_service() {
 	servername=$1
-	logger -t "OMR-VPS" "<$FUNCNAME> servername:${servername} serverip:$(uci -q get openmptcprouter.vps.ip) serverport:$(uci -q get openmptcprouter.vps.port)"
+	logger -t "OMR" "<$FUNCNAME> servername:${servername} serverip:$(uci -q get openmptcprouter.vps.ip) serverport:$(uci -q get openmptcprouter.vps.port)"
 
-	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && logger -t "OMR-VPS" "<$FUNCNAME> servername:$1 disabled" && return
+	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && logger -t "OMR" "<$FUNCNAME> servername:$1 disabled" && return
 
 	vps_config=""
 	tokenserver=$(_get_token $servername)
 	server="$(echo $tokenserver | cut -f1 -d:)"
 	serverport="$(echo $tokenserver | cut -f2 -d:)"
     token="$(echo $tokenserver | cut -f3 -d:)"
-	[ -z "$token" ] && logger -t "OMR-VPS" "<$FUNCNAME> Get token error!" && return
+	[ -z "$token" ] && logger -t "OMR" "<$FUNCNAME> Get token error!" && return
 	
     error=0
 
     # 根据序列号从服务器端检索配置
 	if [ -n "$serial" ]; then
-		logger -t "OMR-VPS" "<$FUNCNAME> serial=${serial}"
+		logger -t "OMR" "<$FUNCNAME> serial=${serial}"
 		[ -z "$vps_config" ] && { 
-            logger -t "OMR-VPS" "<$FUNCNAME> get config from ${servername}:${server}"
+            logger -t "OMR" "<$FUNCNAME> get config from ${servername}:${server}"
             vps_config=$(_get_json "config?serial=${serial}") 
         }
 
 		if [ -n "$vps_config" ] && [ "$( echo "$vps_config" | jsonfilter -q -e '@.error')" = "False serial number" ]; then
-			logger -t "OMR-VPS" "<$FUNCNAME> Invalid serial number! return now..."
+			logger -t "OMR" "<$FUNCNAME> Invalid serial number! return now..."
 			sed -i "s:${server}::g" /etc/config/*
 			return
 		fi
@@ -137,31 +137,31 @@ _config_service() {
 
     # 获取服务器信息
 	vps_info=$(_get_json "getservernode?serial=${serial}") && echo ${vps_info} > /etc/vps_info
-    logger -t "OMR-VPS" "<$FUNCNAME> vps country: $(echo "$vps_info" | jsonfilter -q -e '@.country')"
-    logger -t "OMR-VPS" "<$FUNCNAME> vps countryCode: $(echo "$vps_info" | jsonfilter -q -e '@.countryCode')"
-    logger -t "OMR-VPS" "<$FUNCNAME> vps regionName: $(echo "$vps_info" | jsonfilter -q -e '@.regionName')"
-    logger -t "OMR-VPS" "<$FUNCNAME> vps region: $(echo "$vps_info" | jsonfilter -q -e '@.region')"
-    logger -t "OMR-VPS" "<$FUNCNAME> vps city: $(echo "$vps_info" | jsonfilter -q -e '@.city')"
-    logger -t "OMR-VPS" "<$FUNCNAME> vps lat: $(echo "$vps_info" | jsonfilter -q -e '@.lat') lon: $(echo "$vps_info" | jsonfilter -q -e '@.lon')"
-    logger -t "OMR-VPS" "<$FUNCNAME> vps timezone: $(echo "$vps_info" | jsonfilter -q -e '@.timezone')"
-    logger -t "OMR-VPS" "<$FUNCNAME> vps isp: $(echo "$vps_info" | jsonfilter -q -e '@.isp')"
-    logger -t "OMR-VPS" "<$FUNCNAME> vps org: $(echo "$vps_info" | jsonfilter -q -e '@.org')"
-    logger -t "OMR-VPS" "<$FUNCNAME> vps as: $(echo "$vps_info" | jsonfilter -q -e '@.as')"
-    logger -t "OMR-VPS" "<$FUNCNAME> vps query: $(echo "$vps_info" | jsonfilter -q -e '@.query')"
+    logger -t "OMR" "<$FUNCNAME> vps country: $(echo "$vps_info" | jsonfilter -q -e '@.country')"
+    logger -t "OMR" "<$FUNCNAME> vps countryCode: $(echo "$vps_info" | jsonfilter -q -e '@.countryCode')"
+    logger -t "OMR" "<$FUNCNAME> vps regionName: $(echo "$vps_info" | jsonfilter -q -e '@.regionName')"
+    logger -t "OMR" "<$FUNCNAME> vps region: $(echo "$vps_info" | jsonfilter -q -e '@.region')"
+    logger -t "OMR" "<$FUNCNAME> vps city: $(echo "$vps_info" | jsonfilter -q -e '@.city')"
+    logger -t "OMR" "<$FUNCNAME> vps lat: $(echo "$vps_info" | jsonfilter -q -e '@.lat') lon: $(echo "$vps_info" | jsonfilter -q -e '@.lon')"
+    logger -t "OMR" "<$FUNCNAME> vps timezone: $(echo "$vps_info" | jsonfilter -q -e '@.timezone')"
+    logger -t "OMR" "<$FUNCNAME> vps isp: $(echo "$vps_info" | jsonfilter -q -e '@.isp')"
+    logger -t "OMR" "<$FUNCNAME> vps org: $(echo "$vps_info" | jsonfilter -q -e '@.org')"
+    logger -t "OMR" "<$FUNCNAME> vps as: $(echo "$vps_info" | jsonfilter -q -e '@.as')"
+    logger -t "OMR" "<$FUNCNAME> vps query: $(echo "$vps_info" | jsonfilter -q -e '@.query')"
 
-    logger -t "OMR-VPS" "<$FUNCNAME> get vps version"
+    logger -t "OMR" "<$FUNCNAME> get vps version"
 	vps_version=$(_get_json "getserverversion?serial=${serial}") && echo ${vps_version} | jsonfilter -q -e '@.version' | tr -d '\r\n' > /etc/vps_version
-	logger -t "OMR-VPS" "<$FUNCNAME> vps_version: $(cat /etc/vps_version)"
+	logger -t "OMR" "<$FUNCNAME> vps_version: $(cat /etc/vps_version)"
 
-    logger -t "OMR-VPS" "<$FUNCNAME> get vps annpurcement"
+    logger -t "OMR" "<$FUNCNAME> get vps annpurcement"
 	vps_annourcement=$(_get_json "getserverannourcement?serial=${serial}") && echo ${vps_annourcement} | jsonfilter -q -e '@.annourcement' > /etc/vps_annourcement
-	logger -t "OMR-VPS" "<$FUNCNAME> vps_annourcement: $(cat /etc/vps_annourcement)"
+	logger -t "OMR" "<$FUNCNAME> vps_annourcement: $(cat /etc/vps_annourcement)"
 
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && \
 	([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || \
 	[ "$(uci -q get openmptcprouter.${servername}.current)" = "1" ]) && \
 	{
-		logger -t "OMR-VPS" "<$FUNCNAME> get config from VPS..."
+		logger -t "OMR" "<$FUNCNAME> get config from VPS..."
 		_set_config_from_vps
 		_get_vps_config
 	}
@@ -172,7 +172,7 @@ _config_service() {
 			vps_aes="$(echo "$vps_config" | jsonfilter -q -e '@.vps.aes')"
 			method="$(uci -q get openmptcprouter.settings.encryption)"
 			if [ "$vps_aes" != "false" ] && [ "$method" != "aes-256-gcm" ]; then
-				logger -t "OMR-VPS" "<$FUNCNAME> CPU support AES, set it by default"
+				logger -t "OMR" "<$FUNCNAME> CPU support AES, set it by default"
 				uci -q batch <<-EOF >/dev/null
 					set openmptcprouter.settings.encryption="aes-256-gcm"
 					commit openmptcprouter
@@ -182,7 +182,7 @@ _config_service() {
 	fi
 
 	[ -z "$vps_config" ] && { 
-        logger -t "OMR-VPS" "<$FUNCNAME> get config from VPS..."
+        logger -t "OMR" "<$FUNCNAME> get config from VPS..."
         vps_config=$(_get_json "config?serial=${serial}")
     }
 
@@ -190,19 +190,19 @@ _config_service() {
         local vps_kernel="$(echo "$vps_config" | jsonfilter -q -e '@.vps.kernel')"
         local vps_machine="$(echo "$vps_config" | jsonfilter -q -e '@.vps.machine')"
         local vps_aes="$(echo "$vps_config" | jsonfilter -q -e '@.vps.aes')"
-        logger -t "OMR-VPS" "<$FUNCNAME> vps kernel:${vps_kernel} machine:${vps_machine} aes:${vps_aes}"
+        logger -t "OMR" "<$FUNCNAME> vps kernel:${vps_kernel} machine:${vps_machine} aes:${vps_aes}"
 
         local lan_ips="$(echo "$vps_config" | jsonfilter -q -e '@.lan.ips')"
-        logger -t "OMR-VPS" "<$FUNCNAME> lan ips:${lan_ips}"
+        logger -t "OMR" "<$FUNCNAME> lan ips:${lan_ips}"
     }
 	
-    [ -z "$vps_config" ] && logger -t "OMR-VPS" "<$FUNCNAME> vps_config is empty! return now..." && return
+    [ -z "$vps_config" ] && logger -t "OMR" "<$FUNCNAME> vps_config is empty! return now..." && return
 
 	kernel="$(echo "$vps_config" | jsonfilter -q -e '@.vps.kernel')"
-	[ -z "$kernel" ] && logger -t "OMR-VPS" "<$FUNCNAME> vps kernel unknown! return now..." && return
-	logger -t "OMR-VPS" "<$FUNCNAME> vps kernel: ${kernel}"
+	[ -z "$kernel" ] && logger -t "OMR" "<$FUNCNAME> vps kernel unknown! return now..." && return
+	logger -t "OMR" "<$FUNCNAME> vps kernel: ${kernel}"
 
-	[ -n "$(uci -q get openvpn.omr)" ] && [ -z "$(_set_openvpn_vps)" ] && error=1 && logger -t "OMR-VPS" "<$FUNCNAME> _set_openvpn_vps error!"
+	[ -n "$(uci -q get openvpn.omr)" ] && [ -z "$(_set_openvpn_vps)" ] && error=1 && logger -t "OMR" "<$FUNCNAME> _set_openvpn_vps error!"
 
 	# _backup_list
 
@@ -210,13 +210,13 @@ _config_service() {
 	# if [ "$(uci -q get openmptcprouter.${servername}.redirect_ports)" = "1" ] || [ "$(uci -q get upnpd.config.enabled)" = "1" ]; then
 	# 	redirect_port="1"
 	# fi
-	# logger -t "OMR-VPS" "<$FUNCNAME> redirect_port=${redirect_port}"
+	# logger -t "OMR" "<$FUNCNAME> redirect_port=${redirect_port}"
 
-	# [ -z "$(_set_redirect_ports_from_vps $redirect_port)" ] && error=1 && logger -t "OMR-VPS" "<$FUNCNAME> _set_redirect_ports_from_vps error!"
+	# [ -z "$(_set_redirect_ports_from_vps $redirect_port)" ] && error=1 && logger -t "OMR" "<$FUNCNAME> _set_redirect_ports_from_vps error!"
 
-	[ -z "$(_set_mptcp_vps)" ] && error=1 && logger -t "OMR-VPS" "<$FUNCNAME> _set_mptcp_vps error!"
-	[ -z "$(_set_vpn_vps)" ] && error=1 && logger -t "OMR-VPS" "<$FUNCNAME> _set_vpn_vps error!"
-	# [ -z "$(_set_proxy_vps)" ] && error=1 && logger -t "OMR-VPS" "<$FUNCNAME> _set_proxy_vps error!"
+	[ -z "$(_set_mptcp_vps)" ] && error=1 && logger -t "OMR" "<$FUNCNAME> _set_mptcp_vps error!"
+	[ -z "$(_set_vpn_vps)" ] && error=1 && logger -t "OMR" "<$FUNCNAME> _set_vpn_vps error!"
+	# [ -z "$(_set_proxy_vps)" ] && error=1 && logger -t "OMR" "<$FUNCNAME> _set_proxy_vps error!"
 
 	[ -n "$wanips" ] && _set_wan_ip
 	_set_vpn_ip
@@ -226,11 +226,11 @@ _config_service() {
 	_set_lan_ip
 	_set_sipalg
 	if [ "$error" = 0 ]; then
-		logger -t "OMR-VPS" "<$FUNCNAME> No errors"
+		logger -t "OMR" "<$FUNCNAME> No errors"
 		uci -q set openmptcprouter.${servername}.lastchange=$(date "+%s")
 		[ -n "$vps_config" ] && uci -q set openmptcprouter.settings.firstboot=0
 	else
-		logger -t "OMR-VPS" "<$FUNCNAME> Set server config error, try again"
+		logger -t "OMR" "<$FUNCNAME> Set server config error, try again"
 	fi
 
 	uci -q batch <<-EOF >/dev/null
@@ -255,7 +255,7 @@ mode_aggregate_handler() {
 	# 停止负载均衡模式
 	stop_mode_balance
 
-    logger -t "OMR-VPS" "<$FUNCNAME>..."
+    logger -t "OMR" "<$FUNCNAME>..."
 
 	config_load openmptcprouter
 	config_foreach _get_local_wan_ip interface
