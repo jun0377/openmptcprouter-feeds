@@ -1,4 +1,7 @@
 #!/bin/sh
+
+# 检查 crontab 文件是否存在，或者文件中是否还没有 omr-schedule 的定时任务
 if [ ! -f /etc/crontabs/root ] || [ "$(cat /etc/crontabs/root | grep omr-schedule)" = "" ]; then
+	# 如果不存在或未配置，则追加每分钟执行一次 omr-schedule 的 cron 任务
 	echo "* * * * * /bin/omr-schedule" >> /etc/crontabs/root
 fi

@@ -118,7 +118,7 @@ _launch_tracker() {
 	[ -n "$(echo $ifname | grep '@')" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
 	# 仍然无法获取真实设备名, 直接退出
 	[ -z ${ifname} ] && {
-		logger -t "OMR" "<omr-tracker> $1 unknown interface! exit now..."
+		# logger -t "OMR" "<omr-tracker> $1 unknown interface! exit now..."
 		return
 	}
 

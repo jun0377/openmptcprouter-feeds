@@ -1,47 +1,58 @@
 #!/bin/bash
-#
-# Copyright (C) 2018-2023 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
-#
-# This is free software, licensed under the GNU General Public License v2.
-# See /LICENSE for more information.
-#
-# This script launch a speedtest if the option is enabled on the interface
 
+# 如果接口启用了测速选项，此脚本将启动测速
+
+# 如果状态为 ERROR 或接口为空，则退出
 [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ -z "$OMR_TRACKER_INTERFACE" ] && exit 0
+# 通过 ifstatus 检查接口是否实际启动
 interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+# 如果接口未启动，则退出
 [ "$interface_up" != "true" ] && exit 0
 
+# 如果接口名称和设备名称都存在，测速服务端未运行，该接口启用了测速，且测速时间戳为空（即未测速过）
 if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep -f omr-test-speed-server)" = "" ] && [ "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed)" = "1" ] && [ -z "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc)" ]; then
+	# 定义启动测速的函数
 	launch_speedtest() {
 		local server=$1
+		# 如果该服务器不是当前使用的服务器，则跳过
 		[ "$(uci -q get openmptcprouter.${server}.current)" != "1" ] && return
+		# 进行三次下载测速，取最大值
 		download_speed=$(/bin/omr-test-speed-server ${server} ${OMR_TRACKER_DEVICE} fasttest)
 		download_speed2=$(/bin/omr-test-speed-server ${server} ${OMR_TRACKER_DEVICE} fasttest)
 		download_speed3=$(/bin/omr-test-speed-server ${server} ${OMR_TRACKER_DEVICE} fasttest)
+		# 取三次测试中的最大值
 		[ "$download_speed2" -gt "$download_speed" ] && download_speed=${download_speed2}
 		[ "$download_speed3" -gt "$download_speed" ] && download_speed=${download_speed3}
+		# 将下载速度从 bps 转换为 kbps (乘以8转为bit，除以1000转为k)
 		download_speed=$((download_speed*8/1000))
+		# 如果下载速度有效且不为0
 		if [ -n "$download_speed" ] && [ "$download_speed" != "0" ]; then
+			# 进行三次上传测速，取最大值
 			upload_speed=$(/bin/omr-test-speed-server ${server} ${OMR_TRACKER_DEVICE} fasttest upload)
 			upload_speed2=$(/bin/omr-test-speed-server ${server} ${OMR_TRACKER_DEVICE} fasttest upload)
 			upload_speed3=$(/bin/omr-test-speed-server ${server} ${OMR_TRACKER_DEVICE} fasttest upload)
+			# 取三次测试中的最大值
 			[ "$upload_speed2" -gt "$upload_speed" ] && upload_speed=${upload_speed2}
 			[ "$upload_speed3" -gt "$upload_speed" ] && upload_speed=${upload_speed3}
 
-			# Set Download speed settings
+			# 设置下载速度配置, 如果启用了 SQM 自动速率调整, 自动速率模式：设置为实际速度的 65%，并记录最大/最小值
 			if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.autorate)" = "1" ]; then
 				uci -q set sqm.${OMR_TRACKER_INTERFACE}.download=$((download_speed*65/100))
 				uci -q set sqm.${OMR_TRACKER_INTERFACE}.max_download=${download_speed}
 				uci -q set sqm.${OMR_TRACKER_INTERFACE}.min_download=$((download_speed*10/100))
+			# 固定速率模式：设置为实际速度的 95%（留出余量）
 			else
 				uci -q set sqm.${OMR_TRACKER_INTERFACE}.download=$((download_speed*95/100))
 			fi
 			_log "Calculated ${OMR_TRACKER_INTERFACE} download speed: ${download_speed}"
+			# 保存下载速度到网络配置
 			uci -q set network.${OMR_TRACKER_INTERFACE}.downloadspeed=${download_speed}
 
-			# Set Upload speed settings
+			# 设置上传速度配置, 将上传速度从 bps 转换为 kbps
 			upload_speed=$((upload_speed*8/1000))
+			# 如果上传速度有效且不为0
 			if [ -n "$upload_speed" ] && [ "$upload_speed" != "0" ]; then
+				# 根据是否启用自动速率调整，设置 SQM 上传参数
 				if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.autorate)" = "1" ]; then
 					uci -q set sqm.${OMR_TRACKER_INTERFACE}.upload=$((upload_speed*65/100))
 					uci -q set sqm.${OMR_TRACKER_INTERFACE}.max_upload=${upload_speed}
@@ -50,15 +61,20 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep
 					uci -q set sqm.${OMR_TRACKER_INTERFACE}.upload=$((upload_speed*95/100))
 				fi
 				_log "Calculated ${OMR_TRACKER_INTERFACE} upload speed: ${upload_speed}"
+				# 保存上传速度到网络配置
 				uci -q set network.${OMR_TRACKER_INTERFACE}.uploadspeed=${upload_speed}
+				# 记录测速时间戳，防止重复测速
 				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.testspeed_lc=$(date +"%s")
+				# 提交所有配置变更
 				uci commit network
 				uci commit sqm
 				uci commit openmptcprouter
 			fi
 		fi
 	}
+	# 加载 openmptcprouter 配置
 	config_load openmptcprouter
+	# 遍历所有服务器，对当前使用的服务器执行测速
 	config_foreach launch_speedtest server
 
 	sleep 5

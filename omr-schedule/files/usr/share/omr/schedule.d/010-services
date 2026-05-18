@@ -1,176 +1,233 @@
 #!/bin/sh
-#
-# Copyright (C) 2018-2025 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
-#
-# This is free software, licensed under the GNU General Public License v2.
-# See /LICENSE for more information.
-#
-# This script check services status and do appropriate actions
 
+# 此脚本检查各服务状态并执行相应操作
+
+logger -t "OMR" "<omr-schedule> /usr/share/omr/schedule.d/010-services"
+
+# 检查 OpenMPTCProuter 配置中是否存在密码（基本配置存在性检查）
 if [ -n "$(uci show openmptcprouter | awk -F= '/password/ { gsub("\047","",$2);print $2 }')" ]; then
-	# If a service is down, force restart it
-	if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f ss-redir)" = "" ] && [ "$(pgrep -f ss-local)" = "" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.18.1.3" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" != "" ]; then
-		_log "Can't find Shadowsocks, restart it..."
-		/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
-		sleep 5
-	fi
-	if [ -f /etc/init.d/shadowsocks-rust ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f sslocal)" = "" ] && [ "$(pgrep -f sslocal)" = "" ] && [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "192.18.1.3" ] && [ "$(uci -q get shadowsocks-rust.sss0.password)" != "" ]; then
-		_log "Can't find Shadowsocks Rust, restart it..."
-		/etc/init.d/shadowsocks-rust restart >/dev/null 2>&1
-		sleep 5
-	fi
-	if [ -f /etc/init.d/glorytun ] && [ "$(pgrep glorytun)" = "" ] && [ "$(uci -q get glorytun.vpn.enable)" = "1" ] && [ -f /etc/init.d/glorytun ] && [ "$(uci -q get glorytun.vpn.key)" != "" ]; then
-		_log "Can't find Glorytun, restart it..."
-		/etc/init.d/glorytun restart >/dev/null 2>&1
-		sleep 5
-	fi
-	if [ -f /etc/init.d/glorytun-udp ] && [ "$(pgrep glorytun-udp)" = "" ] && [ "$(uci -q get glorytun-usp.vpn.enable)" = "1" ] && [ -f /etc/init.d/glorytun-udp ] && [ "$(uci -q get glorytun-udp.vpn.key)" != "" ]; then
-		_log "Can't find Glorytun UDP, restart it..."
-		/etc/init.d/glorytun-udp restart >/dev/null 2>&1
-		sleep 5
-	fi
-	if [ "$(pgrep openvpn)" = "" ] && [ -f /etc/init.d/openvpn ]; then
-		openvpn_enable=0
-		openvpn_enabled() {
-			[ "$(uci -q get openvpn.$1.enabled)" = "1" ] && [ -n "$(uci -q get openvpn.$1.ca)" ] && openvpn_enable=1
-		}
-		config_load openvpn
-		config_foreach openvpn_enabled openvpn
-		if [ "$openvpn_enable" = "1" ]; then
-			_log "Can't find OpenVPN, restart it"
-			/etc/init.d/openvpn restart >/dev/null 2>&1
-			sleep 5
-		fi
-	fi
+	# 如果服务挂掉，强制重启它, 检查 Shadowsocks-libev 是否在运行，若未运行且已配置但未禁用，则重启
+	# if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f ss-redir)" = "" ] && [ "$(pgrep -f ss-local)" = "" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.18.1.3" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" != "" ]; then
+	# 	_log "Can't find Shadowsocks, restart it..."
+	# 	logger -t "OMR" "<omr-schedule> Can't find Shadowsocks, restart it..."
+	# 	/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/shadowsocks-libev restart >/dev/null 2>&1"
+	# 	sleep 5
+	# fi
+	# 检查 Shadowsocks-rust 是否在运行，若未运行且已配置但未禁用，则重启
+	# if [ -f /etc/init.d/shadowsocks-rust ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f sslocal)" = "" ] && [ "$(pgrep -f sslocal)" = "" ] && [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "192.18.1.3" ] && [ "$(uci -q get shadowsocks-rust.sss0.password)" != "" ]; then
+	# 	_log "Can't find Shadowsocks Rust, restart it..."
+	# 	logger -t "OMR" "<omr-schedule> Can't find Shadowsocks Rust, restart it..."
+	# 	/etc/init.d/shadowsocks-rust restart >/dev/null 2>&1
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/shadowsocks-rust restart >/dev/null 2>&1"
+	# 	sleep 5
+	# fi
+	# 检查 Glorytun 是否在运行，若未运行且已启用并配置了密钥，则重启
+	# if [ -f /etc/init.d/glorytun ] && [ "$(pgrep glorytun)" = "" ] && [ "$(uci -q get glorytun.vpn.enable)" = "1" ] && [ -f /etc/init.d/glorytun ] && [ "$(uci -q get glorytun.vpn.key)" != "" ]; then
+	# 	_log "Can't find Glorytun, restart it..."
+	# 	logger -t "OMR" "<omr-schedule> Can't find Glorytun, restart it..."
+	# 	/etc/init.d/glorytun restart >/dev/null 2>&1
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/glorytun restart >/dev/null 2>&1"
+	# 	sleep 5
+	# fi
+	# 检查 Glorytun UDP 是否在运行，若未运行且已启用并配置了密钥，则重启
+	# if [ -f /etc/init.d/glorytun-udp ] && [ "$(pgrep glorytun-udp)" = "" ] && [ "$(uci -q get glorytun-usp.vpn.enable)" = "1" ] && [ -f /etc/init.d/glorytun-udp ] && [ "$(uci -q get glorytun-udp.vpn.key)" != "" ]; then
+	# 	_log "Can't find Glorytun UDP, restart it..."
+	# 	logger -t "OMR" "<omr-schedule> Can't find Glorytun UDP, restart it..."
+	# 	/etc/init.d/glorytun-udp restart >/dev/null 2>&1
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/glorytun-udp restart >/dev/null 2>&1"
+	# 	sleep 5
+	# fi
+	# 检查 OpenVPN 是否在运行，若未运行且有启用的实例，则重启
+	# if [ "$(pgrep openvpn)" = "" ] && [ -f /etc/init.d/openvpn ]; then
+	# 	# 初始化标志
+	# 	openvpn_enable=0
+	# 	# 遍历 OpenVPN 配置，检查是否有启用的实例
+	# 	openvpn_enabled() {
+	# 		[ "$(uci -q get openvpn.$1.enabled)" = "1" ] && [ -n "$(uci -q get openvpn.$1.ca)" ] && openvpn_enable=1
+	# 	}
+	# 	config_load openvpn
+	# 	config_foreach openvpn_enabled openvpn
+	# 	# 如果有启用的 OpenVPN 实例，则重启服务
+	# 	if [ "$openvpn_enable" = "1" ]; then
+	# 		_log "Can't find OpenVPN, restart it"
+	# 		logger -t "OMR" "<omr-schedule> Can't find OpenVPN, restart it"
+	# 		/etc/init.d/openvpn restart >/dev/null 2>&1
+	# 		logger -t "OMR" "<omr-schedule> /etc/init.d/openvpn restart >/dev/null 2>&1"
+	# 		sleep 5
+	# 	fi
+	# fi
 
+	# 检查 MLVPN 是否在运行，若未运行且已启用并配置了密码，则重启
 	if [ "$(pgrep mlvpn)" = "" ] && [ "$(uci -q get mlvpn.general.enable)" = "1" ] && [ -f /etc/init.d/mlvpn ] && [ "$(uci -q get mlvpn.general.password)" != "" ]; then
 		_log "Can't find MLVPN, restart it..."
+		logger -t "OMR" "<omr-schedule> Can't find MLVPN, restart it..."
 		/etc/init.d/mlvpn restart >/dev/null 2>&1
+		logger -t "OMR" "<omr-schedule> /etc/init.d/mlvpn restart >/dev/null 2>&1"
 		sleep 5
 	fi
-	if [ "$(pgrep dsvpn)" = "" ] && [ "$(uci -q get dsvpn.vpn.enable)" = "1" ] && [ -f /etc/init.d/dsvpn ] && [ "$(uci -q get dsvpn.vpn.key)" != "" ]; then
-		_log "Can't find DSVPN, restart it..."
-		/etc/init.d/dsvpn restart >/dev/null 2>&1
-		sleep 5
-	fi
-	if [ "$(pgrep -f v2ray)" = "" ] && [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ]; then
-		_log "Can't find V2Ray, restart it..."
-		/etc/init.d/v2ray restart >/dev/null 2>&1
-		sleep 5
-	fi
-	if [ "$(pgrep -f xray)" = "" ] && [ "$(uci -q get xray.main.enabled)" = "1" ] && [ -f /etc/init.d/xray ]; then
-		_log "Can't find XRay, restart it..."
-		/etc/init.d/xray restart >/dev/null 2>&1
-		sleep 5
-	fi
-	if [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ] && [ "$(pgrep -f omr-tracker-v2ray)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
-		_log "Can't find omr-tracker-v2ray, restart omr-tracker..."
-		/etc/init.d/omr-tracker restart >/dev/null 2>&1
-	fi
-	if [ "$(uci -q get xray.main.enabled)" = "1" ] && [ -f /etc/init.d/xray ] && [ "$(pgrep -f omr-tracker-xray)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
-		_log "Can't find omr-tracker-xray, restart omr-tracker..."
-		/etc/init.d/omr-tracker restart >/dev/null 2>&1
-	fi
-
+	# 检查 DSVPN 是否在运行，若未运行且已启用并配置了密钥，则重启
+	# if [ "$(pgrep dsvpn)" = "" ] && [ "$(uci -q get dsvpn.vpn.enable)" = "1" ] && [ -f /etc/init.d/dsvpn ] && [ "$(uci -q get dsvpn.vpn.key)" != "" ]; then
+	# 	_log "Can't find DSVPN, restart it..."
+	# 	logger -t "OMR" "<omr-schedule> Can't find DSVPN, restart it..."
+	# 	/etc/init.d/dsvpn restart >/dev/null 2>&1
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/dsvpn restart >/dev/null 2>&1"
+	# 	sleep 5
+	# fi
+	# 检查 V2Ray 是否在运行，若未运行且已启用，则重启
+	# if [ "$(pgrep -f v2ray)" = "" ] && [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ]; then
+	# 	_log "Can't find V2Ray, restart it..."
+	# 	logger -t "OMR" "<omr-schedule> Can't find V2Ray, restart it..."
+	# 	/etc/init.d/v2ray restart >/dev/null 2>&1
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/v2ray restart >/dev/null 2>&1"
+	# 	sleep 5
+	# fi
+	# 检查 XRay 是否在运行，若未运行且已启用，则重启
+	# if [ "$(pgrep -f xray)" = "" ] && [ "$(uci -q get xray.main.enabled)" = "1" ] && [ -f /etc/init.d/xray ]; then
+	# 	_log "Can't find XRay, restart it..."
+	# 	logger -t "OMR" "<omr-schedule> Can't find XRay, restart it..."
+	# 	/etc/init.d/xray restart >/dev/null 2>&1
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/xray restart >/dev/null 2>&1"
+	# 	sleep 5
+	# fi
+	# 如果 V2Ray 已启用，但 omr-tracker-v2ray 监控进程未运行，则重启 omr-tracker
+	# if [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ] && [ "$(pgrep -f omr-tracker-v2ray)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
+	# 	_log "Can't find omr-tracker-v2ray, restart omr-tracker..."
+	# 	logger -t "OMR" "<omr-schedule> Can't find omr-tracker-v2ray, restart omr-tracker..."
+	# 	/etc/init.d/omr-tracker restart >/dev/null 2>&1
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/omr-tracker restart >/dev/null 2>&1"
+	# fi
+	# 如果 XRay 已启用，但 omr-tracker-xray 监控进程未运行，则重启 omr-tracker
+	# if [ "$(uci -q get xray.main.enabled)" = "1" ] && [ -f /etc/init.d/xray ] && [ "$(pgrep -f omr-tracker-xray)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
+	# 	logger -t "OMR" "<omr-schedule> Can't find omr-tracker-xray, restart omr-tracker..."
+	# 	_log "Can't find omr-tracker-xray, restart omr-tracker..."
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/omr-tracker restart >/dev/null 2>&1"
+	# 	/etc/init.d/omr-tracker restart >/dev/null 2>&1
+	# fi
+	# 定义标记需要获取配置的服务器的函数
 	set_get_config() {
 		local server=$1
 		[ -n "$server" ] && uci -q set openmptcprouter.${server}.get_config=1
+		logger -t "OMR" "<omr-schedule> uci -q set openmptcprouter.${server}.get_config=1"
 	}
+	# 如果 Shadowsocks (libev 或 rust) 已启用但缺少密钥，标记所有服务器需要获取配置
+	# if ([ -f /etc/init.d/shadowsocks-libev ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" = "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.18.1.3" ]) || ([ -f /etc/init.d/shadowsocks-rust ] && [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-rust.sss0.password)" = "" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "192.18.1.3" ]); then
+	# 	logger -t "OMR" "<omr-schedule> shadowsocks-libev"
+	# 	config_load openmptcprouter
+	# 	config_foreach set_get_config server
+	# 	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter && logger -t "OMR" "<omr-schedule> uci -q commit openmptcprouter"
+	# fi
+	# 如果 Shadowsocks-libev 已配置但监控进程 omr-tracker-ss 未运行，则重启 omr-tracker
+	# if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.168.1.3" ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
+	# 	_log "Can't find omr-tracker-ss for Shadowsocks libev, restart omr-tracker..."
+	# 	logger -t "OMR" "<omr-schedule> Can't find omr-tracker-ss for Shadowsocks libev, restart omr-tracker..."
+	# 	/etc/init.d/omr-tracker restart >/dev/null 2>&1
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/omr-tracker restart >/dev/null 2>&1"
+	# fi
+	# 如果 Shadowsocks-rust 已配置但监控进程 omr-tracker-ss 未运行，则重启 omr-tracker
+	# if [ -f /etc/init.d/shadowsocks-rust ] && [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-rust.sss0.password)" != "" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.rust.server)" != "192.168.1.3" ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
+	# 	_log "Can't find omr-tracker-ss for Shadowsocks Rust, restart omr-tracker..."
+	# 	logger -t "OMR" "<omr-schedule> Can't find omr-tracker-ss for Shadowsocks Rust, restart omr-tracker..."
+	# 	/etc/init.d/omr-tracker restart >/dev/null 2>&1
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/omr-tracker restart >/dev/null 2>&1"
+	# fi
+	# 如果 Glorytun 已启用但缺少密钥，标记所有服务器需要获取配置
+	# if [ "$(uci -q get glorytun.vpn.enable)" = "1" ] && [ "$(uci -q get glorytun.vpn.key)" = "" ]; then
+	# 	config_load openmptcprouter
+	# 	config_foreach set_get_config server
+	# 	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter && logger -t "OMR" "<omr-schedule> uci -q commit openmptcprouter"
+	# fi
+	# 如果 V2Ray 已启用但缺少用户 ID，标记所有服务器需要获取配置
+	# if [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ "$(uci -q get v2ray.omrout.s_vless_user_id)" = "" ]; then
+	# 	logger -t "OMR" "<omr-schedule> v2ray"
+	# 	config_load openmptcprouter
+	# 	config_foreach set_get_config server
+	# 	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter && logger -t "OMR" "<omr-schedule> uci -q commit openmptcprouter"
+	# fi
+	# 如果 XRay 已启用但缺少用户 ID，标记所有服务器需要获取配置
+	# if [ "$(uci -q get xray.main.enabled)" = "1" ] && [ "$(uci -q get xray.omrout.s_vless_user_id)" = "" ]; then
+	# 	logger -t "OMR" "<omr-schedule> xray"
+	# 	config_load openmptcprouter
+	# 	config_foreach set_get_config server
+	# 	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter && logger -t "OMR" "<omr-schedule> uci -q commit openmptcprouter"
+	# fi
+	# 如果 openmptcprouter-vps 进程未运行，且检测到 token_error 标记，则尝试重新获取 token
+	# if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep token_error=\'1\')" != "" ]; then
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/openmptcprouter-vps token >/dev/null 2>&1 &"
+	# 	/etc/init.d/openmptcprouter-vps token >/dev/null 2>&1 &
+	# 	sleep 5
+	# fi
+	# 如果 openmptcprouter-vps 进程未运行，且存在 get_config 标记或 admin_error 标记，则重启服务
+	# if [ "$(pgrep -f openmptcprouter-vps)" = "" ] \
+	# && ([ -z "$(uci -q show openmptcprouter | grep get_config)" ] \
+	# || [ -n "$(uci -q show openmptcprouter | grep get_config=\'1\')" ] \
+	# || [ -n "$(uci -q show openmptcprouter | grep admin_error=\'1\')" ]); then
+	# 	/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
+	# 	logger -t "OMR" "<omr-schedule> /etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &"
+	# 	sleep 5
+	# fi
+	# 如果需要设置 VPS 防火墙，且 set_vps_firewall 未在运行，配置完整且无错误
+	# if [ "$(pgrep -f set_vps_firewall)" = "" ] && [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ -z "$(uci -q show openmptcprouter | grep admin_error=\'1\')" ] && [ -n "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" ]; then
+	# 	# 定义检查并设置 VPS 防火墙的函数
+	# 	check_server_fw() {
+	# 		[ "$(uci -q get openmptcprouter.$1.set_firewall)" = "1" ] && {
+	# 			_log "Set firewall on server $1"
+	# 			logger -t "OMR" "<omr-schedule> Set firewall on server $1"
+	# 			/etc/init.d/openmptcprouter-vps set_vps_firewall $1 >/dev/null 2>&1
+	# 			logger -t "OMR" "<omr-schedule> /etc/init.d/openmptcprouter-vps set_vps_firewall $1 >/dev/null 2>&1"
+	# 		}
+	# 	}
+	# 	config_load openmptcprouter
+	# 	config_foreach check_server_fw server
 
-	if ([ -f /etc/init.d/shadowsocks-libev ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" = "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.18.1.3" ]) || ([ -f /etc/init.d/shadowsocks-rust ] && [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-rust.sss0.password)" = "" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "192.18.1.3" ]); then
-		config_load openmptcprouter
-		config_foreach set_get_config server
-		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
-	fi
-	if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.168.1.3" ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
-		_log "Can't find omr-tracker-ss for Shadowsocks libev, restart omr-tracker..."
-		/etc/init.d/omr-tracker restart >/dev/null 2>&1
-	fi
-
-	if [ -f /etc/init.d/shadowsocks-rust ] && [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-rust.sss0.password)" != "" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.rust.server)" != "192.168.1.3" ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
-		_log "Can't find omr-tracker-ss for Shadowsocks Rust, restart omr-tracker..."
-		/etc/init.d/omr-tracker restart >/dev/null 2>&1
-	fi
-
-	if [ "$(uci -q get glorytun.vpn.enable)" = "1" ] && [ "$(uci -q get glorytun.vpn.key)" = "" ]; then
-		config_load openmptcprouter
-		config_foreach set_get_config server
-		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
-	fi
-	
-	if [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ "$(uci -q get v2ray.omrout.s_vless_user_id)" = "" ]; then
-		config_load openmptcprouter
-		config_foreach set_get_config server
-		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
-	fi
-
-	if [ "$(uci -q get xray.main.enabled)" = "1" ] && [ "$(uci -q get xray.omrout.s_vless_user_id)" = "" ]; then
-		config_load openmptcprouter
-		config_foreach set_get_config server
-		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
-	fi
-
-	if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep token_error=\'1\')" != "" ]; then
-		/etc/init.d/openmptcprouter-vps token >/dev/null 2>&1 &
-		sleep 5
-	fi
-	if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && ([ -z "$(uci -q show openmptcprouter | grep get_config)" ] || [ -n "$(uci -q show openmptcprouter | grep get_config=\'1\')" ] || [ -n "$(uci -q show openmptcprouter | grep admin_error=\'1\')" ]); then
-		/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
-		sleep 5
-	fi
-	#if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || (([ -e /usr/sbin/iptables-nft-save ] && [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]) || [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ])); then
-	if [ "$(pgrep -f set_vps_firewall)" = "" ] && [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ -z "$(uci -q show openmptcprouter | grep admin_error=\'1\')" ] && [ -n "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" ]; then
-		check_server_fw() {
-			[ "$(uci -q get openmptcprouter.$1.set_firewall)" = "1" ] && {
-				_log "Set firewall on server $1"
-				/etc/init.d/openmptcprouter-vps set_vps_firewall $1 >/dev/null 2>&1
-			}
-		}
-		config_load openmptcprouter
-		config_foreach check_server_fw server
-
-
-	#	run_fw_include() {
-	#		[ -n "$1" ] && [ "$(uci -q get firewall.$1.reload)" = "0" ] && sh $(uci -q get firewall.$1.path) >/dev/null 2>&1
-	#	}
-	#	config_load firewall
-	#	config_foreach run_fw_include include
-
-		#/etc/init.d/shadowsocks-libev rules_up >/dev/null 2>&1
-		#/etc/init.d/v2ray rules_up >/dev/null 2>&1
-		#/etc/init.d/omr-bypass reload_rules >/dev/null 2>&1
-		#sh /etc/firewall.gre-tunnel >/dev/null 2>&1
-		/bin/blocklanfw >/dev/null 2>&1
-		sleep 5
-	fi
+	# 	# 执行 blocklanfw 脚本，阻止局域网防火墙规则
+	# 	logger -t "OMR" "<omr-schedule> /bin/blocklanfw >/dev/null 2>&1"
+	# 	/bin/blocklanfw >/dev/null 2>&1
+	# 	sleep 5
+	# fi
 fi
 
-
+# 检查 Unbound DNS 解析器是否正常运行
 if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ] && [ -n "$(uci -q get dhcp.dnsmasq1.server | grep 127.0.0.1#5353)" ]; then
+	# 如果 Unbound 进程不存在，重启它
 	if [ "$(pgrep -f unbound)" = "" ]; then
 		_log "Can't find unbound, restart it..."
+		logger -t "OMR" "<omr-schedule> Can't find unbound, restart it..."
 		/etc/init.d/unbound restart >/dev/null 2>&1
+		logger -t "OMR" "<omr-schedule> /etc/init.d/unbound restart >/dev/null 2>&1"
 		sleep 5
+	# 如果启用了外部检查，且 Unbound 监听在 5353 端口，但无法解析域名，则重启
 	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ "$(uci -q get unbound.ub_main.listen_port)" = "5353" ] && [ -n "$(dig +timeout=4 +tries=2 openmptcprouter.com -p 5353 | grep 'ANSWER: 0')" ]; then
 		_log "Can't resolve via unbound, restart it..."
+		logger -t "OMR" "<omr-schedule> Can't resolve via unbound, restart it..."
 		/etc/init.d/unbound restart >/dev/null 2>&1
+		logger -t "OMR" "<omr-schedule> /etc/init.d/unbound restart >/dev/null 2>&1"
 		sleep 5
 	fi
 fi
 
+# 检查 dnsmasq 是否正常运行
 if [ -f /etc/init.d/dnsmasq ]; then
+	# 如果 dnsmasq 进程不存在，重启它
 	if [ "$(pgrep -f dnsmasq)" = "" ]; then
 		_log "Can't find dnsmasq, restart it..."
+		logger -t "OMR" "<omr-schedule> Can't find dnsmasq, restart it..."
 		/etc/init.d/dnsmasq restart >/dev/null 2>&1
+		logger -t "OMR" "<omr-schedule> /etc/init.d/dnsmasq restart >/dev/null 2>&1"
 		sleep 5
-	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ -n "$(dig +timeout=4 +tries=2 openmptcprouter.com 2>&1 | grep -i 'connection refused')" ]; then
+	# 如果启用额外检查，且 dnsmasq 拒绝连接，则重启
+	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ -z "$(dig +timeout=4 +tries=2 +short @127.0.0.1 www.baidu.com 2>/dev/null | head -n 1)" ]; then
+		logger -t "OMR" "<omr-schedule> Can't resolve via dnsmasq, restart it..."
 		_log "Can't resolve via dnsmasq, restart it..."
 		/etc/init.d/dnsmasq restart >/dev/null 2>&1
+		logger -t "OMR" "<omr-schedule> /etc/init.d/dnsmasq restart >/dev/null 2>&1"
 		sleep 5
 	fi
 fi
 
+# 如果 dnsmasq 存在但未配置上游 DNS 服务器，则添加默认配置（将请求转发到 127.0.0.1:5353 的 Unbound）
 if [ -f /etc/init.d/dnsmasq ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server)" ]; then
+	logger -t "OMR" "<omr-schedule> dnsmasq"
 	uci -q batch <<-EOF >/dev/null
 		add_list dhcp.dnsmasq1.server='127.0.0.1#5353'
 		add_list dhcp.dnsmasq1.server='/lan/'
@@ -179,85 +236,116 @@ if [ -f /etc/init.d/dnsmasq ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server)" ];
 	EOF
 fi
 
+# 检查 miniupnpd 是否正常运行，若已启用但未运行则重启
 if [ "$(pgrep miniupnpd)" = "" ] && [ "$(uci -q get upnpd.config.enabled)" = "1" ] && [ -f /etc/init.d/miniupnpd ]; then
 	_log "Can't find miniupnpd, restart it..."
+	logger -t "OMR" "<omr-schedule> Can't find miniupnpd, restart it..."
 	/etc/init.d/miniupnpd restart >/dev/null 2>&1
+	logger -t "OMR" "<omr-schedule> /etc/init.d/miniupnpd restart >/dev/null 2>&1"
 	sleep 5
 fi
 
+# 检查 rpcd 是否正常运行，若未运行则启用并重启
 if [ "$(pgrep rpcd)" = "" ] && [ -f /etc/init.d/rpcd ]; then
 	_log "Can't find rpcd, restart it..."
+	logger -t "OMR" "<omr-schedule> Can't find rpcd, restart it..."
 	/etc/init.d/rpcd enable >/dev/null 2>&1
+	logger -t "OMR" "<omr-schedule> /etc/init.d/rpcd enable >/dev/null 2>&1"
 	/etc/init.d/rpcd restart >/dev/null 2>&1
+	logger -t "OMR" "<omr-schedule> /etc/init.d/rpcd restart >/dev/null 2>&1"
 	sleep 5
 fi
+
+# 检查 dbus 是否正常运行，若未运行则启用并重启
 if [ "$(pgrep dbus)" = "" ] && [ -f /etc/init.d/dbus ]; then
 	_log "Can't find dbus, restart it..."
+	logger -t "OMR" "<omr-schedule> Can't find dbus, restart it..."
 	/etc/init.d/dbus enable >/dev/null 2>&1
+	logger -t "OMR" "<omr-schedule> /etc/init.d/dbus enable >/dev/null 2>&1"
 	/etc/init.d/dbus restart >/dev/null 2>&1
+	logger -t "OMR" "<omr-schedule> /etc/init.d/dbus restart >/dev/null 2>&1"
 	sleep 5
 fi
 
+# 检查 uhttpd（Web 管理界面）是否正常运行，若未运行则重启
 if [ "$(pgrep uhttpd)" = "" ] && [ -f /etc/init.d/uhttpd ]; then
 	_log "Can't find uhttpd, restart it..."
+	logger -t "OMR" "<omr-schedule> Can't find uhttpd, restart it..."
 	/etc/init.d/uhttpd restart >/dev/null 2>&1
+	logger -t "OMR" "<omr-schedule> /etc/init.d/uhttpd restart >/dev/null 2>&1"
 	sleep 5
 fi
 
-if [ "$(uci -q get openmptcprouter.settings.disable_modemmanager)" != "1" ]; then
-	if [ -z "$(pgrep ModemManager)" ] && [ -f /etc/init.d/modemmanager ] && [ -n "$(uci -q show network | grep modemmanager)" ]; then
-		_log "Can't find ModemManager, restart it..."
-		/etc/init.d/modemmanager restart >/dev/null 2>&1
-		sleep 5
-	elif [ -n "$(pgrep ModemManager)" ] && [ -f /etc/init.d/modemmanager ] && [ -n "$(uci -q show network | grep modemmanager)" ] && [ -z "$(timeout 2 mmcli -L)" ]; then
-		_log "ModemManager doesn't answer, restart it..."
-		/etc/init.d/modemmanager restart >/dev/null 2>&1
-		sleep 5
-	#elif [ -n "$(pgrep ModemManager)" ] && [ -f /etc/init.d/modemmanager ] && [ -z "$(uci -q show network | grep modemmanager)" ]; then
-	#	_log "ModemManager not used, stop it..."
-	#	/etc/init.d/modemmanager stop >/dev/null 2>&1
-	#	sleep 5
-	fi
-	/etc/init.d/modemmanager enable >/dev/null 2>&1
-fi
-
+# 定义重启 omr-tracker 接口监控的函数
 restart_omrtracker() {
+	# 如果该接口的监控进程已在运行，则跳过
 	[ -n "$(pgrep -f $1)" ] && return
+
+	# 如果该接口没有相应的interface, 则跳过
+	local ifname
+	# 获取接口的设备名称(l3_device)
+	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$ifname" ] && ifname=$(ifstatus "$1_4" | jsonfilter -q -e '@["l3_device"]')
+	# 如果设备名包含@符号，取真实设备名
+	[ -n "$(echo $ifname | grep '@')" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
+	# 仍然无法获取真实设备名, 直接退出
+	[ -z ${ifname} ] && {
+		# logger -t "OMR" "<omr-tracker> $1 unknown interface! exit now..."
+		return
+	}
+
+	# 获取接口的多路径配置
 	config_get multipath "$1" multipath
+	# 获取接口是否自动启用
 	config_get ifenabled "$1" auto
+	# 如果多路径未设置或为 off，则跳过
 	[ -z "$multipath" ] || [ "$multipath" = "off" ] && return
+	# 如果自动启用设置为 0（禁用），则跳过
 	[ "$ifenabled" = "0" ] && return
+	# 启用并启动该接口的 omr-tracker 监控
+	logger -t "OMR" "<omr-schedule> /etc/init.d/omr-tracker enable"
 	/etc/init.d/omr-tracker enable
+	logger -t "OMR" "<omr-schedule> /etc/init.d/omr-tracker start_interface $1"
 	/etc/init.d/omr-tracker start_interface "$1"
 	sleep 10
 }
 
+# 定义设置 LAN IP 限制的函数（用于限制某些服务只在特定接口上工作）
 set_lan_ips() {
 	config_get ip4table "$1" ip4table
 	config_get device "$1" device
 	config_get proto "$1" proto
 	config_get multipath "$1" multipath
-	# No restrict for interfaces with strong name
+	# 如果设备名包含 '-'，说明是强命名设备，不限制
 	[ -n "$(echo $device | grep -)" ] && uci -q set openmptcprouter.settings.restrict_to_lan="0" && uci commit openmptcprouter
+	# 先删除旧列表项
 	uci -q del_list shadowsocks-libev.ss_rules.ifnames="$device"
 	uci -q del_list shadowsocks-rust.ss_rules.ifnames="$device"
 	uci -q del_list unbound.ub_main.iface_lan="$1"
 	uci -q del_list unbound.ub_main.iface_wan="$1"
 	uci -q del_list dhcp.@dnsmasq[0].interface="$1"
 	uci -q del_list dhcp.@dnsmasq[0].notinterface="$1"
+	# 如果不是多路径接口，且设备不是虚拟设备（不含 @），且协议为 dhcp 或 static
 	if [ "$multipath" != "on" ] && [ "$multipath" != "master" ] && [ -n "$device" ] && [ -z "$(echo $device | grep @)" ] && ([ "$proto" = "dhcp" ] || [ "$proto" = "static" ]); then
+		# 将这些接口添加到 LAN 侧服务列表（Shadowsocks, Unbound, dnsmasq）
 		uci -q add_list shadowsocks-libev.ss_rules.ifnames="$device"
 		uci -q add_list shadowsocks-rust.ss_rules.ifnames="$device"
 		uci -q add_list unbound.ub_main.iface_lan="$1"
 		uci -q add_list dhcp.@dnsmasq[0].interface="$1"
+	# 如果是多路径接口（on 或 master）
 	elif [ "$multipath" = "on" ] || [ "$multipath" = "master" ]; then
 		uci -q add_list unbound.ub_main.iface_wan="$1"
 		uci -q add_list dhcp.@dnsmasq[0].notinterface="$1"
 	fi
 }
+
+# 加载网络配置
 config_load network
+# 遍历网络接口，重启所需的 omr-tracker 监控
 config_foreach restart_omrtracker interface
+# 如果启用了限制到 LAN，则设置 LAN IP 限制
 [ "$(uci -q get openmptcprouter.settings.restrict_to_lan)" = "1" ] && config_foreach set_lan_ips interface
+# 如果未限制到 LAN，但存在旧的接口限制规则，则清除它们
 [ "$(uci -q get openmptcprouter.settings.restrict_to_lan)" = "0" ] && ([ -n "$(uci -q get shadowsocks-libev.ss_rules.ifnames)" ] || [ -n "$(uci -q get shadowsocks-rust.ss_rules.ifnames)" ]) && {
 	uci -q batch <<-EOF
 		delete shadowsocks-libev.ss_rules.ifnames
@@ -268,72 +356,97 @@ config_foreach restart_omrtracker interface
 		delete dhcp.@dnsmasq[0].notinterface
 	EOF
 }
-[ -n "$(uci -q changes shadowsocks-libev)" ] && uci -q commit shadowsocks-libev
-[ -n "$(uci -q changes shadowsocks-rust)" ] && uci -q commit shadowsocks-rust
-[ -n "$(uci -q changes unbound)" ] && uci -q commit unbound
-[ -n "$(uci -q changes dhcp)" ] && uci -q commit dhcp
+# 提交相关配置变更
+[ -n "$(uci -q changes shadowsocks-libev)" ] && uci -q commit shadowsocks-libev && logger -t "OMR" "<omr-schedule> uci -q commit shadowsocks-libev"
+[ -n "$(uci -q changes shadowsocks-rust)" ] && uci -q commit shadowsocks-rust && logger -t "OMR" "<omr-schedule> uci -q commit shadowsocks-rust"
+[ -n "$(uci -q changes unbound)" ] && uci -q commit unbound && logger -t "OMR" "<omr-schedule> uci -q commit unbound"
+[ -n "$(uci -q changes dhcp)" ] && uci -q commit dhcp && logger -t "OMR" "<omr-schedule> uci -q commit dhcp"
+# 定义修复多路径状态的函数
 multipath_fix() {
 	config_get multipath "$1" multipath
+	# 如果多路径不是 off，则跳过
 	[ "$multipath" != "off" ] && return
 	config_get device "$1" device
+	# 如果设备是虚拟设备（含 @），跳过
 	[ "$(echo $device | grep '@')" ] && return
+	# 获取接口的实际 L3 设备名
 	interface="$(ifstatus $1 | jsonfilter -q -e '@.l3_device' | tr -d '\n')"
+	# 如果接口存在且未被 multipath 工具停用，则修复（重新加载 MPTCP）
 	[ -n "$interface" ] && [ -z "$(multipath $interface | grep deactivated)" ] && {
 		_log "Fix Multipath status on $1 ($interface)"
+		logger -t "OMR" "<omr-schedule> Fix Multipath status on $1 ($interface)"
 		/etc/init.d/mptcp reload $interface >/dev/null 2>&1
+		logger -t "OMR" "<omr-schedule> /etc/init.d/mptcp reload $interface >/dev/null 2>&1"
 	}
 }
+# 如果全局启用了多路径，执行修复
 if [ "$(uci -q get network.globals.multipath)" = "enable" ]; then
 	config_load network
 	config_foreach multipath_fix interface
 fi
+# 如果系统日志中出现 "Ring expansion failed" 错误，尝试通过移除并重新扫描 PCI 设备来修复
 if [ -n "$(logread | tail -n 2 | grep 'Ring expansion failed')" ]; then
 	_log "Workaround Ring expansion failed problem"
+	logger -t "OMR" "<omr-schedule> Workaround Ring expansion failed problem"
 	echo 1 > /sys/bus/pci/devices/0000:00:00.0/remove
 	sleep 2
 	echo 1 > /sys/bus/pci/rescan
 fi
 
-#if [ -f /etc/init.d/omr-bypass ] && [ -z "$(pgrep -f omr-bypass)" ] && [ "$(nft list ruleset 2>/dev/null | grep omr_dst_bypass)" = "" ] && [ "$(iptables-save 2>/dev/null | grep omr-bypass)" = "" ]; then
+# 检查 omr-bypass 规则是否存在，若不存在则重启 omr-bypass
 if [ -f /etc/init.d/omr-bypass ] && [ -z "$(pgrep -f omr-bypass)" ] && [ "$(nft list ruleset 2>/dev/null | grep omr_dst_bypass)" = "" ]; then
 	_log "Can't find omr-bypass rules, restart omr-bypass..."
+	logger -t "OMR" "<omr-schedule> Can't find omr-bypass rules, restart omr-bypass..."
 	/etc/init.d/omr-bypass start >/dev/null 2>&1
+	logger -t "OMR" "<omr-schedule> /etc/init.d/omr-bypass start >/dev/null 2>&1"
 	sleep 5
 fi
 
+# 如果系统使用了 overlay 文件系统，且上次检查系统升级的时间已超过 3600 秒，且安装包列表文件已超过 1 天未更新
 if [ -f /etc/backup/installed_packages.txt ] && [ -n "$(grep overlay /etc/backup/installed_packages.txt)" ] && ([ "$(uci -q get openmptcprouter.settings.sysupgrade_lc)" = "" ] || [ $(($(date +"%s") + $((30 + RANDOM % 31)) - $(uci -q get openmptcprouter.settings.sysupgrade_lc))) -gt 3600 ]) && [ $(($(date +"%s") - $(stat -c "%Y" /etc/backup/installed_packages.txt))) -gt 86400 ]; then
+	# 重新安装软件包以恢复 overlay 系统的完整性
 	_log "Reinstall packages..."
+	logger -t "OMR" "<omr-schedule> Reinstall packages..."
 	uci -q set openmptcprouter.settings.sysupgrade_lc=$(date +"%s")
+	logger -t "OMR" "<omr-schedule> /etc/init.d/sysupgrade restart >/dev/null 2>&1"
 	/etc/init.d/sysupgrade restart >/dev/null 2>&1
 	sleep 10
 fi
 
-
+# 如果启用了 SQM 自动速率调整，且对应接口的监控进程未运行，且速率参数已配置，则重启 SQM 自动速率调整服务
 if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.enabled)" = "1" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.autorate)" = "1" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ -z $(pgrep -f "config.${OMR_TRACKER_INTERFACE}") ]; then
 	if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.max_download)" != "0" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.download)" != "0" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.max_upload)" != "0" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.upload)" != "0" ]; then
 		_log "Restart SQM Autorate"
+		logger -t "OMR" "<omr-schedule> Restart SQM Autorate"
 		/etc/init.d/sqm-autorate restart >/dev/null 2>&1
+		logger -t "OMR" "<omr-schedule> /etc/init.d/sqm-autorate restart >/dev/null 2>&1"
 		sleep 5
 	fi
 fi
 
+# 检查是否需要获取最新版本信息（首次或超过 3600 秒未更新）
 if [ "$(uci -q get openmptcprouter.latest_versions.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.latest_versions.lc))) -gt 3600 ]; then
+	# 获取系统发行版和版本信息
 	distribution="$(ubus call system board | jsonfilter -q -e '@.release.distribution' | tr -d '\n')"
 	version="$(ubus call system board | jsonfilter -q -e '@.release.version' | tr -d '\n')"
+	# 从服务器获取最新版本 JSON
 	latestversions="$(curl -4 -s -m 3 -A "${distribution}/${version}" https://www.openmptcprouter.com/version/version.json)"
 	[ -n "$latestversions" ] && {
 		uci -q set openmptcprouter.latest_versions=latest_versions
+		# 如果是 OpenMPTCProuter 发行版，保存 OMR 和 VPS 版本
 		if [ "${distribution}" = "openmptcprouter" ]; then
 			uci -q set openmptcprouter.latest_versions.omr=$(echo $latestversions | jsonfilter -q -e '@.omr')-$(ubus call system board | jsonfilter -e '@.kernel' | cut -d'.' -f1,2)
 			uci -q set openmptcprouter.latest_versions.vps=$(echo $latestversions | jsonfilter -q -e '@.vps')
+		# 否则删除 OMR 和 VPS 版本信息
 		else
 			uci -q del openmptcprouter.latest_versions.omr
 			uci -q del openmptcprouter.latest_versions.vps
 		fi
+		# 记录检查时间戳并提交
 		uci -q set openmptcprouter.latest_versions.lc=$(date +"%s")
 		uci -q commit openmptcprouter
 	}
 fi
 
-# Remove old hidden config files
+# 删除超过 1 天的旧隐藏配置文件
 find /etc/config/ -mtime +1 -type f -name '\.*' -exec rm {} +

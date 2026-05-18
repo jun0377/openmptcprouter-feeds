@@ -1,28 +1,44 @@
 #!/bin/sh
 
+# 如果不是 VPN 接口，直接退出
 [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && exit 0
+# 如果状态未发生变化，则无需处理，直接退出
 [ "$OMR_TRACKER_PREV_STATUS" = "$OMR_TRACKER_STATUS" ] && exit 0
 
+# 定义设置 LED 的函数
 set_leds() {
+	# 获取 LED 配置节名称
 	local cfg=$1
+	# 获取 LED 的触发器类型
 	config_get trigger $cfg trigger
+	# 如果不是 VPN 触发器，跳过该 LED
 	[ "$trigger" != "vpn" ] && return
+	# 获取 LED 的 sysfs 路径
 	config_get sysfs $cfg sysfs
+	# 获取 VPN 状态期望值（on 或 off）
 	config_get vpn_status $cfg vpn_status
+	# 如果期望 VPN 关闭时亮灯
 	if [ "$vpn_status" = "off" ]; then
+		# VPN 出错（断开）时，设置为常亮
 		if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 			echo 'default-on' > /sys/class/leds/${sysfs}/trigger
+		# VPN 正常连接时，熄灭 LED
 		else
 			echo 'none' > /sys/class/leds/${sysfs}/trigger
 		fi
+	# 如果期望 VPN 打开时亮灯
 	elif [ "$vpn_status" = "on" ]; then
+		# VPN 出错（断开）时，熄灭 LED
 		if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 			echo 'none' > /sys/class/leds/${sysfs}/trigger
+		# VPN 正常连接时，设置为常亮
 		else
 			echo 'default-on' > /sys/class/leds/${sysfs}/trigger
 		fi
 	fi
 }
 
+# 加载系统配置
 config_load system
+# 遍历所有 LED 配置，应用 VPN 状态指示
 config_foreach set_leds led

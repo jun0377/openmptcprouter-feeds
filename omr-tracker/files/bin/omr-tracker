@@ -18,49 +18,63 @@ _omr_tracker_lock_id="$(printf '%s' "$OMR_TRACKER_INTERFACE" | tr -c 'A-Za-z0-9.
 _omr_tracker_lock_dir="$_omr_tracker_lock_base/${_omr_tracker_lock_id}.lock"
 _omr_tracker_lock_pid="$_omr_tracker_lock_dir/pid"
 
+# 释放锁的函数：仅当 pid 文件存在且记录的是当前进程 PID 时才删除锁目录
 _omr_tracker_release_lock() {
 	[ -f "$_omr_tracker_lock_pid" ] && [ "$(cat "$_omr_tracker_lock_pid" 2>/dev/null)" = "$$" ] && rm -rf "$_omr_tracker_lock_dir" 2>/dev/null
 }
 
+# 确保锁的基础目录存在
 mkdir -p "$_omr_tracker_lock_base" 2>/dev/null
+# 尝试原子性地创建锁目录；如果创建失败，说明已有其他进程持有锁
 if ! mkdir "$_omr_tracker_lock_dir" 2>/dev/null; then
+	# 读取已有锁目录中记录的 PID
 	_omr_tracker_existing_pid="$(cat "$_omr_tracker_lock_pid" 2>/dev/null)"
+	# 如果该 PID 对应的进程仍在运行，说明是正常的重复启动，直接退出
 	if [ -n "$_omr_tracker_existing_pid" ] && kill -0 "$_omr_tracker_existing_pid" 2>/dev/null; then
 		exit 0
 	fi
+	# 原有进程已死亡，清理残留锁目录
 	rm -rf "$_omr_tracker_lock_dir" 2>/dev/null
+	# 重新尝试创建锁目录；若仍失败则退出（极端竞争情况）
 	mkdir "$_omr_tracker_lock_dir" 2>/dev/null || exit 0
 fi
 
+# 将当前进程 PID 写入锁文件；写入失败则退出
 printf '%s\n' "$$" >"$_omr_tracker_lock_pid" 2>/dev/null || exit 0
 trap _omr_tracker_release_lock EXIT INT TERM
 
+_omr_tracker_dup_pids="$(pgrep -f "/bin/omr-tracker[[:space:]]+$OMR_TRACKER_INTERFACE([[:space:]]|$)" 2>/dev/null)"
+for _omr_tracker_dup_pid in $_omr_tracker_dup_pids; do
+	[ "$_omr_tracker_dup_pid" = "$$" ] && continue
+	kill "$_omr_tracker_dup_pid" 2>/dev/null
+done
+
 # export vars
 # 以下变量用于：把当前探测上下文传给 post-tracking 钩子脚本，以及某些工具调用时复用
-export OMR_TRACKER_INTERFACE
-export OMR_TRACKER_HOST
-export OMR_TRACKER_HOST6
+export OMR_TRACKER_INTERFACE			# 将接口名导出为环境变量，供子进程和钩子脚本使用
+export OMR_TRACKER_HOST					# 探测目标的 IPv4 主机地址
+export OMR_TRACKER_HOST6				# 探测目标的 IPv6 主机地址
 export OMR_TRACKER_TIMEOUT				# ping/httping命令总超时时间
 export OMR_TRACKER_SIZE					# ping命令包负载大小payload
 export OMR_TRACKER_MAX_TTL				# ping命令携带的TTL
 export OMR_TRACKER_LOSS					# ping命令探测到的丢包率
-export OMR_TRACKER_STATUS
-export OMR_TRACKER_STATUS_MSG
-export OMR_TRACKER_PREV_STATUS
-export OMR_TRACKER_DEVICE
-export OMR_TRACKER_PREV_DEVICE
-export OMR_TRACKER_DEVICE_IP
-export OMR_TRACKER_DEVICE_IP6
-export OMR_TRACKER_PREV_DEVICE_IP
-export OMR_TRACKER_PREV_DEVICE_IP6
-export OMR_TRACKER_DEVICE_GATEWAY
-export OMR_TRACKER_DEVICE_GATEWAY6
-export OMR_TRACKER_IPV6
-export OMR_TRACKER_PROTO
-export OMR_TRACKER_INTERVAL_TRIES
-export OMR_TRACKER_INTERVAL
-export OMR_TRACKER_NO_BIND
-export OMR_TRACKER_TYPE
+export OMR_TRACKER_STATUS				# 当前探测状态（OK 或 ERROR）
+export OMR_TRACKER_STATUS_MSG			# 当前探测状态的详细描述信息
+export OMR_TRACKER_PREV_STATUS			# 上一次探测状态，用于判断状态是否发生变化
+export OMR_TRACKER_DEVICE				# 当前接口对应的物理设备名（如 eth0）
+export OMR_TRACKER_PREV_DEVICE			# 上一次记录的物理设备名
+export OMR_TRACKER_DEVICE_IP			# 当前接口的 IPv4 地址
+export OMR_TRACKER_DEVICE_IP6			# 当前接口的 IPv6 地址
+export OMR_TRACKER_PREV_DEVICE_IP		# 上一次记录的 IPv4 地址
+export OMR_TRACKER_PREV_DEVICE_IP6		# 上一次记录的 IPv6 地址
+export OMR_TRACKER_DEVICE_GATEWAY		# 当前接口的 IPv4 网关地址
+export OMR_TRACKER_DEVICE_GATEWAY6		# 当前接口的 IPv6 网关地址
+export OMR_TRACKER_IPV6					# 是否启用 IPv6 探测（0/1/auto）
+export OMR_TRACKER_PROTO				# 接口协议类型（dhcp/pppoe/qmi 等）
+export OMR_TRACKER_INTERVAL_TRIES		# 每次探测循环内的重试间隔次数
+export OMR_TRACKER_INTERVAL				# 两次探测循环之间的休眠间隔（秒）
+export OMR_TRACKER_NO_BIND				# 是否禁用接口绑定（1 表示不使用 -B 参数）
+export OMR_TRACKER_TYPE					# 探测类型（ping/httping/dns/none/glorytun-udp）
 
 initial_timeout="$OMR_TRACKER_TIMEOUT"		# 保存初始超时时间，供 RTO 初始化使用(单位秒)
 wait_test=${OMR_TRACKER_WAIT_TEST:-0}		# 如果未设置 OMR_TRACKER_WAIT_TEST，则默认 0(错误时额外等待时间)
@@ -76,10 +90,10 @@ wait_test=${OMR_TRACKER_WAIT_TEST:-0}		# 如果未设置 OMR_TRACKER_WAIT_TEST�
 
 # 将 rto 设置为初始超时时间initial_timeout, RTO用于动态调整探测的超时时间,适应网络波动
 _init_rto() {
-	srtt=										# 平滑 RTT（SRTT
-	rttvar=										# RTT 方差（RTTVAR）
-	rto_init=$(( initial_timeout * 1000 ))		# 初始 RTO（毫秒）
-	rto=$rto_init								# 当前 RTO = 初始 RTO
+	srtt=										# 平滑 RTT，首次为空表示尚未采样
+	rttvar=										# RTT 方差，首次为空
+	rto_init=$(( initial_timeout * 1000 ))		# 将初始超时时间转换为毫秒作为 RTO 下限
+	rto=$rto_init								# 当前 RTO 初始值等于下限
 }
 
 # update rto as explained in rfc6298
@@ -100,13 +114,13 @@ _init_rto() {
 # K : 影响RTO计算的RTTVAR系数
 
 # 根据实测的 RTT (Round Trip Time，往返时延) 更新 RTO
-# 原理 ：使用类似 TCP 的算法（参考 RFC6298），但修改了系数（K=3, beta=0.25），使其对延迟变化的反应比标准 TCP 更快。这是为了在探测频率较低的情况下也能快速适应网络抖动
+# 原理: 使用类似 TCP 的算法（参考 RFC6298），但修改了系数（K=3, beta=0.25），使其对延迟变化的反应比标准 TCP 更快。这是为了在探测频率较低的情况下也能快速适应网络抖动
 # 根据本次测得的 RTT（$1，毫秒）更新 srtt/rttvar/rto
 _update_rto() {
 	# 第一次样本：直接初始化
 	if [ -z "$srtt" ]; then
-		srtt=$1
-		rttvar=$(echo "$(($1 / 2))" | cut -d. -f1)
+		srtt=$1											# srtt 直接取第一次 RTT
+		rttvar=$(echo "$(($1 / 2))" | cut -d. -f1)		# rttvar 取 RTT 的一半，cut 取整
 	# 非第一次：用指数加权法更新
 	else
 		diff=$((srtt - $1))																			# diff = 旧 srtt - 新 rtt（可能为负）
@@ -116,12 +130,14 @@ _update_rto() {
 	rto=$((tmp = srtt + 3 * rttvar, tmp > rto_init ? tmp : rto_init))								# rto = max(srtt + 3 * rttvar, rto_init)
 }
 
-# 作用 ： 轮询探测目标
-# 细节 ：将当前的探测目标主机 (OMR_TRACKER_HOST) 移到列表末尾，取出下一个主机作为下一次探测的目标。这样可以避免因单一探测目标（如某个 DNS 服务器）故障而误判线路中断
+# 轮询切换探测目标主机，避免因单一目标故障导致误判
+# 细节: 将当前的探测目标主机 (OMR_TRACKER_HOST) 移到列表末尾，取出下一个主机作为下一次探测的目标。这样可以避免因单一探测目标（如某个 DNS 服务器）故障而误判线路中断
 _restart() {
 	OMR_TRACKER_HOST="${OMR_TRACKER_HOSTS%% *}"				# 取 IPv4 hosts 列表的第一个（按空格分隔）
 	OMR_TRACKER_HOST6="${OMR_TRACKER_HOSTS6%% *}"			# 取 IPv6 hosts 列表的第一个
 	
+	logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> IPv4 hosts: ${OMR_TRACKER_HOST}"
+
 	# 如果当前 IPv4 host 不是唯一元素，说明列表里还有其它 host；将当前 host 移到末尾，实现轮询
 	[ "$OMR_TRACKER_HOST" = "$OMR_TRACKER_HOSTS" ] || {
 		OMR_TRACKER_HOSTS="${OMR_TRACKER_HOSTS#* } $OMR_TRACKER_HOST"
@@ -143,7 +159,7 @@ _post_tracking() {
 	for tracker_bin in /usr/share/omr/post-tracking.d/*; do
 		[ -x "$tracker_bin" ] && (
 			_log() {
-				logger -t "OMR" "<omr-tracker> post-tracking-${tracker_bin##*/}" "$*"
+				logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> post-tracking-${tracker_bin##*/}" "$*"
 			}
 
 			# 在子 shell 中执行(避免污染当前 shell 的环境/变量)
@@ -154,28 +170,34 @@ _post_tracking() {
 
 # ping检测特定VPS服务器的连通性, 更新平均RTT和丢包率
 _ping_server() {
-	local servername="$1"
+	local servername="$1"							# VPS 服务器的 UCI section 名称
 	[ -z "$servername" ] && return
-	local disabled=$(uci -q get openmptcprouter."$servername".disabled)
-	local device="$2"
+	local disabled=$(uci -q get openmptcprouter."$servername".disabled)		# 读取该服务器是否被禁用
+	local device="$2"								# 指定探测使用的网口
+
+	# 设备存在且服务器未禁用才继续
 	if [ -n "$device" ] && [ "$disabled" != "1" ]; then
+		
+		# 执行 ping，记录延迟和丢包
 		check_ping() {
 			serverip="$1"
 			if [ -n "$serverip" ]; then
 				_ping "$serverip" "$device" "yes"
 				statusp=$?
 				if $(exit $statusp); then
-					serverip_ping=true
+					serverip_ping=true				# ping 成功，标记服务器可达
 					return 0
 				fi
 			fi
 		}
+
+		# 遍历该服务器配置的所有 IP 逐一探测
 		config_load openmptcprouter
 		config_list_foreach "${servername}" ip check_ping
 	fi
 }
 
-# ping检测所有VPS服务器的连通性
+# 遍历所有启用的 VPS 服务器，对每个默认路径接口执行 ping 探测
 _ping_server_all() {
 	# 判断是否存在至少一个启用且有IP的server
 	count_server() {
@@ -184,10 +206,11 @@ _ping_server_all() {
 
 		# 标记存在可用 server
 		if [ "$disabled" != "1" ] && [ -n "$serverip" ]; then
-			servers=true
+			servers=true	# 标记存在至少一个可用服务器
 		fi
 	}
 	
+	# 遍历所有 server section
 	config_load openmptcprouter
 	config_foreach count_server server
 
@@ -200,7 +223,7 @@ _ping_server_all() {
 	fi
 }
 
-# 使用httping探测特定server API/端口
+# 对单个 VPS 服务器执行 httping 探测（适用于 ICMP 被屏蔽的场景）
 _httping_server() {
 	local servername="$1"
 	[ -z "$servername" ] && return
@@ -210,11 +233,12 @@ _httping_server() {
 
 
 	if [ -n "$device" ] && [ "$disabled" != "1" ]; then
+		
 		# 以https模式(true)对serverip:port进行探测(这里的https语义取决于_httping实现)
 		check_ping() {
 			serverip="$1"
 			if [ -n "$serverip" ]; then
-				_httping "${serverip}:${port}" "$device" "yes" true
+				_httping "${serverip}:${port}" "$device" "yes" true		# 以 HTTPS 模式探测
 				statusp=$?
 				if $(exit $statusp); then
 					serverip_ping=true
@@ -222,6 +246,7 @@ _httping_server() {
 				fi
 			fi
 		}
+
 		config_load openmptcprouter
 		config_list_foreach "${servername}" ip check_ping
 	fi
@@ -262,11 +287,11 @@ _ping() {
 		# -I device：绑定接口; -w timeout：总超时; -c count：次数; -s size：payload 大小; -t ttl：TTL
 		# -Q 184：TOS/DSCP（184=0xB8，常见对应 EF/高优先级，作者注释里说 CS7 但 56 才是 CS7；此处需结合实现理解）
 		ret=$(ping -I "${device}" \
-			-w "$OMR_TRACKER_TIMEOUT" \
-			-c "$OMR_TRACKER_COUNT" \
-			-s "$OMR_TRACKER_SIZE" \
-			-t "$OMR_TRACKER_MAX_TTL" \
-			-Q 184 \
+			-w "$OMR_TRACKER_TIMEOUT" \			# 总超时时间
+			-c "$OMR_TRACKER_COUNT" \			# 发包数量
+			-s "$OMR_TRACKER_SIZE" \			# 数据包负载大小
+			-t "$OMR_TRACKER_MAX_TTL" \			# TTL 值
+			-Q 184 \							# DSCP/TOS 标记（0xB8，高优先级）
 			"${host}" 2>&1
 		)
 
@@ -279,10 +304,13 @@ _ping() {
 
 				# 从 rtt 行提取平均值（字段依赖于格式：min/avg/max/...）
 				latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
+
+				# 更新全局延迟变量
 				[ -n "$latency" ] && {
 					OMR_TRACKER_LATENCY="$latency"
 				}
 
+				# 更新全局丢包率变量
 				OMR_TRACKER_LOSS="$loss"
 			fi
 			return 0
@@ -384,18 +412,18 @@ _dns() {
 	local host=$1				# DNS 服务器地址（作为 dig 的 @server）
 	local deviceip=$2			# 本地源 IP（dig -b 绑定源地址）
 	ret=$(dig @"${host}" \
-		-b "${deviceip}" \
-		    +time="$OMR_TRACKER_TIMEOUT" \
-		    +tries="$OMR_TRACKER_COUNT" \
-		    one.one.one.one
-	) && echo "$ret" | grep -sq "1.1.1.1" && {
-		OMR_TRACKER_LATENCY=$(echo "$ret" | awk '/Query time/{print $4}')
-		return 0
+		-b "${deviceip}" \						# 绑定源 IP，确保查询从指定接口发出
+		    +time="$OMR_TRACKER_TIMEOUT" \		# 单次查询超时
+		    +tries="$OMR_TRACKER_COUNT" \		# 重试次数
+		    one.one.one.one						# 查询目标域名（Cloudflare DNS 的域名）
+	) && echo "$ret" | grep -sq "1.1.1.1" && {								# 验证响应中包含预期的 IP 地址
+		OMR_TRACKER_LATENCY=$(echo "$ret" | awk '/Query time/{print $4}')	# 提取查询耗时作为延迟
+		return 0	# 探测成功
 	}
-	return 1
+	return 1		# 未收到预期响应，探测失败
 }
 
-# 作用 ：占位函数，始终返回成功。用于不需要主动探测的场景
+# 占位探测函数，始终返回成功；用于只需检测网关可达性而不需要探测互联网的场景
 _none() {
 	return 0
 }
@@ -405,64 +433,74 @@ _restart
 
 # 读取接口的 proto（dhcp/pppoe/qmi/3g/等）
 OMR_TRACKER_INTERFACE_PROTO="$(uci -q get network.${OMR_TRACKER_INTERFACE}.proto)"
+logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> proto:${OMR_TRACKER_INTERFACE_PROTO}"
 # 初始化 上一次状态（空，后面用于决定重试次数/状态变化）
 OMR_TRACKER_PREV_STATUS=""
-# 若是 modemmanager，按配置 delay 等待（默认 120 秒）以便拨号稳定
-[ "$OMR_TRACKER_INTERFACE_PROTO" = "modemmanager" ] && sleep $(uci -q get network.${OMR_TRACKER_INTERFACE}.delay || echo '120')
 
 # main loop
-# 通过层层递进的方式（ 本地网关 -> 互联网目标 -> VPS 服务器 -> VPS API ）来验证 IPv4 链路的可用性。它不仅检查“能不能上网”，还检查“能不能连上 MPTCP 聚合服务器”，从而确保只有真正可用的链路才会被加入 MPTCP 资源池
+# 通过层层递进的方式(本地网关 -> 互联网目标 -> VPS 服务器 -> VPS API)来验证 IPv4 链路的可用性
+# 它不仅检查'能不能上网', 还检查'能不能连上 MPTCP 聚合服务器', 从而确保只有真正可用的链路才会被加入MPTCP资源池
 while true; do
-	# setup tracker variables
-	OMR_TRACKER_DEVICE_IP=
-	OMR_TRACKER_DEVICE_IP6=
-	OMR_TRACKER_STATUS="ERROR"
-	OMR_TRACKER_STATUS_MSG=""
-	OMR_TRACKER_LATENCY=
-	OMR_TRACKER_LOSS=
-	#OMR_TRACKER_TIMEOUT=$((rto / 1000 + (rto % 1000 ? 1 : 0)))
-	OMR_TRACKER_LIST_HOSTS=""
-	OMR_TRACKER_DEVICE_GATEWAY=
-	OMR_TRACKER_DEVICE_GATEWAY6=
-	serverip_ping=false
+	# 每轮循环开始时重置所有状态变量，避免上一轮结果污染本轮
+	OMR_TRACKER_DEVICE_IP=			# 清空 IPv4 地址
+	OMR_TRACKER_DEVICE_IP6=			# 清空 IPv6 地址
+	OMR_TRACKER_STATUS="ERROR"		# 默认状态为 ERROR，探测成功后才改为 OK
+	OMR_TRACKER_STATUS_MSG=""		# 清空状态描述信息
+	OMR_TRACKER_LATENCY=			# 清空上轮延迟数据
+	OMR_TRACKER_LOSS=				# 清空上轮丢包率数据
+	OMR_TRACKER_LIST_HOSTS=""		# 本轮探测失败的 IPv4 主机列表
+	OMR_TRACKER_DEVICE_GATEWAY=		# 清空 IPv4 网关
+	OMR_TRACKER_DEVICE_GATEWAY6=	# 清空 IPv6 网关
+	serverip_ping=false				# VPS服务器可达性标志,默认不可达
 
-	# 获取当前接口的物理设备名称, 如 eth0 wlan0
+	# 如果设备变量为空, 或设备在 sysfs 中仍然存在，则尝试重新获取设备名
+	# 注意：若设备已从系统中消失（如拔网卡），则跳过此块，保留上次的设备名
 	[ -z "$OMR_TRACKER_DEVICE" ] || [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ] && {
 
-			# 尝试多种方式来获取设备名称（L3设备、IPv4设备、UCI配置等）
+			# 优先从 ifstatus 获取 L3 设备名（PPP/VPN 等场景下 L3 设备与物理设备不同）
 			[ -z "$OMR_TRACKER_DEVICE" ] && OMR_TRACKER_DEVICE=$(ifstatus "$OMR_TRACKER_INTERFACE" | jsonfilter -q -e '@["l3_device"]')
+			# 尝试带 _4 后缀的子接口（双栈场景）
 			[ -z "$OMR_TRACKER_DEVICE" ] && OMR_TRACKER_DEVICE=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" | jsonfilter -q -e '@["l3_device"]')
+			# 如果设备名包含 @ 符号（如 eth0@eth1），改用 device 字段
 			#[ -z "$OMR_TRACKER_DEVICE" ] && config_get OMR_TRACKER_DEVICE "$OMR_TRACKER_INTERFACE" device
 			[ -n "$(echo $OMR_TRACKER_DEVICE | grep '@')" ] && OMR_TRACKER_DEVICE=$(ifstatus "$OMR_TRACKER_INTERFACE" | jsonfilter -q -e '@["device"]')
+			# 通过 network 函数库获取物理设备名
 			[ -z "$OMR_TRACKER_DEVICE" ] && network_get_physdev OMR_TRACKER_DEVICE "$OMR_TRACKER_INTERFACE"
+			# 最后尝试获取逻辑设备名
 			[ -z "$OMR_TRACKER_DEVICE" ] && network_get_device OMR_TRACKER_DEVICE "$OMR_TRACKER_INTERFACE"
 	}
 
+	logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> interface:${OMR_TRACKER_DEVICE}"
+
 	# 如果成功获取到设备名且该设备存在于系统中, 则继续获取当前接口的IP和网关
 	if [ -n "$OMR_TRACKER_DEVICE" ] && [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
+		# 保存当前设备名供下一轮比对
 		OMR_TRACKER_PREV_DEVICE="$OMR_TRACKER_DEVICE"
 		# 获取设备的运行状态（UP/DOWN）
 		OMR_TRACKER_DEVICE_STATE=$(ip -j link show dev "$OMR_TRACKER_DEVICE" | jsonfilter -q -e '@[*].operstate' | tr -d '\n')
-		# retrieve iface ip and gateway, 如果接口逻辑上是UP且物理状态不是DOWN，或者是 omrvpn 接口
+
+		# 接口逻辑状态为 up 且物理状态不是 DOWN，或者是 omrvpn 虚拟接口，才进行探测
+		# 例外：omrvpn 是虚拟 VPN 接口，物理状态不可靠，强制进入探测流程
 		if ([ "$(ifstatus $OMR_TRACKER_INTERFACE | jsonfilter -q -e '@.up')" == "true" ] && [ "$OMR_TRACKER_DEVICE_STATE" != "DOWN" ]) || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
-			# retrieve iface ip and gateway, # 开始获取 IPv4 地址和网关
+			# 开始获取 IPv4 地址和网关
 			if { [ "$OMR_TRACKER_FAMILY" = "ipv4" ] || [ "$OMR_TRACKER_FAMILY" = "ipv4ipv6" ]; } && [ "$OMR_TRACKER_INTERFACE_PROTO" != "dhcpv6" ]; then
 				# 尝试获取 IPv4 地址
+				#  ip -4 -br addr ls dev eth1
 				OMR_TRACKER_DEVICE_IP=$(ip -4 -br addr ls dev "$OMR_TRACKER_DEVICE" | awk -F'[ /]+' '{print $3}')
-				if [ -z "$OMR_TRACKER_DEVICE_IP" ]; then
-					OMR_TRACKER_DEVICE_IP=$(ip -4 addr show dev "$OMR_TRACKER_DEVICE" | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1)
-				fi
+				# ip -4 addr show dev eth1
+				[ -z "$OMR_TRACKER_DEVICE_IP" ] && OMR_TRACKER_DEVICE_IP=$(ip -4 addr show dev "$OMR_TRACKER_DEVICE" | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1)
 
 				# 尝试多种方式来获取网关
 				# 特殊处理 bonding-omrvpn 的网关
 				if [ "$OMR_TRACKER_DEVICE" = "bonding-omrvpn" ]; then
 					OMR_TRACKER_DEVICE_GATEWAY="10.255.248.1"
 				fi
-				# 尝试从 UCI 配置获取网关
+				# 尝试从 UCI 配置获取网关, 如: 静态IP的场景
 				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 					OMR_TRACKER_DEVICE_GATEWAY=$(uci -q get "network.$OMR_TRACKER_INTERFACE.gateway")
 				fi
-				# 尝试从 ubus 状态获取网关（非活动路由）
+				# 尝试从 ubus 状态获取网关（非活动路由
+				# ubus call network.interface.wan0 status
 				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY" = "0.0.0.0" ]; then
 					OMR_TRACKER_DEVICE_GATEWAY=$(ubus call network.interface.$OMR_TRACKER_INTERFACE status | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 				fi
@@ -473,16 +511,6 @@ while true; do
 				# 尝试从 IPv4 子接口状态获取网关
 				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY" = "0.0.0.0" ]; then
 					OMR_TRACKER_DEVICE_GATEWAY=$(ubus call network.interface.${OMR_TRACKER_INTERFACE}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
-				fi
-				# 如果是 omrvpn 接口，尝试从 glorytun 配置获取远程 IP 作为网关
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY" = "0.0.0.0" ]; then
-					if [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && [ "$(uci -q get glorytun.vpn.enable)" = "1" ]; then
-						OMR_TRACKER_DEVICE_GATEWAY=$(uci -q get glorytun.vpn.remoteip)
-					elif [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && [ "$(uci -q get glorytun-udp.vpn.enable)" = "1" ]; then
-						OMR_TRACKER_DEVICE_GATEWAY=$(uci -q get glorytun-udp.vpn.remoteip)
-					else
-						OMR_TRACKER_DEVICE_GATEWAY=""
-					fi
 				fi
 				# 尝试从路由表获取设备路由（下一跳）
 				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
@@ -507,6 +535,8 @@ while true; do
 
 			fi
 
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> interface:${OMR_TRACKER_DEVICE} ip: ${OMR_TRACKER_DEVICE_IP} gw:${OMR_TRACKER_DEVICE_GATEWAY} "
+
 			# IPv6地址和网关
 			if { [ "$OMR_TRACKER_IPV6" = "1" ] || [ "$OMR_TRACKER_IPV6" = "auto" ]; } && { [ "$OMR_TRACKER_FAMILY" = "ipv6" ] || [ "$OMR_TRACKER_FAMILY" = "ipv4ipv6" ]; }; then
 
@@ -520,6 +550,7 @@ while true; do
 				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
 					OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.${OMR_TRACKER_INTERFACE} status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${OMR_TRACKER_DEVICE_IP6}\"].nexthop" | tr -d "\n")
 				fi
+				# 从 ubus 非活动路由中按源地址（完整 IP）匹配默认路由的下一跳
 				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
 					OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.${OMR_TRACKER_INTERFACE} status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${OMR_TRACKER_DEVICE_IP6}/64\"].nexthop" | tr -d "\n")
 				fi
@@ -536,34 +567,28 @@ while true; do
 
 			# IPv4 链路探测循环逻辑: 在一个循环中不断尝试探测网络连通性，直到成功或达到最大重试次数
 			if { [ "$OMR_TRACKER_FAMILY" = "ipv4" ] || [ "$OMR_TRACKER_FAMILY" = "ipv4ipv6" ]; } && [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-				# setup loop variable, 根据上次状态设置重试次数
+
+				# 根据上次状态决定本轮重试次数: 
+				# 上次是 ERROR（链路刚恢复），需要更多次成功确认才能判定为 OK，避免误判
+				# 上次是 OK（链路正常），只需少量失败确认即可判定为 ERROR，快速响应故障
 				if [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ]; then
 					tries="$OMR_TRACKER_TRIES_UP"					# 之前是错误，多试几次
 				else
 					tries="$OMR_TRACKER_TRIES"						# 之前是正常，少试几次
 				fi
-				# loop until tries attempts have been reached, 不断尝试,直到成功或达到最大重试次数
+
+				# 内层重试循环，每次失败后递减 tries，直到成功或耗尽重试次数
 				while [ "$tries" -gt 0 ]; do
-					# 如果接口类型是 glorytun-udp，它不使用常规 Ping，而是直接查询 glorytun-udp 进程的状态
-					if [ "$OMR_TRACKER_TYPE" = "glorytun-udp" ]; then
-						glorytun_state="$(glorytun-udp path addr $OMR_TRACKER_DEVICE_IP | awk '/path/ { print $4 }' | tr -d '\n')"
-						if [ "$glorytun_state" = "running" ]; then
-							OMR_TRACKER_STATUS_MSG=""
-							OMR_TRACKER_STATUS="OK"
-						else
-							OMR_TRACKER_STATUS_MSG="Glorytun-UDP path $OMR_TRACKER_DEVICE_IP ($OMR_TRACKER_INTERFACE) is $glorytun_state"
-							OMR_TRACKER_STATUS="ERROR"
-						fi
-						break
-					fi
+
 					# 第一步：首先尝试 Ping 网关, 如果连网关都 Ping 不通，说明物理链路或本地网络有问题，无需浪费时间去 Ping 互联网上的目标
 					if [ -n "$OMR_TRACKER_DEVICE_ROUTE" ]; then
-						_ping "$OMR_TRACKER_DEVICE_ROUTE" "$OMR_TRACKER_DEVICE" "no"
+						_ping "$OMR_TRACKER_DEVICE_ROUTE" "$OMR_TRACKER_DEVICE" "no"		# "no" 表示不记录延迟/丢包
 						status=$?
 					else
 						_ping "$OMR_TRACKER_DEVICE_GATEWAY" "$OMR_TRACKER_DEVICE" "no"
 						status=$?
 					fi
+
 					# 如果网关通了且配置为不探测（none），则直接判定为 OK
 					if $(exit $status) && [ "$OMR_TRACKER_TYPE" = "none" ]; then
 						OMR_TRACKER_STATUS_MSG=""
@@ -571,11 +596,13 @@ while true; do
 						break
 					# 如果需要探测（非 none）
 					elif [ "$OMR_TRACKER_TYPE" != "none" ]; then
+						# 网关不通时记录错误信息，但不立即退出，继续尝试探测互联网目标
 						if ! $(exit $status); then
 							OMR_TRACKER_STATUS_MSG="IPv4 gateway down"
 						fi
+
 						serverip_ping=false
-						# 预检：探测 VPS 服务器（Ping 或 HTTPing）
+						# 预检: 探测 VPS 服务器（Ping 或 HTTPing）
 						if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
 							config_load openmptcprouter
 							config_foreach _ping_server server $OMR_TRACKER_DEVICE
@@ -589,18 +616,21 @@ while true; do
 						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST" ]; then
 							# 解析目标主机 IP
 							OMR_TRACKER_HOST=$(resolveip -4 -t 5 $OMR_TRACKER_HOST | head -n 1 | tr -d "\n")
-							# 对于某些协议（3G/QMI/NCM），强制添加静态路由以确保探测包走此接口
+
+							# 3G/QMI/NCM 接口需要手动添加主机路由，确保探测包从此接口发出
+							# 因为这些接口通常没有默认路由或路由优先级较低
 							if [ -n "$OMR_TRACKER_HOST" ]; then
 								if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; then
 									# Check if route is not used
 									while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2>&1
 									do
-										logger -t "OMR" "<omr-tracker> Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
+										logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
 										sleep 2
 										ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
-										_restart
+										_restart		# 切换到下一个探测目标
 									done
 								fi
+
 								# 根据类型执行具体的探测（Ping/HTTPing/DNS）
 								if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
 									_ping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE" "yes"
@@ -612,14 +642,14 @@ while true; do
 									_dns "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "yes"
 									statusb=$?
 								fi
-								# 删除临时路由
+
+								# 探测完成后删除临时添加的主机路由（避免路由表污染）
 								[ -n "$(ip route show ${OMR_TRACKER_HOST} via ${OMR_TRACKER_DEVICE_GATEWAY} dev ${OMR_TRACKER_DEVICE} src ${OMR_TRACKER_DEVICE_IP})" ] && ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
 								# 判断探测结果
 								if $(exit $statusb); then
-									#OMR_TRACKER_STATUS_MSG=""
-									OMR_TRACKER_STATUS="OK"
+									OMR_TRACKER_STATUS="OK"			# 探测成功，链路正常
 								else
-									# 记录失败的主机
+									# 探测失败，将失败主机追加到列表（用于最终错误信息）
 									if [ "$OMR_TRACKER_LIST_HOSTS" = "" ]; then
 										OMR_TRACKER_LIST_HOSTS="$OMR_TRACKER_HOST"
 									else
@@ -630,31 +660,36 @@ while true; do
 							fi
 						else
 							# 如果没有定义 HOST，默认认为 OK
-							#OMR_TRACKER_STATUS_MSG=""
 							OMR_TRACKER_STATUS="OK"
 						fi
+
 						# 前面的ping都检测成功了, 进行更严格的检测
 						# 如果开启了 OMR_TRACKER_SERVER_HTTP_TEST ，会尝试通过 HTTP 访问 VPS 的 API。如果失败，视为链路不可用
 						if [ "$serverip_ping" != false ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ "$OMR_TRACKER_TYPE" != "httping" ] && [ "$OMR_TRACKER_SERVER_HTTP_TEST" = "1" ]; then
 							serverip_ping=false
 							config_load openmptcprouter
-							config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP
+							config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP		# 对 VPS API 端口做 HTTP 探测
+
+							# HTTP 探测失败，追加错误信息但不强制改为 ERROR（注释掉的行）
 							if [ "$serverip_ping" = false ]; then
-								#OMR_TRACKER_STATUS="ERROR"
 								OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG No access to server API"
 							else
 								OMR_TRACKER_STATUS_MSG=""
 								OMR_TRACKER_STATUS="OK"
 								break
 							fi
-						# 如果开启了 OMR_TRACKER_SERVER_TEST ，会尝试 Ping 所有配置的 VPS 服务器。如果全部不通，视为链路不可用
+						# VPS 全量 ping 检测: 如果开启了 OMR_TRACKER_SERVER_TEST ，会尝试 Ping 所有配置的 VPS 服务器。如果全部不通，视为链路不可用
 						elif [ "$serverip_ping" = false ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ "$OMR_TRACKER_SERVER_TEST" = "1" ]; then
+
+							# ping 所有 VPS 服务器
 							if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
 								_ping_server_all
 							fi
+							# httping 所有 VPS 服务器
 							if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
 								_httping_server_all
 							fi
+							# 如果所有 VPS 均不可达（server_ping != false 且 servers = true），判定为 ERROR
 							if [ "$server_ping" != false ] && [ "$servers" = true ]; then
 								OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG No answer from server"
 								OMR_TRACKER_STATUS="ERROR"
@@ -663,133 +698,136 @@ while true; do
 						fi
 						# 如果状态为 OK，跳出循环
 						[ "$OMR_TRACKER_STATUS" = "OK" ] && break
+					# 探测类型为 none 且网关不通：记录网关故障信息
 					elif ! $(exit $status); then
 						OMR_TRACKER_STATUS_MSG="IPv4 gateway down"
 					fi
-					# 减少重试次数
+					# 本次探测未成功，减少剩余重试次数
 					tries=$((tries - 1))
-					#_restart
 					# 切换到下一个探测目标
-					OMR_TRACKER_HOST="${OMR_TRACKER_HOSTS%% *}"
+					OMR_TRACKER_HOST="${OMR_TRACKER_HOSTS%% *}"			# 取列表第一个
 					[ "$OMR_TRACKER_HOST" = "$OMR_TRACKER_HOSTS" ] || {
-						OMR_TRACKER_HOSTS="${OMR_TRACKER_HOSTS#* } $OMR_TRACKER_HOST"
+						OMR_TRACKER_HOSTS="${OMR_TRACKER_HOSTS#* } $OMR_TRACKER_HOST"	# 将当前 host 移到列表末尾
 					}
 					#OMR_TRACKER_TIMEOUT=$((OMR_TRACKER_TIMEOUT * 2))
 					sleep "${OMR_TRACKER_INTERVAL_TRIES:-1}"
 				done
 			fi
-			#if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "0" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
+
+			[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> interface:${OMR_TRACKER_DEVICE} status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
+
 			# 开始执行 IPv6 链路探测逻辑（逻辑与 IPv4 类似）
-			if [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
-				# setup loop variable
-				if [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ]; then
-					tries="$OMR_TRACKER_TRIES"
-				else
-					tries="$OMR_TRACKER_TRIES_UP"
-				fi
-				# loop until tries attempts have been reached
-				while [ "$tries" -gt 0 ]; do
+			# if [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
+			# 	# setup loop variable
+			# 	if [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ]; then
+			# 		tries="$OMR_TRACKER_TRIES"
+			# 	else
+			# 		tries="$OMR_TRACKER_TRIES_UP"
+			# 	fi
+			# 	# loop until tries attempts have been reached
+			# 	while [ "$tries" -gt 0 ]; do
 
-					_ping "$OMR_TRACKER_DEVICE_GATEWAY6" "$OMR_TRACKER_DEVICE" "no"
-					status=$?
+			# 		_ping "$OMR_TRACKER_DEVICE_GATEWAY6" "$OMR_TRACKER_DEVICE" "no"
+			# 		status=$?
 
-					if $(exit $status) && [ "$OMR_TRACKER_TYPE" = "none" ]; then
-						OMR_TRACKER_STATUS_MSG=""
-						OMR_TRACKER_STATUS="OK"
-						break
-					elif [ "$OMR_TRACKER_TYPE" != "none" ]; then
-						if ! $(exit $status); then
-							OMR_TRACKER_STATUS_MSG="IPv6 gateway down"
-						fi
-						serverip_ping=false
-						if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-							config_load openmptcprouter
-							config_foreach _ping_server server $OMR_TRACKER_DEVICE
-						fi
-						if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-							config_load openmptcprouter
-							config_foreach _httping_server server $OMR_TRACKER_DEVICE
-						fi
+			# 		if $(exit $status) && [ "$OMR_TRACKER_TYPE" = "none" ]; then
+			# 			OMR_TRACKER_STATUS_MSG=""
+			# 			OMR_TRACKER_STATUS="OK"
+			# 			break
+			# 		elif [ "$OMR_TRACKER_TYPE" != "none" ]; then
+			# 			if ! $(exit $status); then
+			# 				OMR_TRACKER_STATUS_MSG="IPv6 gateway down"
+			# 			fi
+			# 			serverip_ping=false
+			# 			if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
+			# 				config_load openmptcprouter
+			# 				config_foreach _ping_server server $OMR_TRACKER_DEVICE
+			# 			fi
+			# 			if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
+			# 				config_load openmptcprouter
+			# 				config_foreach _httping_server server $OMR_TRACKER_DEVICE
+			# 			fi
 
-						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST6" ]; then
-							OMR_TRACKER_HOST6=$(resolveip -6 -t 5 $OMR_TRACKER_HOST6 | head -n 1 | tr -d "\n")
-							if [ -n "$OMR_TRACKER_HOST6" ]; then
-								if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; then
-									# Check if route is not used
-									while ! ip -6 route add $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6 > /dev/null 2>&1
-									do
-										logger -t "OMR" "<omr-tracker> Can't create route to $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6. waiting..."
-										sleep 2
-										ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
-										_restart
-									done
-								fi
-								if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-									_ping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE" "yes"
-									statusb=$?
-								elif [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-									_httping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "yes"
-									statusb=$?
-								elif [ "$OMR_TRACKER_TYPE" = "dns" ]; then
-									_dns "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "yes"
-									statusb=$?
-								fi
-								ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
-								if $(exit $statusb); then
-									OMR_TRACKER_STATUS_MSG=""
-									OMR_TRACKER_STATUS="OK"
-								else
-									if [ "$OMR_TRACKER_LIST_HOSTS6" = "" ]; then
-										OMR_TRACKER_LIST_HOSTS6="$OMR_TRACKER_HOST6"
-									else
-										OMR_TRACKER_LIST_HOSTS6="$OMR_TRACKER_LIST_HOSTS6,$OMR_TRACKER_HOST6"
-									fi
-									OMR_TRACKER_STATUS_MSG="check error"
-								fi
-							fi
-						else
-							OMR_TRACKER_STATUS_MSG=""
-							OMR_TRACKER_STATUS="OK"
-						fi
-						if [ "$serverip_ping" != false ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ "$OMR_TRACKER_TYPE" != "httping" ] && [ "$OMR_TRACKER_SERVER_HTTP_TEST" = "1" ]; then
-							serverip_ping=false
-							config_load openmptcprouter
-							config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP6
-							if [ "$serverip_ping" = false ]; then
-								OMR_TRACKER_STATUS_MSG="No access to server API"
-								#OMR_TRACKER_STATUS="ERROR"
-							else
-								OMR_TRACKER_STATUS_MSG=""
-								OMR_TRACKER_STATUS="OK"
-								break
-							fi
-						elif [ "$serverip_ping" = false ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ "$OMR_TRACKER_SERVER_TEST" = "1" ]; then
-							if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-								_ping_server_all
-							fi
-							if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-								_httping_server_all
-							fi
-							if [ "$server_ping" != false ] && [ "$servers" = true ]; then
-								OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG No answer from server"
-								OMR_TRACKER_STATUS="ERROR"
-								#break
-							fi
-						fi
-						[ "$OMR_TRACKER_STATUS" = "OK" ] && break
-					elif ! $(exit $status); then
-						OMR_TRACKER_STATUS_MSG="IPv6 gateway down"
-					fi
-					tries=$((tries - 1))
-					#_restart
-					OMR_TRACKER_HOST6="${OMR_TRACKER_HOSTS6%% *}"
-					[ "$OMR_TRACKER_HOST6" = "$OMR_TRACKER_HOSTS6" ] || {
-						OMR_TRACKER_HOSTS6="${OMR_TRACKER_HOSTS6#* } $OMR_TRACKER_HOST6"
-					}
-					#OMR_TRACKER_TIMEOUT=$((OMR_TRACKER_TIMEOUT * 2))
-					sleep "${OMR_TRACKER_INTERVAL_TRIES:-1}"
-				done
-			fi
+			# 			if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST6" ]; then
+			# 				OMR_TRACKER_HOST6=$(resolveip -6 -t 5 $OMR_TRACKER_HOST6 | head -n 1 | tr -d "\n")
+			# 				if [ -n "$OMR_TRACKER_HOST6" ]; then
+			# 					if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; then
+			# 						# Check if route is not used
+			# 						while ! ip -6 route add $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6 > /dev/null 2>&1
+			# 						do
+			# 							logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> Can't create route to $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6. waiting..."
+			# 							sleep 2
+			# 							ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
+			# 							_restart
+			# 						done
+			# 					fi
+			# 					if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
+			# 						_ping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE" "yes"
+			# 						statusb=$?
+			# 					elif [ "$OMR_TRACKER_TYPE" = "httping" ]; then
+			# 						_httping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "yes"
+			# 						statusb=$?
+			# 					elif [ "$OMR_TRACKER_TYPE" = "dns" ]; then
+			# 						_dns "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "yes"
+			# 						statusb=$?
+			# 					fi
+			# 					ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
+			# 					if $(exit $statusb); then
+			# 						OMR_TRACKER_STATUS_MSG=""
+			# 						OMR_TRACKER_STATUS="OK"
+			# 					else
+			# 						if [ "$OMR_TRACKER_LIST_HOSTS6" = "" ]; then
+			# 							OMR_TRACKER_LIST_HOSTS6="$OMR_TRACKER_HOST6"
+			# 						else
+			# 							OMR_TRACKER_LIST_HOSTS6="$OMR_TRACKER_LIST_HOSTS6,$OMR_TRACKER_HOST6"
+			# 						fi
+			# 						OMR_TRACKER_STATUS_MSG="check error"
+			# 					fi
+			# 				fi
+			# 			else
+			# 				OMR_TRACKER_STATUS_MSG=""
+			# 				OMR_TRACKER_STATUS="OK"
+			# 			fi
+			# 			if [ "$serverip_ping" != false ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ "$OMR_TRACKER_TYPE" != "httping" ] && [ "$OMR_TRACKER_SERVER_HTTP_TEST" = "1" ]; then
+			# 				serverip_ping=false
+			# 				config_load openmptcprouter
+			# 				config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP6
+			# 				if [ "$serverip_ping" = false ]; then
+			# 					OMR_TRACKER_STATUS_MSG="No access to server API"
+			# 					#OMR_TRACKER_STATUS="ERROR"
+			# 				else
+			# 					OMR_TRACKER_STATUS_MSG=""
+			# 					OMR_TRACKER_STATUS="OK"
+			# 					break
+			# 				fi
+			# 			elif [ "$serverip_ping" = false ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ "$OMR_TRACKER_SERVER_TEST" = "1" ]; then
+			# 				if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
+			# 					_ping_server_all
+			# 				fi
+			# 				if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
+			# 					_httping_server_all
+			# 				fi
+			# 				if [ "$server_ping" != false ] && [ "$servers" = true ]; then
+			# 					OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG No answer from server"
+			# 					OMR_TRACKER_STATUS="ERROR"
+			# 					#break
+			# 				fi
+			# 			fi
+			# 			[ "$OMR_TRACKER_STATUS" = "OK" ] && break
+			# 		elif ! $(exit $status); then
+			# 			OMR_TRACKER_STATUS_MSG="IPv6 gateway down"
+			# 		fi
+			# 		tries=$((tries - 1))
+			# 		#_restart
+			# 		OMR_TRACKER_HOST6="${OMR_TRACKER_HOSTS6%% *}"
+			# 		[ "$OMR_TRACKER_HOST6" = "$OMR_TRACKER_HOSTS6" ] || {
+			# 			OMR_TRACKER_HOSTS6="${OMR_TRACKER_HOSTS6#* } $OMR_TRACKER_HOST6"
+			# 		}
+			# 		#OMR_TRACKER_TIMEOUT=$((OMR_TRACKER_TIMEOUT * 2))
+			# 		sleep "${OMR_TRACKER_INTERVAL_TRIES:-1}"
+			# 	done
+			# fi
+
 			# 错误处理：如果状态仍为 ERROR，生成具体的错误信息
 			if [ "$OMR_TRACKER_STATUS" = "ERROR" ] && { [ -z "$OMR_TRACKER_DEVICE_IP" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ -z "$OMR_TRACKER_DEVICE_IP6" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ]; }; then
 				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_INTERFACE may have ip issues"
@@ -797,15 +835,19 @@ while true; do
 				[ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG, interface have no IPv4 gateway"
 				[ "$OMR_TRACKER_IPV6" != "0" ] && [ -z "$OMR_TRACKER_DEVICE_IP6" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG, interface have no IPv6"
 				[ "$OMR_TRACKER_IPV6" != "0" ] && [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG, interface have no IPv6 gateway"
+			# 状态为 ERROR 但没有具体消息（如设备不存在等情况），生成通用错误信息
 			elif [ "$OMR_TRACKER_STATUS" = "ERROR" ] && [ -z "$OMR_TRACKER_STATUS_MSG" ]; then
 				OMR_TRACKER_STATUS_MSG="No IP & Gateway detected for $OMR_TRACKER_INTERFACE"
 			fi
 		else
+			# 接口逻辑状态为 down 或物理链路为 DOWN，直接标记链路故障
 			OMR_TRACKER_STATUS_MSG="link down"
 		fi
 	fi
 
-	# 构造最终的错误消息（包含具体失败的主机列表）
+	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> interface:${OMR_TRACKER_DEVICE} status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
+
+	# 构造最终的错误消息(包含具体失败的主机列表), 将本轮探测失败的 IPv4 主机列表追加到状态消息中，方便排查具体是哪个目标不通
 	if [ "$OMR_TRACKER_LIST_HOSTS" != "" ]; then
 		if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
 			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP error ($OMR_TRACKER_LIST_HOSTS)"
@@ -813,16 +855,20 @@ while true; do
 			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG and $OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP error ($OMR_TRACKER_LIST_HOSTS)"
 		fi
 	fi
-	if [ "$OMR_TRACKER_LIST_HOSTS6" != "" ]; then
-		if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
-			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP6 error ($OMR_TRACKER_LIST_HOSTS6)"
-		else
-			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG and $OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP6 error ($OMR_TRACKER_LIST_HOSTS6)"
-		fi
-	fi
+	# 将本轮探测失败的 IPv6 主机列表追加到状态消息中
+	# if [ "$OMR_TRACKER_LIST_HOSTS6" != "" ]; then
+	# 	if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
+	# 		OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP6 error ($OMR_TRACKER_LIST_HOSTS6)"
+	# 	else
+	# 		OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG and $OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP6 error ($OMR_TRACKER_LIST_HOSTS6)"
+	# 	fi
+	# fi
+
+	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> interface:${OMR_TRACKER_DEVICE} status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
+
 	# 质量检查（Latency/Loss），仅当开启 OMR_TRACKER_CHECK_QUALITY 时执行
 	if [ "$OMR_TRACKER_CHECK_QUALITY" = "1" ]; then
-		# 如果当前和之前状态都是 OK，检查是否超过“故障阈值” (FAILURE limit)
+		# 场景1：链路持续正常（OK→OK），检查是否超过"故障阈值", 使用更严格的 FAILURE 阈值，防止质量劣化的链路继续被使用
 		if [ "$OMR_TRACKER_PREV_STATUS" = "OK" ] && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
 			if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_RECOVERY_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_FAILURE_LOSS" ]; then
 				OMR_TRACKER_STATUS="ERROR"
@@ -831,7 +877,7 @@ while true; do
 				OMR_TRACKER_STATUS="ERROR"
 				OMR_TRACKER_STATUS_MSG="Latency is $OMR_TRACKER_LATENCY this is more than failure limit defined at $OMR_TRACKER_FAILURE_LATENCY"
 			fi
-		# 如果之前是 ERROR 而现在是 OK，检查是否满足“恢复阈值” (RECOVERY limit)
+		# 场景2：链路刚恢复（ERROR→OK），检查是否满足"恢复阈值", 使用更宽松的 RECOVERY 阈值，防止质量不稳定的链路反复上下线（抖动）
 		elif [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ] && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
 			if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_RECOVERY_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_RECOVERY_LOSS" ]; then
 				OMR_TRACKER_STATUS="ERROR"
@@ -843,17 +889,24 @@ while true; do
 		fi
 	fi
 
+	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> interface:${OMR_TRACKER_DEVICE} status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
+	[ "$OMR_TRACKER_STATUS" = "ERROR" ] || logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> interface:${OMR_TRACKER_DEVICE} status:${OMR_TRACKER_STATUS}"
+
 	# 执行钩子脚本，通知系统状态变化
 	_post_tracking
-	# 保存当前状态，供下一次循环比对
+
+	# 状态为 ERROR 时额外等待（wait_test 秒），避免在故障期间过于频繁地触发钩子
 	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && sleep $wait_test
 	OMR_TRACKER_PREV_STATUS="$OMR_TRACKER_STATUS"
 	OMR_TRACKER_PREV_DEVICE_IP="$OMR_TRACKER_DEVICE_IP"
 	OMR_TRACKER_PREV_DEVICE_IP6="$OMR_TRACKER_DEVICE_IP6"
-	# 切换到下一个探测主机
+
+	# 轮换探测目标，为下一轮循环准备好 HOST 和 HOST6
 	_restart
 
-	# 循环结束前的休眠
+	# 本轮循环结束，按状态决定休眠时长：
+	# ERROR 状态使用专用的故障间隔（OMR_TRACKER_FAILURE_INTERVAL），未设置则不休眠
+	# OK 状态使用正常探测间隔（OMR_TRACKER_INTERVAL），默认 2 秒
 	if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		[ -n "$OMR_TRACKER_FAILURE_INTERVAL" ] && sleep "$OMR_TRACKER_FAILURE_INTERVAL"
 	else

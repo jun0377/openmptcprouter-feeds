@@ -2,13 +2,14 @@
 . /lib/functions.sh
 . /lib/functions/network.sh
 
-#[ -n "$(pgrep -f 'omr-schedule')" ] && exit 0
-
+# 遍历 schedule.d 目录下的所有调度脚本
 for schedule_bin in /usr/share/omr/schedule.d/*; do
+	# 只处理有可执行权限的文件
 	[ -x "$schedule_bin" ] && (
 		_log() {
 			logger -t "omr-schedule-${schedule_bin##*/}" "$*"
 		}
+		# 在子 shell 中执行调度脚本，stderr 重定向到 stdout
 		. "$schedule_bin" 2>&1
 	)
 done

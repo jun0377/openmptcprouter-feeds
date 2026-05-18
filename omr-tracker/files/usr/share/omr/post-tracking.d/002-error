@@ -1,299 +1,218 @@
 #!/bin/sh
-#
-# Copyright (C) 2018-2025 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
-#
-# This is free software, licensed under the GNU General Public License v2.
-# See /LICENSE for more information.
-#
-# This script do commands when an interface is detected as down
 
+# 此脚本在接口被检测为 down 时执行相应的处理操作
 
+# 获取接口当前的逻辑 up 状态（true/false），用于后续判断接口是否真正在线
 interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
-
+# 加载公共函数库（包含 set_route/del_server_route/dns_flush 等辅助函数）
 . /usr/share/omr/lib/common-post-tracking.sh
 
+# 如果探测状态为 ERROR 且 UCI 中记录的状态不是 down，则更新持久化状态为 down
+# 避免重复写入（已经是 down 就不再触发 commit）
 if [ "$OMR_TRACKER_STATUS" = "ERROR" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" != "down" ]; then
+	logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> $OMR_TRACKER_INTERFACE down"
 	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='down'
 	uci -q commit openmptcprouter
 fi
 
-# An interface in error will never be used in MPTCP
+# 主判断: 探测状态为 ERROR，或接口不是 omrvpn 且逻辑上未 up，进入故障处理流程
 if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$interface_up" != "true" ]; }; then
-	#interface_autostart=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["autostart"]')
-	#interface_available=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["available"]')
-	#interface_pending=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["pending"]')
-	#interface_error=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["errors"][0].code')
 
-	#if [ "$interface_available" = "true" ] && [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "modemmanager" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "wireguard" ]) && [ "$interface_error" != "MM_PINCODE_REQUIRED" ] && [ "$interface_error" != "MM_FAILED_REASON_SIM_MISSING" ]; then
-	#if [ "$interface_available" = "true" ] && [ "$interface_up" = "false" ] && [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "modemmanager" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "wireguard" ]); then
-	#	_log "No answer from $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE), restart interface"
-	#	_log "Set $OMR_TRACKER_INTERFACE down"
-	#	ifdown $OMR_TRACKER_INTERFACE
-	#	sleep 5
-	#	_log "Set $OMR_TRACKER_INTERFACE up"
-	#	ifup $OMR_TRACKER_INTERFACE
-	#	sleep 30
-	#if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "modemmanager" ] && [ "$interface_up" = "false" ] && [ "$interface_available" = "false" ] && [ "$interface_pending" = "false" ] && [ "$interface_autostart" = "true" ]; then
-	if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "modemmanager" ] && [ "$(uci -q get openmptcprouter.settings.disable_modemmanager)" != "1" ]; then
-		modemfind="0"
-		device="$(uci -q get network.$OMR_TRACKER_INTERFACE.device)"
-		. /usr/share/ModemManager/modemmanager.common
-		[ -n "$device" ] && MODEM_STATUS="$(timeout 3 mmcli -m $device -K)"
-		modem=$device
-		if [ -n "$MODEM_STATUS" ]; then
-			modemfind="1"
-			mm_state=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.state")
-			if [ "$mm_state" = "failed" ]; then
-				mm_state_failed=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.state-failed-reason")
-				if [ "$mm_state_failed" = "unknown-capabilities" ]; then
-					_log "Interface $OMR_TRACKER_INTERFACE in failed state in ModemManager, reset modem..."
-					/usr/bin/mmcli -m ${modem} -r >/dev/null 2>&1
-				sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
-				elif false && [ "$mm_state_failed" = "sim-missing" ]; then
-					_log "Interface $OMR_TRACKER_INTERFACE in failed state in ModemManager, reset modem..."
-					/usr/bin/mmcli -m ${modem} -r >/dev/null 2>&1
-					#_log "Interface $OMR_TRACKER_INTERFACE in failed state sim-missing in ModemManager, reset modem..."
-					#mm_primary_port=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.primary-port")
-					#mbimcli -p -d /dev/$mm_primary_port --ms-device-reset >/dev/null 2>&1
-				fi
-			elif [ "$mm_state" = "enabled" ] || [ "$mm_state" = "connected" ]; then
-				_log "No answer from $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE), restart interface"
-				_log "Set $OMR_TRACKER_INTERFACE down"
-				ifdown $OMR_TRACKER_INTERFACE
-				sleep 5
-				_log "Set $OMR_TRACKER_INTERFACE up"
-				ifup $OMR_TRACKER_INTERFACE
-				sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
-				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.restart_intf=1
-				uci -q commit openmptcprouter
-			elif [ "$mm_state" = "disabled" ]; then
-			# [ -n "$(echo $modeminfo | grep 'modem.3gpp.registration-state ' | grep home)" ]; then
-				_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) disabled, set it up"
-				/usr/bin/mmcli -m ${modem} -e >/dev/null 2>&1
-				ifup $OMR_TRACKER_INTERFACE
-				sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
-			elif [ "$mm_state" = "registered" ]; then
-				_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) registered, reset it"
-				ifup $OMR_TRACKER_INTERFACE
-				#/usr/bin/mmcli -m ${modem} -r >/dev/null 2>&1
-				sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
-			elif [ "$mm_state" = "locked" ]; then
-				mm_unlock_required=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.unlock-required")
-				mm_generic_sim=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.sim")
-				#mm_primary_port=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.primary-port")
-				#mm_drivers=$(modemmanager_get_multivalue_field "${MODEM_STATUS}" "modem.generic.drivers")
-				mm_unlock_retries=$(modemmanager_get_multivalue_field "${MODEM_STATUS}" "modem.generic.unlock-retries" | awk '{print substr($2,2,length($2)-2)}')
-				#'
-				if [ "$mm_unlock_required" = "sim-pin" ]; then
-					# Sometimes PIN is not correctly sent to modem
-					if [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
-						if [ "$mm_unlock_retries" -gt "1" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
-							_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) locked, set PIN"
-							mmcli -a -m ${modem} -i $mm_generic_sim --pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode) >/dev/null 2>&1
-							sleep 30
-							ifup $OMR_TRACKER_INTERFACE
-						fi
-					fi
-				elif [ "$mm_unlock_required" = "sim-puk" ] && [ "$mm_unlock_retries" -gt "1" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pukcode)" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
-					_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) locked, set PUK"
-					mmcli -i $mm_generic_sim --puk=$(uci -q get network.$OMR_TRACKER_INTERFACE.pukcode) --pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode) >/dev/null 2>&1
-				fi
-				sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
-			fi
-		fi
-		if [ "$modemfind" = "0" ]; then
-			#_log "Can't find $OMR_TRACKER_INTERFACE in ModemManager, rescan modem..."
-			#/usr/bin/mmcli -S >/dev/null 2>&1
-			#_log "Can't find $OMR_TRACKER_INTERFACE in ModemManager, restart modemmanager..."
-			_log "Can't find $OMR_TRACKER_INTERFACE in ModemManager"
-			#/etc/init.d/modemmanager restart
-			sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
-		fi
-	fi
-	#elif [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "modemmanager" ] && [ "$interface_available" = "false" ]; then
-	#	for modem in $(timeout 3 mmcli -L | awk -F/ '{ print $6}' | awk '{print $1}'); do
-	#		if [ -n "$(timeout 2 mmcli -m $modem -K | grep $OMR_TRACKER_DEVICE)" ]; then
-	#			modem_device=$(timeout 2 mmcli -m $modem -K | grep 'modem.generic.device ' | awk '{print $3}')
-	#			[ -n "$modem_device" ] && modem_interface=$(uci -q show network | grep $modem_device | awk -F. '{print $2}')
-	#			[ -n "$modem_interface" ] && {
-	#				_log "No answer from $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE), restart associed interface $modem_interface"
-	#				ifdown $modem_interface
-	#				sleep 5
-	#				ifup $modem_interface
-	#				sleep 30
-	#			}
-	#		fi
-	#	done
-	#fi
-
-	# This part must be done after modems restart because we have no idea when modems will be ready again... (another solution would be to check ModemManager status)
-	if [ "$OMR_TRACKER_PREV_STATUS" = "$OMR_TRACKER_STATUS" ]; then
-		exit 0
-	fi
 	. /lib/functions/network.sh
 
+	logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> $OMR_TRACKER_INTERFACE ERROR"
+
+	# 如果当前设备名为空（接口已消失），使用上次记录的设备名继续处理
 	[ -z "$OMR_TRACKER_DEVICE" ] && OMR_TRACKER_DEVICE="$OMR_TRACKER_PREV_DEVICE"
 
-	# Get the current multipath status
+	# 获取当前 MPTCP multipath 状态
 	multipath_status="off"
-#	[ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && multipath $OMR_TRACKER_DEVICE off >/dev/null 2>&1
-#	[ "$OMR_TRACKER_INTERFACE" = "omr6in4" ] && multipath $OMR_TRACKER_DEVICE off >/dev/null 2>&1
+	# 设备存在时才查询（设备已消失则保持 off）
 	if [ -e "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
 		case "$(multipath "$OMR_TRACKER_DEVICE")" in
-			*default*)      multipath_status="on"       ;;
-			*backup*)       multipath_status="backup"   ;;
-			*handover*)     multipath_status="handover" ;;
+			*default*)      multipath_status="on"       ;;		# 默认路径，参与 MPTCP 负载均衡
+			*backup*)       multipath_status="backup"   ;;		# 备份路径，主路径故障时才使用
+			*handover*)     multipath_status="handover" ;;		# 切换模式
 		esac
 	fi
 
+	# 接口下线处理（仅当接口曾参与 MPTCP 或是 VPN multipath 接口）
 	if [ "$multipath_status" != "off" ] || { [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" = "1" ]; }; then
+		
+		# 记录接口下线日志
 		if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
 			_log "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) switched off (interface up status: $interface_up - Tracker status: $OMR_TRACKER_STATUS)"
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> switched off (interface up status: $interface_up - Tracker status: $OMR_TRACKER_STATUS)"
 		else
 			_log "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) switched off because $OMR_TRACKER_STATUS_MSG"
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> switched off because $OMR_TRACKER_STATUS_MSG"
 		fi
+
 		if [ -n "$OMR_TRACKER_INTERFACE" ]; then
+			# 更新 UCI 状态为 down
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='down'
+			# 触发 hotplug disconnecting 事件，通知其他组件（如防火墙、策略路由）接口即将断开
 			env -i ACTION="disconnecting" INTERFACE="$OMR_TRACKER_INTERFACE" DEVICE="$OMR_TRACKER_DEVICE" /sbin/hotplug-call iface
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> env -i ACTION=disconnecting INTERFACE=$OMR_TRACKER_INTERFACE DEVICE=$OMR_TRACKER_DEVICE /sbin/hotplug-call iface"
 		fi
-		#if [ "$(sysctl -n net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ]; then
+
+		# 将设备从 MPTCP 多路径中移除
 		multipath "$OMR_TRACKER_DEVICE" off > /dev/null 2>&1
-		#fi
-		if [ "$(uci -q get glorytun-udp.vpn.enable)" = "1" ] && [ "$OMR_TRACKER_TYPE" != "glorytun" ]; then
-			if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
-				glorytun-udp path addr "$OMR_TRACKER_DEVICE_IP" dev tun0 set down > /dev/null 2>&1
-			fi
-			if [ -n "$OMR_TRACKER_DEVICE_IP6" ]; then
-				glorytun-udp path addr "$OMR_TRACKER_DEVICE_IP6" dev tun0 set down > /dev/null 2>&1
-			fi
-		fi
+
+		# OpenVPN over MPTCP 场景：更新 OpenVPN 本地绑定 IP 并重启对应实例
 		if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ] && [ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ]; then
+			# 获取此 VPN 隧道绑定的底层接口名
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.baseintf"
 			VPN_BASE_INTF="$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.baseintf)"
+			# 获取底层接口的当前 IP
 			VPN_BASE_INTF_IP=$(ubus call network.interface.$VPN_BASE_INTF status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
+			# 更新 OpenVPN local 绑定地址
 			if [ -n "$VPN_BASE_INTF" ]; then
+				logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> Restart OpenVPN"
 				uci -q batch <<-EOF >/dev/null
 					set openvpn.$VPN_BASE_INTF.local="$VPN_BASE_INTF_IP"
 					commit openvpn
 				EOF
 			fi
+
+			# 兜底：使用默认实例名 omr
 			[ -z "$VPN_BASE_INTF" ] && VPN_BASE_INTF="omr"
 			/etc/init.d/openvpn restart "$VPN_BASE_INTF" >/dev/null 2>&1
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> /etc/init.d/openvpn restart $VPN_BASE_INTF >/dev/null 2>&1"
 		fi
+
+		# 删除指向已下线接口的服务器路由（IPv4 和 IPv6）
 		config_load openmptcprouter
 		config_foreach del_server_route server
 		config_foreach del_server_route6 server
-		#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mlvpn" ]; then
 
+		# 默认路由重新计算
 		if [ -n "$OMR_TRACKER_INTERFACE" ]; then
+			# 当前 IPv4 默认网关（通过探测路由到 1.1.1.1 获取）
 			default_gw=$(ip route get 1.1.1.1 | grep via | awk '{print $3}')
+			# 当前 IPv6 默认网关
 			default_gw6=$(ip -6 route get 2606:4700:4700::1111 | grep via | awk '{print $3}')
+			# 条件：当前默认网关就是已下线接口的网关（或为空），或 IPv6 网关不匹配，且未禁用默认网关管理
 			if { [ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ] || [ "$default_gw6" != "$OMR_TRACKER_DEVICE_GATEWAY6" ]; } && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Default gw: $default_gw - Set routes (current: $(ip r) )"
 				config_load network
+				# 为其他接口重新设置 IPv4 默认路由
 				config_foreach set_route interface $OMR_TRACKER_INTERFACE
+				# 为其他接口重新设置 IPv6 默认路由
 				config_foreach set_route6 interface $OMR_TRACKER_INTERFACE
 				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New routes $(ip r)"
+			# 接口是 master 模式（主路由）：重新计算路由但不强制设为默认网关（"no" 参数）
 			elif [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath)" = "master" ]; then
 				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Default gw: $default_gw - Set routes (current: $(ip r) )"
 				config_load network
-				config_foreach set_route interface $OMR_TRACKER_INTERFACE "no"
+				config_foreach set_route interface $OMR_TRACKER_INTERFACE "no"	# "no" 表示不覆盖当前默认网关
 				config_foreach set_route6 interface $OMR_TRACKER_INTERFACE "no"
 				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New routes $(ip r)"
+			# 接口在策略路由表 991337 中有路由条目：同样重新计算但不覆盖默认网关
 			elif [ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$(ip r show table 991337 | grep "$OMR_TRACKER_DEVICE ")" ]; then
 				config_load network
 				config_foreach set_route interface $OMR_TRACKER_INTERFACE "no"
 				config_foreach set_route6 interface $OMR_TRACKER_INTERFACE "no"
 			fi
 		fi
+		# MPTCP负载均衡模式下重新计算所有服务器的路由（确保流量均匀分配到剩余接口）
 		if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
 			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set balancing route (current: $(ip r) )"
-			config_foreach set_server_all_routes server
-			config_foreach set_server_all_routes6 server
+			config_foreach set_server_all_routes server			# 重新设置所有服务器的 IPv4 均衡路由
+			config_foreach set_server_all_routes6 server		# 重新设置所有服务器的 IPv6 均衡路由
 			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set balancing route done (new: $(ip r) )"
 		fi
 	fi
-	
-	mail_alert=""
-	if [ -n "$OMR_TRACKER_INTERFACE" ]; then
-		mail_alert="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.mail_alert)"
-	fi
-	[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
-	[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
-		OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
-		if [ "$(uci -q get omr-tracker.defaults.mail_down_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_down_message)" != "" ]; then
-			mail_subject="$(uci -q get omr-tracker.defaults.mail_down_subject)"
-			mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/$OMR_TRACKER_INTERFACE/g" -e "s/%DEVICE%/$OMR_TRACKER_DEVICE/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-			mail_message="$(uci -q get omr-tracker.defaults.mail_down_message)"
-			mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/$OMR_TRACKER_INTERFACE/g" -e "s/%DEVICE%/$OMR_TRACKER_DEVICE/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-			echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
-		else
-			echo -e "Subject: $OMR_SYSNAME: $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) is down\n\nConnection failure of $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) detected. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
-		fi
-	}
+
+	# 自定义下线脚本告警
+	# 读取接口级别的自定义脚本路径，接口下线时执行（如发送 webhook、短信等）
 	script_alert_down=""
 	if [ -n "$OMR_TRACKER_INTERFACE" ]; then
 		script_alert_down="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.script_alert_down)"
 	fi
 	[ -n "$script_alert_down" ] && eval $script_alert_down
 
+	# VPN/隧道接口专属处理
+	# glorytun、omrvpn、omr6in4 是 VPN/隧道接口，下线时需要额外处理路由和 VPN 服务重启
 	if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] || [ "$OMR_TRACKER_INTERFACE" = "omr6in4" ]; then
 		if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
 			_log "$OMR_TRACKER_INTERFACE down"
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> $OMR_TRACKER_INTERFACE down"
 		else
 			_log "$OMR_TRACKER_INTERFACE down because $OMR_TRACKER_STATUS_MSG"
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> $OMR_TRACKER_INTERFACE down because $OMR_TRACKER_STATUS_MSG"
 		fi
+
+		# omrvpn 下线时更新全局 VPN 状态标记
 		if [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
 			uci -q set openmptcprouter.omr.vpn='down'
 		fi
+
+		# 删除默认路由并重新为其他接口设置路由（VPN 下线后需要切换到直连路径）
 		if [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
-			del_default_route
+			del_default_route			# 删除当前默认路由
 			config_load network
-			config_foreach set_route interface $OMR_TRACKER_INTERFACE
-			config_foreach set_route6 interface $OMR_TRACKER_INTERFACE
+			config_foreach set_route interface $OMR_TRACKER_INTERFACE		# 重新计算 IPv4 默认路由
+			config_foreach set_route6 interface $OMR_TRACKER_INTERFACE		# 重新计算 IPv6 默认路由
 		else
 			_log "Default gateway disabled, no default gateway set"
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> Default gateway disabled, no default gateway set"
 		fi
+
+		# ShadowSocks UDP 回退：VPN 隧道断开时，将 UDP 流量切换到 ShadowSocks 代理
+		# 条件：启用了 shadowsocksudp + ss 规则存在 + shadowsocks 状态为 up + 当前无 UDP 重定向 + 模式为 tcp_and_udp + 未启用混淆
 		if [ "$(uci -q get openmptcprouter.settings.shadowsocksudp)" = "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "up" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi1.mode)" = "tcp_and_udp" ] && [ "$(uci -q get shadowsocks-libev.sss0.obfs)" != "1" ]; then
 			_log "Tunnel down use ShadowSocks for UDP"
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> Tunnel down use ShadowSocks for UDP"
+			# 将 UDP 重定向规则指向 ShadowSocks 实例 hi1
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi1'
 			if /etc/init.d/shadowsocks-libev rules_exist ; then
-				/etc/init.d/shadowsocks-libev rules_down >/dev/null 2>&1
-				/etc/init.d/shadowsocks-libev rules_up >/dev/null 2>&1
+				/etc/init.d/shadowsocks-libev rules_down >/dev/null 2>&1		# 先清除旧规则
+				/etc/init.d/shadowsocks-libev rules_up >/dev/null 2>&1			# 再应用新规则（含 UDP 重定向）
 			fi
 		fi
+
+		# DSVPN 重启（隧道断开后 DSVPN 也需要重连）
 		if [ "$(uci -q get dsvpn.vpn.enable)" = "1" ]; then
 			_log "DSVPN down, restart it"
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> DSVPN down, restart it"
 			/etc/init.d/dsvpn restart >/dev/null 2>&1
 		fi
+
+		# MLVPN 重启
 		if [ "$(uci -q get mlvpn.general.enable)" = "1" ]; then
 			_log "MLVPN down, restart it"
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> MLVPN down, restart it"
 			/etc/init.d/mlvpn restart >/dev/null 2>&1
 		fi
-		if [ "$(uci -q get glorytun.vpn.enable)" = "1" ]; then
-			_log "Glorytun VPN down, restart it"
-			/etc/init.d/glorytun restart >/dev/null 2>&1
-		fi
-		if [ "$(uci -q get glorytun-udp.vpn.enable)" = "1" ]; then
-			_log "Glorytun UDP VPN down, restart it"
-			/etc/init.d/glorytun-udp restart >/dev/null 2>&1
-		fi
+
 		if [ "$(uci -q get openvpn.omr.enabled)" = "1" ]; then
 			_log "OpenVPN down, restart it"
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> OpenVPN down, restart it"
 			/etc/init.d/openvpn restart omr >/dev/null 2>&1
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> /etc/init.d/openvpn restart omr >/dev/null 2>&1"
 		fi
+
+		# 如果启用了 Pi-hole 自动配置，VPN 断开时禁用 Pi-hole（避免 DNS 请求走已断开的隧道）
 		config_load openmptcprouter
 		[ "$(uci -q get openmptcprouter.settings.pihole_auto_conf)" != "0" ] && config_foreach disable_pihole server
-		#if [ "$(uci -q get openmptcprouter.settings.master)" != "balancing" ] || [ "$(uci -q get openmptcprouter.settings.vpn)" = "mlvpn" ]; then
+		
+		# 非MPTCP负载均衡模式下，为服务器设置默认路由（通过直连接口访问 VPS）
 		if [ "$(uci -q get openmptcprouter.settings.master)" != "balancing" ]; then
-			config_foreach set_server_default_route server
-			config_foreach set_server_default_route6 server
+			config_foreach set_server_default_route server		# 设置 IPv4 服务器默认路由
+			config_foreach set_server_default_route6 server		# 设置 IPv6 服务器默认路由
 		fi
 	fi
+
+	# 接口自动重启（restart_down 功能）
+	# 读取接口级别的 restart_down 配置，未设置则回退到全局默认值
 	restart_down=""
 	if [ -n "$OMR_TRACKER_INTERFACE" ]; then
 		restart_down="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.restart_down)"
 	fi
 	[ -z "$restart_down" ] && restart_down="$(uci -q get omr-tracker.defaults.restart_down)"
+
+	# restart_down=1 时自动重启接口（适用于非 modemmanager 接口的简单重连）
 	[ "$restart_down" = "1" ] && {
 		_log "Restart $OMR_TRACKER_INTERFACE"
 		ifdown $OMR_TRACKER_INTERFACE >/dev/null 2>&1
@@ -301,19 +220,15 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 		ifup $OMR_TRACKER_INTERFACE >/dev/null 2>&1
 	}
 
+	# 刷新DNS缓存, 避免使用已失效的DNS解析结果
 	dns_flush
+	# 清除接口的链路质量（lc）缓存数据，下次上线时重新测量
 	if [ -n "$OMR_TRACKER_INTERFACE" ]; then
 		uci -q delete openmptcprouter.$OMR_TRACKER_INTERFACE.lc
 	fi
-	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
-	#ubus call network reload
 
-	# Set a little sleep after an interface error
-#	if [ -n "$RANDOM" ]; then
-#		sleep `expr $RANDOM % 100`
-#	else
-#		sleep `awk 'BEGIN{srand();print int(rand()*20)}'`
-#	fi
+	# 提交所有未保存的 UCI 变更
+	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 
 	exit 0
 fi

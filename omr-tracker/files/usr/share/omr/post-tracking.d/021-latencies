@@ -1,60 +1,82 @@
 #!/bin/sh
-#
-# Copyright (C) 2018-2023 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
-#
-# This is free software, licensed under the GNU General Public License v2.
-# See /LICENSE for more information.
-#
-# This script save latencies and set additionnal latencies if set on interface
 
+# 此脚本保存延迟数据，并为接口设置附加延迟（如果已配置）
+
+# 如果状态为 ERROR 或接口为空，则退出
 [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ -z "$OMR_TRACKER_INTERFACE" ] && exit 0
+# 通过 ifstatus 检查接口是否实际启动
 interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+# 如果接口未启动，则退出
 [ "$interface_up" != "true" ] && exit 0
 
+# 如果接口名称和延迟数据都存在
 [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_LATENCY" ] && {
+	# 如果之前已有延迟值，将其保存为 previous_latency（前一次延迟）
 	[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency)" != "" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency_previous="$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency)"
+	# 更新当前延迟值
 	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
-	#[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max="$OMR_TRACKER_LATENCY"
-	#[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max)" -lt "$OMR_TRACKER_LATENCY" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max="$OMR_TRACKER_LATENCY"
+	# 如果接口的多路径模式为 on，且满足自动切换 master 的条件
 	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath)" = "on" ] && { [ "$(uci -q get openmptcprouter.settings.master)" = "dynamic" ] || { { [ "$(uci -q get openmptcprouter.settings.master)" = "change" ] || [ "$(uci -q get openmptcprouter.settings.master)" = "" ]; } && [ "$(uci -q get openmptcprouter.settings.master_lcintf | grep $OMR_TRACKER_INTERFACE)" = "" ]; }; }; then
+		# 查找当前 master 接口（从 openmptcprouter 或 network 配置中查找 multipath='master' 的接口）
 		masterintf="$(uci -q show openmptcprouter | grep -m 1 multipath=\'master\' | cut -d'.' -f2)"
 		[ -z "$masterintf" ] && masterintf="$(uci -q show network | grep -m 1 multipath=\'master\' | cut -d'.' -f2)"
+		# 获取当前 master 接口的延迟值
 		masterlatency="$(uci -q get openmptcprouter.$masterintf.latency | tr -d '\n')"
+		# 如果 master 延迟为空或 master 接口状态为 down，设定一个较高的默认延迟(1000ms)
 		if [ -z "$masterlatency" ] || { [ -n "$masterintf" ] && [ "$(uci -q get openmptcprouter.$masterintf.state)" = "down" ]; }; then
 			masterlatency=1000
 		fi
+		# 如果存在 master 接口，且其延迟已获取或状态为 down
 		if [ -n "$masterintf" ] && { [ "$masterlatency" != "" ] || [ "$(uci -q get openmptcprouter.$masterintf.state)" = "down" ]; }; then
+			# 判断是否需要切换 master：
+			# 1) change 模式(或默认)：当前延迟小于 master 延迟的 1/1.5
+			# 2) dynamic 模式：当前延迟小于 master 延迟的 1/2，且前一次延迟也小于 master 延迟的 1/2
 			if { { [ "$(uci -q get openmptcprouter.settings.master)" = "change" ] || [ "$(uci -q get openmptcprouter.settings.master)" = "" ]; } && [ "$OMR_TRACKER_LATENCY" -lt $(awk "BEGIN {printf \"%i\",${masterlatency}/1.5}") ]; } || { [ "$(uci -q get openmptcprouter.settings.master)" = "dynamic" ] && [ "$OMR_TRACKER_LATENCY" -lt "$((masterlatency/2))" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency_previous)" -lt "$((masterlatency/2))" ]; }; then
+				# 将原 master 接口的多路径模式改为 on
 				uci -q set network.$masterintf.multipath='on'
 				uci -q set openmptcprouter.$masterintf.multipath='on'
+				# 将当前接口设置为新的 master
 				uci -q set network.$OMR_TRACKER_INTERFACE.multipath='master'
 				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.multipath='master'
+				# 将当前接口加入 master_lcintf 列表，标记已切换过
 				if [ "$(uci -q get openmptcprouter.settings.master_lcintf | grep $OMR_TRACKER_INTERFACE)" = "" ]; then
 					uci -q add_list openmptcprouter.settings.master_lcintf="$OMR_TRACKER_INTERFACE"
 				fi
+				# 如果 master 模式未设置，默认设置为 change
 				if [ "$(uci -q get openmptcprouter.settings.master)" = "" ]; then
 					uci -q set openmptcprouter.settings.master="change"
 				fi
+				# 如果不是 dynamic 模式，立即提交配置变更
 				if [ "$(uci -q get openmptcprouter.settings.master)" != "dynamic" ]; then
 					[ -n "$(uci -q changes network)" ] && uci -q commit network
 					[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 				fi
+
+				# 记录 master 接口变更日志
 				_log "Change master interface from $masterintf ($masterlatency ms) to $OMR_TRACKER_INTERFACE ($OMR_TRACKER_LATENCY ms)"
 			fi
 		fi
 	fi
+
+	# 提交 openmptcprouter 配置变更
 	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 }
 
+# 如果接口名称和设备名称都存在，处理附加延迟设置
 if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+	# 获取接口配置的附加延迟值，默认为 0
 	addlatency=$(uci -q get network.${OMR_TRACKER_INTERFACE}.addlatency)
 	[ -z "$addlatency" ] && addlatency="0"
+	# 如果附加延迟为 0 且设备上存在 netem 延迟规则，则删除该规则
 	if [ "$addlatency" = "0" ] && [ "$(tc qdisc show dev $OMR_TRACKER_DEVICE | grep delay)" != "" ]; then
 		tc qdisc del dev ${OMR_TRACKER_DEVICE} root netem >/dev/null 2>&1
 	fi
+	# 如果附加延迟不为 0
 	if [ "$addlatency" != "0" ]; then
+		# 如果设备上没有 netem 延迟规则，则添加
 		if [ "$(tc qdisc show dev $OMR_TRACKER_DEVICE | grep delay)" = "" ]; then
 			tc qdisc add dev ${OMR_TRACKER_DEVICE} root netem delay ${addlatency}ms >/dev/null 2>&1
+		# 如果规则存在但延迟值与配置不同，则替换
 		elif [ "$(tc qdisc show dev $OMR_TRACKER_DEVICE | awk '/delay/ { print $10 }' | sed 's/ms//')" != "$addlatency" ]; then
 			tc qdisc replace dev ${OMR_TRACKER_DEVICE} root netem delay ${addlatency}ms >/dev/null 2>&1
 		fi
