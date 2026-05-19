@@ -136,7 +136,7 @@ _restart() {
 	OMR_TRACKER_HOST="${OMR_TRACKER_HOSTS%% *}"				# 取 IPv4 hosts 列表的第一个（按空格分隔）
 	OMR_TRACKER_HOST6="${OMR_TRACKER_HOSTS6%% *}"			# 取 IPv6 hosts 列表的第一个
 	
-	logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> IPv4 hosts: ${OMR_TRACKER_HOST}"
+	# logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> IPv4 hosts: ${OMR_TRACKER_HOST}"
 
 	# 如果当前 IPv4 host 不是唯一元素，说明列表里还有其它 host；将当前 host 移到末尾，实现轮询
 	[ "$OMR_TRACKER_HOST" = "$OMR_TRACKER_HOSTS" ] || {
@@ -470,7 +470,7 @@ while true; do
 			[ -z "$OMR_TRACKER_DEVICE" ] && network_get_device OMR_TRACKER_DEVICE "$OMR_TRACKER_INTERFACE"
 	}
 
-	logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> interface:${OMR_TRACKER_DEVICE}"
+	# logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> interface:${OMR_TRACKER_DEVICE}"
 
 	# 如果成功获取到设备名且该设备存在于系统中, 则继续获取当前接口的IP和网关
 	if [ -n "$OMR_TRACKER_DEVICE" ] && [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
@@ -535,7 +535,7 @@ while true; do
 
 			fi
 
-			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> interface:${OMR_TRACKER_DEVICE} ip: ${OMR_TRACKER_DEVICE_IP} gw:${OMR_TRACKER_DEVICE_GATEWAY} "
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> ip: ${OMR_TRACKER_DEVICE_IP} gw:${OMR_TRACKER_DEVICE_GATEWAY} "
 
 			# IPv6地址和网关
 			if { [ "$OMR_TRACKER_IPV6" = "1" ] || [ "$OMR_TRACKER_IPV6" = "auto" ]; } && { [ "$OMR_TRACKER_FAMILY" = "ipv6" ] || [ "$OMR_TRACKER_FAMILY" = "ipv4ipv6" ]; }; then
@@ -624,7 +624,7 @@ while true; do
 									# Check if route is not used
 									while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2>&1
 									do
-										logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
+										logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
 										sleep 2
 										ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
 										_restart		# 切换到下一个探测目标
@@ -714,7 +714,7 @@ while true; do
 				done
 			fi
 
-			[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> interface:${OMR_TRACKER_DEVICE} status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
+			[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
 
 			# 开始执行 IPv6 链路探测逻辑（逻辑与 IPv4 类似）
 			# if [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
@@ -845,7 +845,7 @@ while true; do
 		fi
 	fi
 
-	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> interface:${OMR_TRACKER_DEVICE} status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
+	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
 
 	# 构造最终的错误消息(包含具体失败的主机列表), 将本轮探测失败的 IPv4 主机列表追加到状态消息中，方便排查具体是哪个目标不通
 	if [ "$OMR_TRACKER_LIST_HOSTS" != "" ]; then
@@ -864,7 +864,7 @@ while true; do
 	# 	fi
 	# fi
 
-	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> interface:${OMR_TRACKER_DEVICE} status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
+	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
 
 	# 质量检查（Latency/Loss），仅当开启 OMR_TRACKER_CHECK_QUALITY 时执行
 	if [ "$OMR_TRACKER_CHECK_QUALITY" = "1" ]; then
@@ -889,8 +889,8 @@ while true; do
 		fi
 	fi
 
-	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> interface:${OMR_TRACKER_DEVICE} status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
-	[ "$OMR_TRACKER_STATUS" = "ERROR" ] || logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> interface:${OMR_TRACKER_DEVICE} status:${OMR_TRACKER_STATUS}"
+	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
+	[ "$OMR_TRACKER_STATUS" = "ERROR" ] || logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> status:${OMR_TRACKER_STATUS} rtt:${OMR_TRACKER_LATENCY}ms loss:${OMR_TRACKER_LOSS}%"
 
 	# 执行钩子脚本，通知系统状态变化
 	_post_tracking

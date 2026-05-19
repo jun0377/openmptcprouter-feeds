@@ -117,7 +117,7 @@ _launch_tracker() {
 	# 如果设备名包含@符号，取真实设备名
 	[ -n "$(echo $ifname | grep '@')" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
 	# 仍然无法获取真实设备名, 直接退出
-	[ -z ${ifname} ] && {
+	[ -z "$ifname" ] && {
 		# logger -t "OMR" "<omr-tracker> $1 unknown interface! exit now..."
 		return
 	}
@@ -132,8 +132,6 @@ _launch_tracker() {
 	config_get proto "$1" proto
 	config_get disabled "$1" disabled
 
-	# 检查接口是否应该启用追踪器
-	# ([ -z "$multipath" ] || [ "$multipath" = "off" ]) && [ "$1" != "omrvpn" ] && [ "$( uci -q get openmptcprouter.$1.multipathvpn)" != "1" ] && return
 	# 如果是omrvpn接口且VPN类型为none，跳过
 	[ "$1" = "omrvpn" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ] && return
 	# TODO: 添加openvpn接口处理逻辑
@@ -281,7 +279,7 @@ omr_tracker_balance() {
 omr_tracker_single() {
 
 	# 再次判断工作模式
-	[ "${work_mode}" == "single" ] || return
+	[ "${work_mode}" = "single" ] || return
 
 	# 获取单卡链路
 	local channel=$(uci -q get global.single.channel)
@@ -292,7 +290,7 @@ omr_tracker_single() {
 
 	# 判断单卡链路对应的设备是否存在
 	local network=$(uci -q show network.${channel})
-	[ -z ${network} ] && {
+	[ -z "$network" ] && {
 		logger -t "OMR" "<omr-tracker> unknown uci network.${channel}! exit now..."
 		return
 	}
@@ -322,11 +320,11 @@ start_service() {
 		logger -t "OMR" "<omr-tracker> work_mode:${work_mode}"
 
 		# 聚合模式
-		[ "${work_mode}" == "aggregate" ] && omr_tracker_aggregate
+		[ "${work_mode}" = "aggregate" ] && omr_tracker_aggregate
 		# 单卡模式
-		[ "${work_mode}" == "single" ] && omr_tracker_single
+		[ "${work_mode}" = "single" ] && omr_tracker_single
 		# 负载均衡模式
-		[ "${work_mode}" == "balance" ] && omr_tracker_balance
+		[ "${work_mode}" = "balance" ] && omr_tracker_balance
 
 		logger -t "OMR" "<omr-tracker> ${work_mode} launched"
 	else

@@ -14,7 +14,7 @@ interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e 
 if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") + $((30 + RANDOM % 10)) - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ] || [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" = "down" ]; }; then
 	# 调试模式下记录日志
 	[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Get status and settings for $OMR_TRACKER_INTERFACE..."
-	# 初始化 IP 地址变量
+	# 初始化IP地址变量
 	ipaddr=""
 	ip6addr=""
 	# 如果启用了外部检查且接口不是 VPN
@@ -25,8 +25,8 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ "$(uci -q get openmptcprouter.$OMR_TRA
 		[ -n "$OMR_TRACKER_DEVICE_IP6" ] && ip6addr="$(omr-ip6-intf $OMR_TRACKER_DEVICE)"
 	else
 		# 如果禁用外部检查或接口是 VPN，仅更新时间戳和状态
-		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
-		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state="up"
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")	# 最后检查时间戳
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state="up"		# 接口状态
 	fi
 	# 如果获取到了 IPv4 地址
 	[ -n "$ipaddr" ] && {
@@ -40,9 +40,8 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ "$(uci -q get openmptcprouter.$OMR_TRA
 			asn="$(timeout $whoistimeout whois $ipaddr 2>/dev/null | grep -m 1 -i 'netname' | awk '{print $2}')"
 		fi
 		# 如果 openmptcprouter 配置中不存在该接口的配置节，则创建一个
-		[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE)" ] && {
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE=interface
-		}
+		[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE=interface
+		
 		# 如果获取到的公网 IP 与之前记录的不同，说明 IP 发生了变化
 		[ -n "$ipaddr" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.publicip)" != "$ipaddr" ] && {
 			# 保存之前的 IP
@@ -56,14 +55,12 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ "$(uci -q get openmptcprouter.$OMR_TRA
 			fi
 			# 更新配置中的公网 IP
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip="$ipaddr"
-
 		}
+		
 		# 保存延迟信息
 		[ -n "$OMR_TRACKER_LATENCY" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
-		# 如果 ASN 信息发生变化，更新配置
-		[ -n "$asn" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.asn)" != "$asn" ] && {
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.asn="$asn"
-		}
+		# 如果ASN信息(运营商)发生变化，更新配置
+		[ -n "$asn" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.asn)" != "$asn" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.asn="$asn"
 
 		# 路由环路检测, 获取 LAN 侧 IP
 		lanip="$(uci -q get network.lan.ipaddr)"
@@ -79,7 +76,7 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ "$(uci -q get openmptcprouter.$OMR_TRA
 		config_load openmptcprouter
 		# 遍历接口，查找 master IP
 		config_foreach get_master_ip interface
-		# 如果 LAN IP、master IP 和当前公网 IP 都存在，且公网 IP 与 master IP 相同，且未禁用环路检测
+		# 如果 LAN IP、master IP 和当前公网 IP 都存在，且公网IP与master IP 相同，且未禁用环路检测
 		if [ -n "$lanip" ] && [ -n "$masterip" ] && [ -n "$ipaddr" ] && [ "$ipaddr" = "$masterip" ] && [ "$(uci -q get openmptcprouter.settings.disableloopdetection)" != "1" ]; then
 			# 初始化环路标志
 			loop=0
