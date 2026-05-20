@@ -322,7 +322,12 @@ start_service() {
 		# 聚合模式
 		[ "${work_mode}" = "aggregate" ] && omr_tracker_aggregate
 		# 单卡模式
-		[ "${work_mode}" = "single" ] && omr_tracker_single
+		[ "${work_mode}" = "single" ] && {
+			# 检查单卡链路
+			omr_tracker_single
+			# 检查管理平台连通性
+			_launch_server_tracker
+		}
 		# 负载均衡模式
 		[ "${work_mode}" = "balance" ] && omr_tracker_balance
 

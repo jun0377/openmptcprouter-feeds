@@ -11,75 +11,37 @@ export OMR_TRACKER_STATUS_MSG		# 导出状态消息（原因说明）
 export OMR_TRACKER_LATENCY			# 导出探测延迟（ms）
 export OMR_TRACKER_LOSS				# 导出丢包率（百分比整数）
 
-# 日志输出函数, 可使用logread -e omr-tracker-server 查看相关日志
-_log() {
-	logger -p daemon.info -t "${basename}" "$@"
-}
+# logger -t "OMR" "<omr-tracker $basename> $0"
 
 # 后置钩子函数
 _post_tracking() {
 	[ ! -d /usr/share/omr/server-post-tracking.d/ ] && return		# 若无钩子目录则直接返回
 	# 执行钩子脚本
 	for tracker_bin in /usr/share/omr/server-post-tracking.d/*; do
-		[ -x "$tracker_bin" ] && (
-			_log() {
-				logger -t "post-tracking-${tracker_bin##*/}" "$*"
-			}
-			. "$tracker_bin" 2>&1
-		)
+		[ -x "$tracker_bin" ] && . "$tracker_bin" 2>&1
 	done
 }
 
-_ping_server() {
-	# ping测试
+# 聚合模式下使用multipath命令返回的interface进行测试
+_ping_server_intf_in_mode_aggregate() {
 	local host=$1
-	ret=$(ping \
-	    -w "$OMR_TRACKER_TIMEOUT" \
-	    -c 1 \
-	    -q \
-	    "${host}" 2>&1
-	)
-	# 提取丢包率
-	loss=$(echo "$ret" | awk '/packet loss/ {gsub("%","");print $6}' | tr -d '\n')
-	# 非 100% 丢包视为有响应
-	if [ -n "$loss" ] && [ "$loss" != "100" ]; then
-		# 提取延迟
-		latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
-		[ -n "$latency" ] && {
-			OMR_TRACKER_LATENCY="$latency"
-		}
-		OMR_TRACKER_LOSS="$loss"
-		# 标记服务器可达
-		server_ping=true
-	fi
-}
 
-# 逐接口绑定的 ping 探测
-_ping_server_intf() {
-	local host=$1
 	# 遍历具备默认路径的接口
 	for intf in $(multipath 2>/dev/null | awk '/default/ {print $1}'); do
 		local k=0
 		# 重试至上限
 		while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
 			# 绑定指定接口ping服务器
-			ret=$(ping \
-			    -w "$OMR_TRACKER_TIMEOUT" \
-			    -c 1 \
-			    -q \
-			    -I "$intf" \
-			    "${host}" 2>&1
-			)
+			ret=$(ping -w "$OMR_TRACKER_TIMEOUT" -c 1 -q -I "$intf" "${host}" 2>&1)
 			# 丢包率
 			loss=$(echo "$ret" | awk '/packet loss/ {gsub("%","");print $6}' | tr -d '\n')
 			# 丢包率不是100%, 则认为服务器可达
 			if [ -n "$loss" ] && [ "$loss" != "100" ]; then
 				latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
-				[ -n "$latency" ] && {
-					OMR_TRACKER_LATENCY="$latency"
-				}
+				[ -n "$latency" ] && OMR_TRACKER_LATENCY="$latency"
 				OMR_TRACKER_LOSS="$loss"
 				server_ping=true
+
 				# 质量阈值判定
 				if [ "$OMR_TRACKER_CHECK_QUALITY" = "1" ]; then
 					# 之前为 OK，按 FAILURE 阈值判定
@@ -107,6 +69,7 @@ _ping_server_intf() {
 					fi
 				fi
 			fi
+
 			# 次数+1
 			k=$((k+1))
 			# 重试间隔
@@ -115,38 +78,71 @@ _ping_server_intf() {
 	done
 }
 
-# 探测VPS的API
-_check_server() {
+# 单卡模式下检查管理平台连通性
+_ping_server_intf_in_mode_single()
+{
 	local host=$1
-	local port=$2
+	local interface=$(uci -q get global.single.channel)
+	local device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.device')
+	[ -z "${device}" ] && device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.l3_device')
+	[ -z "${device}" ] && logger -t "OMR" "<omr-tracker $basename> unknown interface: ${interface}-${device}"
+
 	local k=0
-	# 判定是否 IPv6
-	local valid_ip6=$(valid_subnet6 "$host")
-	while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
-		if [ "$valid_ip6" != "ok" ]; then
-			ret=$(curl \
-			    --max-time "$OMR_TRACKER_TIMEOUT" \
-			    -s \
-			    -k \
-			    "https://${host}:${port}/"
-			)
-		else
-			ret=$(curl \
-			    --max-time "$OMR_TRACKER_TIMEOUT" \
-			    -s \
-			    -k \
-			    "https://[${host}]:${port}/"
-			)
+	while [ "$k" -le "$retry" ]; do
+		# 绑定指定接口ping服务器
+		ret=$(ping -w "$OMR_TRACKER_TIMEOUT" -c 1 -q -I "${device}" "${host}" 2>&1)
+		# 丢包率
+		loss=$(echo "$ret" | awk '/packet loss/ {gsub("%","");print $6}' | tr -d '\n')
+		# 丢包率不是100%, 则认为服务器可达
+		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
+			
+			OMR_TRACKER_STATUS="OK"
+
+			# RTT
+			latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
+			[ -n "$latency" ] && OMR_TRACKER_LATENCY="$latency"
+			OMR_TRACKER_LOSS="$loss"
+			server_ping=true
 		fi
-		# 有响应即视为成功
-		[ -n "$ret" ] && server_ping=true
+
+		# 次数+1
 		k=$((k+1))
+		# 重试间隔
 		sleep "${intervaltries}"
 	done
+
+	[ "$OMR_TRACKER_STATUS" != "OK" ] && logger -t "OMR" "<omr-tracker $basename> ${host} unreachable !"
+	[ "$OMR_TRACKER_STATUS" = "OK" ] && logger -t "OMR" "<omr-tracker $basename> server:${host} local:${device} rtt:${OMR_TRACKER_LATENCY}ms loss:${OMR_TRACKER_LOSS}% "
 }
 
-# 逐接口探测VPS的API
-_check_server_intf() {
+# 负载均衡模式下检查管理平台连通性
+_ping_server_intf_in_mode_balance()
+{
+	logger -t "OMR" "<omr-tracker $basename> _ping_server_intf_in_mode_balance!"
+}
+
+# 不同工作模式下使用不同的接口进行检测
+_ping_server_intf()
+{
+	local work_mode=$(uci -q get global.global.mode)
+	case ${work_mode} in
+		"single")
+			_ping_server_intf_in_mode_single "$@"
+			;;
+		"aggregate")
+			_ping_server_intf_in_mode_aggregate "$@"
+			;;
+		"balance")
+			_ping_server_intf_in_mode_balance "$@"
+			;;
+		*)
+			logger -t "OMR" "<omr-tracker $basename> unknown work mode!"
+			;;
+	esac
+}
+
+# 聚合模式下逐接口探测VPS的API
+_check_server_api_in_mode_aggregate() {
 	local host=$1
 	local port=$2
 	local valid_ip6=$(valid_subnet6 "$host")
@@ -154,533 +150,115 @@ _check_server_intf() {
 		local k=0
 		while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
 			if [ "$valid_ip6" != "ok" ]; then
-				ret=$(curl \
-				    --max-time "$OMR_TRACKER_TIMEOUT" \
-				    -s \
-				    -k \
-				    --interface "$intf" \
-				    "https://${host}:${port}/"
-				)
+				ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k --interface "$intf" "https://${host}:${port}/")
 			else
-				ret=$(curl \
-				    --max-time "$OMR_TRACKER_TIMEOUT" \
-				    -s \
-				    -k \
-				    "https://[${host}%${intf}]:${port}/"
-				)
+				ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "https://[${host}%${intf}]:${port}/")
 			fi
-			[ -n "$ret" ] && {
-				server_ping=true
-			}
+
+			[ -n "$ret" ] && server_ping=true
+
 			k=$((k+1))
 			sleep "${intervaltries}"
 		done
 	done
 }
 
-# 从 UCI 找到与 IP 匹配的 server 条目名
-_get_server_name() {
-	local serverid=$1
-	local serverip=$2
-	config_get serveripc "$serverid" server
-	if [ "$serveripc" = "$serverip" ]; then
-		servername=$serverid
-	fi
+# 单卡模式下进行API检测
+_check_server_api_in_mode_single()
+{
+	[ "single" =  "$(uci -q get global.global.mode)" ] || logger -t "OMR" "<omr-tracker $basename> not single mode! mode:$(uci -q get global.global.mode)"
+
+	local host=$1
+	local port=$2
+	local valid_ip6=$(valid_subnet6 "$host")
+	local interface=$(uci -q get global.single.channel)
+	local device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.device')
+	[ -z "${device}" ] && device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.l3_device')
+	[ -z "${device}" ] && logger -t "OMR" "<omr-tracker $basename> unknown interface: ${interface}-${device}"
+
+	local k=0
+	while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
+		if [ "$valid_ip6" != "ok" ]; then
+			ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k --interface "$device" "https://${host}:${port}/")
+		else
+			ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "https://[${host}%${device}]:${port}/")
+		fi
+
+		[ -n "$ret" ] && server_ping=true && return
+
+		k=$((k+1))
+		sleep "${intervaltries}"
+	done
+
+	logger -t "OMR" "<omr-tracker $basename> ${host}:${port} API test failed ${k} times!"
+
 }
 
-# 关闭当前标记（使用 config_foreach 上下文的 server 名）
-_disable_current() {
-	local serv=$1
-	uci -q set openmptcprouter."${server}".current=0
+# 负载均衡模式下进行API检测
+_check_server_api_in_mode_balance()
+{
+	logger -t "OMR" "<omr-tracker $basename> _check_server_api_in_mode_balance!"
 }
 
-# 禁用 shadowsocks 重定向条目（匹配指定 server 名）
-_disable_redir() {
-	local redir="$1"
-	local serverdisable="$2"
-	local shadowsocks="$3"
-	config_get serverss "$redir" server
-	if [ "$serverss" = "$serverdisable" ]; then
-		uci -q set "${shadowsocks}"."${redir}".disabled=1
-	fi
+# 不同工作模式下使用不同的接口进行API检测
+_check_server_api()
+{
+	local work_mode=$(uci -q get global.global.mode)
+	case ${work_mode} in
+		"single")
+			_check_server_api_in_mode_single "$@"
+			;;
+		"aggregate")
+			_check_server_api_in_mode_aggregate "$@"
+			;;
+		"balance")
+			_check_server_api_in_mode_balance "$@"
+			;;
+		*)
+			logger -t "OMR" "<omr-tracker $basename> unknown work mode!"
+			;;
+	esac
 }
 
-# 启用 shadowsocks 重定向条目（当前索引）
-_enable_redir() {
-	local redir="$1"
-	local shadowsocks="$2"
-	config_get serverss "$redir" server
-	if [ "$serverss" = "sss${count}" ]; then
-		uci -q set "${shadowsocks}"."${redir}".disabled=0
-	fi
-}
-
-# 检测 master 服务器并切回
-_check_master() {
+# 服务器API测试和ping测试
+_check_server() {
 	local name=$1
 	local count=0
-	local countips=0
 	local changes="0"
 	config_get master $1 master
 	config_get ip $1 ip
-	config_get port $1 port "65500"		# 默认 API 端口
-	config_get disabled $1 disabled
+	config_get port $1 port
 	serverip=""
-	# 仅处理启用且有 IP 的主服务器
-	[ "$master" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] && {
-		# 针对每个 IP/域名条目进行探测
-		check_ip() {
-			local ipd=$1
-			server_ping=false
-			#[ -n "$serverip" ] && [ "$server_ping" = true ] && return
-			# 解析 IPv4
-			ipresolve="$(resolveip -t 5 -4 $ipd | head -n 1)"
-			if [ -n "$ipresolve" ]; then
-				serverip="$ipresolve"
-			else
-				# 解析 IPv6
-				ip6resolve="$(resolveip -t 5 -6 $ipd | head -n 1)"
-				[ -n "$ip6resolve" ] && serverip="$ip6resolve"
-			fi
-			[ -z "$serverip" ] && return
-			#_ping_server $serverip
-			#_check_server $serverip $port
-			# 逐个接口进行API测试
-			if [ "$OMR_TRACKER_TYPE" = "api" ]; then
-				_check_server_intf $serverip $port
-			# 逐个接口 先进行API测试, 再进行ping测试
-			elif [ "$OMR_TRACKER_TYPE" = "apiping" ]; then
-				_check_server_intf $serverip $port
-				[ "$server_ping" = false ] && {
-					_ping_server_intf $serverip
-				}
-			# 逐个接口 进行ping测试
-			elif [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-				_ping_server_intf $serverip
-			# 不探测，直接视为成功
-			elif [ "$OMR_TRACKER_TYPE" = "none" ]; then
-				server_ping=true
-			fi
-			# 标记有可用 master
-			[ "$server_ping" = true ] && {
-				oneserverup="1"
-			}
-			countips=$((countips+1))
-			# 探测结束后应用配置
-			set_ip
-		}
-		set_ip() {
-			ip="$serverip"		# 生效 IP（解析结果）
-			if [ "$server_ping" = true ]; then
-				# 主服恢复，回切
-				if { [ -n "$(uci -q get shadowsocks-libev)" ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]; } || { [ -n "$(uci -q get shadowsocks-rust)" ] &&  [ "$(uci -q get shadowsocks-rust.sss${count}.server | tr -d '\n')" != "$ip" ]; } || { [ -n "$(uci -q get openvpn.omr)" ] &&  [ -z "$(uci -q get openvpn.omr.remote | grep $ip)" ]; }; then
-					logger -t "OMR-Tracker-Server" "Master server ${name} up ($ip), set it back"
-					changes="1"
-					#logger -t "OMR-Tracker-Server" "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n') - $ip"
-					# 更新 SS（libev/rust）服务器 IP
-					uci -q batch <<-EOF >/dev/null
-						set shadowsocks-libev.sss${count}.server="$ip"
-						set shadowsocks-rust.sss${count}.server="$ip"
-					EOF
-					# openvpn 远端列表追加 IP
-					if [ -z "$(uci -q get openvpn.omr.remote | grep $ip)" ]; then
-						uci -q batch <<-EOF >/dev/null
-							add_list openvpn.omr.remote="$ip"
-						EOF
-					fi
-					# 标记当前 server，清理探测痕迹
-					uci -q batch <<-EOF >/dev/null
-						set openmptcprouter.${name}.current='1'
-						del openmptcprouter.omr.detected_ss_ipv4
-						del openmptcprouter.omr.detected_public_ipv4
-						del openmptcprouter.omr.detected_ss_ipv6
-						del openmptcprouter.omr.detected_public_ipv6
-						commit openmptcprouter
-					EOF
-					# 仅对第一个条目做全面地址更新与服务重启
-					if [ "$count" -eq "0" ]; then
-						config_load openmptcprouter
-						config_foreach _disable_current server
-						uci -q batch <<-EOF >/dev/null
-							set xray.omrout.s_vmess_address="$ip"
-							set xray.omrout.s_vless_address="$ip"
-							set xray.omrout.s_vless_reality_address="$ip"
-							set xray.omrout.s_trojan_address="$ip"
-							set xray.omrout.s_socks_address="$ip"
-							set xray.omrout.s_shadowsocks_address="$ip"
-							set v2ray.omrout.s_vmess_address="$ip"
-							set v2ray.omrout.s_vless_address="$ip"
-							set v2ray.omrout.s_trojan_address="$ip"
-							set v2ray.omrout.s_socks_address="$ip"
-							commit v2ray
-							commit xray
-							set glorytun.vpn.host="$ip"
-							commit glorytun
-							glorytun-udp.vpn.host="$ip"
-							commit glorytun
-							set dsvpn.vpn.host="$ip"
-							commit dsvpn
-							set mlvpn.general.host="$ip"
-							commit mlvpn
-							del openvpn.omr.remote
-							add_list openvpn.omr.remote="$ip"
-							commit openvpn
-						EOF
-						# 获取 OpenVPN 密钥
-						/etc/init.d/openmptcprouter-vps get_openvpn_key "$name" >/dev/null 2>/dev/null
-						#/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null
-						/etc/init.d/v2ray restart >/dev/null 2>/dev/null
-						/etc/init.d/xray restart >/dev/null 2>/dev/null
-						/etc/init.d/glorytun restart >/dev/null 2>/dev/null
-						/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null
-						/etc/init.d/mlvpn restart >/dev/null 2>/dev/null
-						#/etc/init.d/openvpn restart omr >/dev/null 2>/dev/null
-						/etc/init.d/dsvpn restart >/dev/null 2>/dev/null
-						/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null
-					fi
-				fi
-				# 确保 rust 版 shadowsocks 启用
-				if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
-					uci -q batch <<-EOF >/dev/null
-						set shadowsocks-rust.sss${count}.disabled=0
-					EOF
-				fi
-				# 确保 libev 版 shadowsocks 启用
-				if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
-					uci -q batch <<-EOF >/dev/null
-						set shadowsocks-libev.sss${count}.disabled=0
-					EOF
-				fi
-				# 启用 OpenVPN
-				if [ "$(uci -q get openmptcprouter.settings.vpn)" = "openvpn" ]; then
-					uci -q batch <<-EOF >/dev/null
-						set openvpn.omr.enabled=1
-					EOF
-				fi
-				
-				config_load shadowsocks-libev
-				config_foreach _enable_redir ss_redir "shadowsocks-libev"	# 恢复重定向
-				config_load shadowsocks-rust
-				config_foreach _enable_redir ss_redir "shadowsocks-rust"
-				
-				# 成功消息
-				OMR_TRACKER_STATUS_MSG="Answer to ping and to API check"
-				# 邮件告警开关
-				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
-				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
-				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
-					OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
-					if [ "$(uci -q get omr-tracker.defaults.mail_up_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_up_message)" != "" ]; then
-						mail_subject="$(uci -q get omr-tracker.defaults.mail_up_subject)"
-						mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-						mail_message="$(uci -q get omr-tracker.defaults.mail_up_message)"
-						mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-						echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
-					else
-						echo -e "Subject: $OMR_SYSNAME: Server ${name} (${ip}) is UP\n. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
-					fi
-				}
-				# 置状态为 OK
-				OMR_TRACKER_STATUS="OK"
-				# 触发上行脚本
-				script_alert_up="$(uci -q get omr-tracker.proxy.script_alert_up)"
-				[ -n "$script_alert_up" ] && eval $script_alert_up
-				# 下一个 shadowsocks 条目
-				count=$((count+1))
-			else
-				# 防重复日志
-				[ -n "$ip" ] && [ -z "$(logread | tail -n 10 | grep "Master server ${name} down" | grep "$ip")" ] && logger -t "OMR-Tracker-Server" "Master server ${name} down ($ip)"
-				# 失败消息
-				OMR_TRACKER_STATUS_MSG="No answer to ping and API check"
-				servername=""
-				config_load shadowsocks-libev
-				# 找到匹配 IP 的 server 条目名
-				config_foreach _get_server_name server "$ip"
-				# 禁用对应重定向
-				[ -n "$servername" ] && config_foreach _disable_redir ss_redir "$servername" "shadowsocks-libev"
-				servername=""
-				config_load shadowsocks-rust
-				config_foreach _get_server_name server "$ip"
-				[ -n "$servername" ] && config_foreach _disable_redir ss_redir "$servername" "shadowsocks-rust"
 
-				#if [ -n "$(uci -q get openvpn.omr.remote | grep $ip)" ]; then
-				#	uci -q batch <<-EOF >/dev/null
-				#		del_list openvpn.omr.remote="$ip"
-				#	EOF
-				#fi
+	# logger -t "OMR" "<omr-tracker $basename> master:${master} ip:${ip} port:${port}"
 
-				# 保底消息
-				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
-				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
-				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
-				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
-					OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
-					if [ "$(uci -q get omr-tracker.defaults.mail_down_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_down_message)" != "" ]; then
-						mail_subject="$(uci -q get omr-tracker.defaults.mail_down_subject)"
-						mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-						mail_message="$(uci -q get omr-tracker.defaults.mail_down_message)"
-						mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-						echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
-					else
-						echo -e "Subject: $OMR_SYSNAME: Server ${name} (${ip}) is down\n. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
-					fi
-				}
-				# 置状态为 ERROR
-				OMR_TRACKER_STATUS="ERROR"
-				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_down)"
-				# 触发下行脚本
-				[ -n "$script_alert_down" ] && eval $script_alert_down
-			fi
-		}
-		config_load openmptcprouter
-		# 遍历 master 的 IP 列表探测
-		config_list_foreach $1 ip check_ip
-		#set_ip
-		# 可选：单 IP 时直接写入
-		#if [ "$server_ping" = true ] && [ "$countips" = "1" ]; then
-		#	uci -q batch <<-EOF >/dev/null
-		#		set shadowsocks-libev.sss${count}.server=$ip
-		#	EOF
-		#	config_foreach _enable_redir ss_redir
-		#fi
-		# 标记该 server 不可用
-		if [ "$oneserverup" = "0" ]; then
-			uci -q batch <<-EOF >/dev/null
-				set openmptcprouter.${name}.current='0'
-				commit openmptcprouter
-			EOF
-		fi
-		# 有配置变更则重启相关服务
-		[ -n "$(uci -q changes shadowsocks-libev)" ] && changes="1"
-		[ -n "$(uci -q changes shadowsocks-rust)" ] && changes="1"
-		[ -n "$(uci -q changes openvpn)" ] && changes="1"
-		uci -q commit shadowsocks-libev
-		uci -q commit shadowsocks-rust
-		uci -q commit openvpn
-		[ "$changes" = "1" ] && {
-			/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
-			/etc/init.d/shadowsocks-rust restart >/dev/null 2>/dev/null
-			/etc/init.d/openvpn restart omr >/dev/null 2>/dev/null
-			/etc/init.d/unbound restart >/dev/null 2>/dev/null
-			/etc/init.d/dnsmasq restart >/dev/null 2>/dev/null
-		}
-		# master 流程结束
-		return
+	# 针对每个 IP/域名条目进行探测
+	check_ip() {
+		local ipd=$1
+		server_ping=false
+
+		# 解析 IPv4, resolveip 可以在一定程度上进行IP格式校验
+		ipresolve="$(resolveip -t 5 -4 $ipd | head -n 1)"
+		[ -n "$ipresolve" ] && serverip="$ipresolve"
+		# 解析 IPv6
+		ip6resolve="$(resolveip -t 5 -6 $ipd | head -n 1)"
+		[ -n "$ip6resolve" ] && serverip="$ip6resolve"
+		
+		# IP解析失败
+		[ -z "$serverip" ] && logger -t "OMR" "<omr-tracker $basename> unknown vps ip!" && return
+
+		# API测试
+		_check_server_api $serverip $port
+		# API测试失败, 进行ping测试
+		_ping_server_intf $serverip
 	}
-}
 
-# 检测备用服务器并切换
-_check_backup() {
-	local name=$1
-	local count=0
-	local countips=0
-	local changes="0"
-	config_get backup "$1" backup
-	config_get ip "$1" ip
-	config_get port "$1" port
-	config_get disabled "$1" disabled
-	serverip=""
-	# 仅处理启用且有 IP 的备用服务器
-	[ "$backup" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] && {
-		check_ip() {
-			local ipd=$1
-			server_ping=false
-			#[ -n "$serverip" ] && [ "$server_ping" = true ] && return
-			ipresolve="$(resolveip -t 5 -4 $ipd | head -n 1)"
-			if [ -n "$ipresolve" ]; then
-				serverip="$ipresolve"
-			else
-				ip6resolve="$(resolveip -t 5 -6 $ipd | head -n 1)"
-				[ -n "$ip6resolve" ] && serverip="$ip6resolve"
-			fi
-			[ -z "$serverip" ] && return
-			#_ping_server $serverip
-			#_check_server $serverip $port
-			if [ "$OMR_TRACKER_TYPE" = "api" ]; then
-				_check_server_intf $serverip $port
-			elif [ "$OMR_TRACKER_TYPE" = "apiping" ]; then
-				_check_server_intf $serverip $port
-				[ "$server_ping" = false ] && {
-					_ping_server_intf $serverip
-				}
-			elif [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-				_ping_server_intf $serverip
-			elif [ "$OMR_TRACKER_TYPE" = "none" ]; then
-				server_ping=true
-			fi
-			[ "$server_ping" = true ] && {
-				oneserverup="1"
-			}
-			countips=$((countips+1))
-		}
-		set_ip() {
-			ip="$serverip"
-			#[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" = "$ip" ] && break
-			if [ "$server_ping" = true ]; then
-				# 切换到备用
-				if { [ -n "$(uci -q get shadowsocks-libev)" ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]; } || { [ -n "$(uci -q get shadowsocks-rust)" ] && [ "$(uci -q get shadowsocks-rust.sss${count}.server | tr -d '\n')" != "$ip" ]; } || { [ -n "$(uci -q get openvpn.omr)" ] && [ -z "$(uci -q get openvpn.omr.remote | grep $ip)" ]; }; then
-					logger -t "OMR-Tracker-Server" "Use backup server $1 ($ip)"
-					changes="1"
-					uci -q batch <<-EOF >/dev/null
-						set shadowsocks-libev.sss${count}.server="$ip"
-						set shadowsocks-rust.sss${count}.server="$ip"
-					EOF
-					uci -q batch <<-EOF >/dev/null
-						set openmptcprouter.${name}.current='1'
-						del openmptcprouter.omr.detected_ss_ipv4
-						del openmptcprouter.omr.detected_public_ipv4
-						del openmptcprouter.omr.detected_ss_ipv6
-						del openmptcprouter.omr.detected_public_ipv6
-						commit openmptcprouter
-					EOF
+	# uci配置文件中的服务器ip是一个list, 逐个进行判断
+	config_load openmptcprouter
+	config_list_foreach $1 ip check_ip
 
-					if [ "$count" -eq "0" ]; then
-						config_load openmptcprouter
-						config_foreach _disable_current server
-						uci -q batch <<-EOF >/dev/null
-							set xray.omrout.s_vmess_address="$ip"
-							set xray.omrout.s_vless_address="$ip"
-							set xray.omrout.s_vless_reality_address="$ip"
-							set xray.omrout.s_trojan_address="$ip"
-							set xray.omrout.s_socks_address="$ip"
-							set xray.omrout.s_shadowsocks_address="$ip"
-							set v2ray.omrout.s_vmess_address="$ip"
-							set v2ray.omrout.s_vless_address="$ip"
-							set v2ray.omrout.s_trojan_address="$ip"
-							set v2ray.omrout.s_socks_address="$ip"
-							commit v2ray
-							commit xray
-							set glorytun.vpn.host="$ip"
-							commit glorytun
-							glorytun-udp.vpn.host="$ip"
-							commit glorytun
-							set dsvpn.vpn.host="$ip"
-							commit dsvpn
-							set mlvpn.general.host="$ip"
-							commit mlvpn
-							del openvpn.omr.remote
-							add_list openvpn.omr.remote="$ip"
-							commit openvpn
-						EOF
-						/etc/init.d/openmptcprouter-vps get_openvpn_key "$name" >/dev/null 2>/dev/null
-						#/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null
-						/etc/init.d/v2ray restart >/dev/null 2>/dev/null
-						/etc/init.d/xray restart >/dev/null 2>/dev/null
-						/etc/init.d/glorytun restart >/dev/null 2>/dev/null
-						/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null
-						/etc/init.d/mlvpn restart >/dev/null 2>/dev/null
-						#/etc/init.d/openvpn restart omr >/dev/null 2>/dev/null
-						/etc/init.d/dsvpn restart >/dev/null 2>/dev/null
-						/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null
-					fi
-					# 切换等待
-					sleep $waittest
-				fi
-				if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
-					uci -q batch <<-EOF >/dev/null
-						set shadowsocks-rust.sss${count}.disabled=0
-					EOF
-				fi
-				if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
-					uci -q batch <<-EOF >/dev/null
-						set shadowsocks-libev.sss${count}.disabled=0
-					EOF
-				fi
-				
-				config_load shadowsocks-libev
-				config_foreach _enable_redir ss_redir "shadowsocks-libev"
-				config_load shadowsocks-rust
-				config_foreach _enable_redir ss_redir "shadowsocks-rust"
-				
-				OMR_TRACKER_STATUS_MSG="Answer to ping and to API check"
-				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
-				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
-				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
-					OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
-					if [ "$(uci -q get omr-tracker.defaults.mail_up_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_up_message)" != "" ]; then
-						mail_subject="$(uci -q get omr-tracker.defaults.mail_up_subject)"
-						mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-						mail_message="$(uci -q get omr-tracker.defaults.mail_up_message)"
-						mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-						echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
-					else
-						echo -e "Subject: $OMR_SYSNAME: Server ${name} (${ip}) is UP\n. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
-					fi
-				}
-				# 触发上行脚本
-				script_alert_up="$(uci -q get omr-tracker.proxy.script_alert_up)"
-				[ -n "$script_alert_up" ] && eval $script_alert_up
-				count=$((count+1))
-			else
-				[ -n "$ip" ] && [ -z "$(logread | tail -n 10 | grep "Backup server ${name} down" | grep "$ip")" ] && logger -t "OMR-Tracker-Server" "Backup server ${name} down ($ip)"
-				# 标记备用不可用
-				uci -q batch <<-EOF >/dev/null
-					set openmptcprouter.${name}.current='0'
-					commit openmptcprouter
-				EOF
-				config_load shadowsocks-libev
-				config_foreach _get_server_name server "$ip"
-				[ -n "$servername" ] && config_foreach _disable_redir ss_redir "$servername" "shadowsocks-libev"
-				servername=""
-				config_load shadowsocks-rust
-				config_foreach _get_server_name server "$ip"
-				[ -n "$servername" ] && config_foreach _disable_redir ss_redir "$servername" "shadowsocks-rust"
-
-				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
-				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
-				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
-				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
-					OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
-					if [ "$(uci -q get omr-tracker.defaults.mail_down_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_down_message)" != "" ]; then
-						mail_subject="$(uci -q get omr-tracker.defaults.mail_down_subject)"
-						mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-						mail_message="$(uci -q get omr-tracker.defaults.mail_down_message)"
-						mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-						echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
-					else
-						echo -e "Subject: $OMR_SYSNAME: Server ${name} (${ip}) is down\n. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
-					fi
-				}
-				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_down)"
-				# 触发下行脚本
-				[ -n "$script_alert_down" ] && eval $script_alert_down
-			fi
-			countips=$((countips+1))
-		}
-		config_load openmptcprouter
-		# 遍历备用服务器条目
-		config_list_foreach $1 ip check_ip
-		# 应用最后一次解析 IP 的结果
-		set_ip
-		#if [ "$server_ping" = true ] && [ "$countips" = "1" ]; then
-		#	uci -q batch <<-EOF >/dev/null
-		#		set shadowsocks-libev.sss${count}.server=$ip
-		#	EOF
-		#	config_foreach _enable_redir ss_redir
-		#fi
-		if [ "$oneserverup" = "0" ]; then
-			uci -q batch <<-EOF >/dev/null
-				set openmptcprouter.${name}.current='0'
-				commit openmptcprouter
-			EOF
-		fi
-
-		[ -n "$(uci -q changes shadowsocks-libev)" ] && changes="1"
-		[ -n "$(uci -q changes shadowsocks-rust)" ] && changes="1"
-		[ -n "$(uci -q changes openvpn)" ] && changes="1"
-		uci -q commit shadowsocks-libev
-		uci -q commit shadowsocks-rust
-		uci -q commit openvpn
-		[ "$changes" = "1" ] && {
-			/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
-			/etc/init.d/shadowsocks-rust restart >/dev/null 2>/dev/null
-			/etc/init.d/openvpn restart omr >/dev/null 2>/dev/null
-			/etc/init.d/unbound restart >/dev/null 2>/dev/null
-			/etc/init.d/dnsmasq restart >/dev/null 2>/dev/null
-		}
-		# 备用流程结束
-		[ "$server_ping" = true ] && return
-	}
+	return
+	
 }
 
 # 引入 UCI/配置工具函数
@@ -692,15 +270,12 @@ intervaltries=${OMR_TRACKER_INTERVAL_TRIES:-2}		# 重试间隔（默认 2s）
 retry=${OMR_TRACKER_TRIES:-4}						# 每项重试次数（默认 4）
 waittest=${OMR_TRACKER_WAIT_TEST:-0}				# 切换后等待（默认 0）
 
-# 主循环：优先 master，再备份
+# 主循环：优先检测master服务器，再检查备用服务器
 while true; do
+
 	server_ping=false
-	oneserverup="0"
 	config_load openmptcprouter
-	config_foreach _check_master server				# 遍历 master 服务器
-	[ "$oneserverup" = "0" ] && {
-		config_load openmptcprouter
-		config_foreach _check_backup server			# 若 master 全不可用则遍历 backup
-	}
-	sleep "${interval}"								# 间隔后继续下一轮
+	config_foreach _check_server server
+
+	sleep "${interval}"
 done
