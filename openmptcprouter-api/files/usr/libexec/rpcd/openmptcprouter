@@ -874,13 +874,17 @@ function interfaces_status()
 
 	-- OpenMPTCProuter info
 	mArray.openmptcprouter = {}
+
+	-- 获取版本号（优先从 UCI 读取，否则从 /etc/os-release 解析
 	--mArray.openmptcprouter["version"] = ut.trim(sys.exec("cat /etc/os-release | grep VERSION= | sed -e 's:VERSION=::'"))
 	mArray.openmptcprouter["version"] = uci:get("openmptcprouter", "settings", "version") or ut.trim(sys.exec("cat /etc/os-release | grep VERSION= | sed -e 's:VERSION=::' -e 's/^.//' -e 's/.$//'"))
 
+	-- 最新版本信息
 	mArray.openmptcprouter["latest_version_omr"] = uci:get("openmptcprouter", "latest_versions", "omr") or ""
 	mArray.openmptcprouter["latest_version_vps"] = uci:get("openmptcprouter", "latest_versions", "vps") or ""
 	mArray.openmptcprouter["proxy"] = uci:get("openmptcprouter", "settings", "proxy") or ""
 	
+	-- 获取服务地址（优先 shadowsocks 配置的 server，否则从 openmptcprouter 服务器列表中取第一个非禁用的）
 	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "sss0", "server") or uci:get("shadowsocks-rust", "sss0", "server") or ""
 	if mArray.openmptcprouter["service_addr"] == "" or mArray.openmptcprouter["service_addr"] == "192.168.1.3" then
 		mArray.openmptcprouter["service_addr"] = ""
@@ -892,6 +896,8 @@ function interfaces_status()
 			end
 		end)
 	end
+
+	-- 获取 LAN 接口的 IP 地址
 	local net = ntm:get_network("lan")
 	local ipaddr = ""
 	if net then
@@ -905,31 +911,39 @@ function interfaces_status()
 	end
 	mArray.openmptcprouter["local_addr"] = ipaddr
 	--mArray.openmptcprouter["local_addr"] = uci:get("network", "lan", "ipaddr")
+
+	-- 默认主机名
 	mArray.openmptcprouter["hostname"] = "OpenMPTCProuter"
+	-- 内核版本
 	mArray.openmptcprouter["kernel"] = sys.exec("uname -r | tr -d '\n'")
+	-- 从系统配置中获取实际主机名
 	ucic:foreach("system", "system", function(s)
 		mArray.openmptcprouter["hostname"] = uci:get("system",s[".name"],"hostname") or "OpenMPTCProuter"
 	end)
 
 	--mArray.openmptcprouter["server_mptcp"] = ""
+	-- 当前时间戳
 	mArray.openmptcprouter["omr_time"] = os.time()
 	-- dns
+	-- DNS 可用性检测
 	mArray.openmptcprouter["dns"] = false
 	local timeout = uci:get("openmptcprouter","settings","status_getip_timeout") or "1"
 	local dns_test =  ""
 	if uci:get("openmptcprouter","settings","external_check") ~= "0" then
+		-- 查询 openmptcprouter.com，如果返回 ANSWER:0 或 no servers 则 DNS 不可用
 		dns_test = sys.exec("dig +timeout=" .. timeout .. " +tries=1 openmptcprouter.com | grep -e 'ANSWER: 0' -e 'no servers could be reached'")
 	end
 	if dns_test == "" then
 		mArray.openmptcprouter["dns"] = true
 	end
+	-- DNS 过滤标志
 	if uci:get("dhcp","dnsmasq1","filter_aaa") == "1" then
 		mArray.openmptcprouter["dns_filter_aaa"] = true
 	end
 	if uci:get("dhcp","dnsmasq1","filter_a") == "1" then
 		mArray.openmptcprouter["dns_filter_a"] = true
 	end
-
+	-- IPv6 状态
 	mArray.openmptcprouter["ipv6"] = "disabled"
 	if uci:get("openmptcprouter","settings","disable_ipv6") ~= "1" then
 		mArray.openmptcprouter["ipv6"] = "enabled"
@@ -943,17 +957,17 @@ function interfaces_status()
 	local check_ipv4_website = uci:get("openmptcprouter","settings","check_ipv4_website") or "http://ip.openmptcprouter.com"
 	local check_ipv6_website = uci:get("openmptcprouter","settings","check_ipv6_website") or "http://ipv6.openmptcprouter.com"
 	if mArray.openmptcprouter["dns"] == true then
-		-- wanaddr
-		--mArray.openmptcprouter["wan_addr"] = uci:get("openmptcprouter","omr","public_detected_ipv4") or ""
+		-- 解析服务地址的 IPv4/IPv6
 		if mArray.openmptcprouter["service_addr"] ~= "" then
 			mArray.openmptcprouter["service_addr_ip"] = ut.trim(sys.exec("resolveip -4 -t 1 " .. mArray.openmptcprouter["service_addr"] .. " | head -n 1"))
 			mArray.openmptcprouter["service_addr_ip6"] = ut.trim(sys.exec("resolveip -6 -t 1 " .. mArray.openmptcprouter["service_addr"] .. " | head -n 1"))
 		end
-		
+		-- 如果启用了外部检查，则获取公网 IPv4 和 IPv6 地址
 		if uci:get("openmptcprouter","settings","external_check") ~= "0" and mArray.openmptcprouter["dns"] == true then
 			--if mArray.openmptcprouter["service_addr_ip"] ~= "" and mArray.openmptcprouter["service_addr_ip"] ~= nil then
 				mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("curl -4 -s -m " .. timeout .. " " .. check_ipv4_website))
 				if mArray.openmptcprouter["wan_addr"] == "" then
+					-- 备用方法：通过 Google DNS 查询
 					mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig -4 TXT +timeout=" .. timeout .. " +tries=1 +short o-o.myaddr.l.google.com @ns1.google.com | awk -F'\"' '{print $2}'"))
 				end
 			--end
@@ -970,7 +984,7 @@ function interfaces_status()
 		else
 			mArray.openmptcprouter["external_check"] = false
 		end
-		-- shadowsocksaddr
+		-- shadowsocksaddr, 通过代理（Shadowsocks）获取出口 IP
 		mArray.openmptcprouter["proxy_addr"] = uci:get("openmptcprouter","omr","detected_ss_ipv4") or ""
 		if mArray.openmptcprouter["proxy_addr"] == "" and mArray.openmptcprouter["service_addr"] ~= "" then
 			tracker_ip = uci:get("shadowsocks-libev","tracker_sss0","local_address") or uci:get("shadowsocks-rust","tracker_sss0","local_address") or "127.0.0.1"
@@ -986,7 +1000,7 @@ function interfaces_status()
 			end
 		end
 	end
-
+	-- VPS 状态初步判断：如果服务地址不为空且不是 127.0.0.1，则初始为 DOWN，否则 UP
 	if  mArray.openmptcprouter["service_addr"] ~= "" and mArray.openmptcprouter["service_addr"] ~= "127.0.0.1" then
 		mArray.openmptcprouter["vps_status"] = "DOWN"
 	else
@@ -1001,12 +1015,14 @@ function interfaces_status()
 	mArray.openmptcprouter["vps_kernel"] = ""
 	-- Get VPS info
 	local adminport = ""
+	-- 遍历所有服务器，尝试通过 API 获取详细信息
 	ucic:foreach("openmptcprouter", "server", function(s)
 		local serverips = uci:get("openmptcprouter",s[".name"],"ip") or { "" }
 		local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
 		local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
 		for key, value in pairs(serverips) do
 			serverip = sys.exec('resolveip -t 1 ' .. value .. ' | head -n 1 | tr -d "\n"')
+			-- 如果该服务器是当前连接（或 IP 匹配公网 IP），且尚未获取到 VPS 信息
 			if serverip ~= "" and (current == "1" or mArray.openmptcprouter["wan_addr"] == serverip or mArray.openmptcprouter["wan_addr6"] == serverip) and mArray.openmptcprouter["vps_admin"] == false then
 				mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
 				mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
@@ -1025,10 +1041,12 @@ function interfaces_status()
 						vpsinfo_json = sys.exec('curl --max-time ' .. timeout .. ' -s -k -H "Authorization: Bearer ' .. token .. '" https://[' .. serverip .. ']:' .. adminport .. '/status')
 		    			end
 	    				if vpsinfo_json ~= "" and vpsinfo_json ~= nil then
-						local status, vpsinfo = pcall(function() 
-							return json.decode(vpsinfo_json)
+							-- 解析 JSON 响应
+							local status, vpsinfo = pcall(function() 
+								return json.decode(vpsinfo_json)
 						end)
 						if status and vpsinfo.vps ~= nil then
+							-- 提取 VPS 信息
 							mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
 							mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
 							mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp.enabled or ""
@@ -1040,6 +1058,7 @@ function interfaces_status()
 							if vpsinfo.vps.omr_version ~= nil then
 								mArray.openmptcprouter["vps_omr_version"] = vpsinfo.vps.omr_version or ""
 							end
+							-- 检查时间差是否大于10秒
 							if vpsinfo.vps.time ~= "" then
 								if math.abs(os.time() - vpsinfo.vps.time) > 10 then
 									mArray.openmptcprouter["vps_time_accurate"] = false
@@ -1051,6 +1070,7 @@ function interfaces_status()
 							mArray.openmptcprouter["vps_status"] = "UP"
 							mArray.openmptcprouter["vps_admin_error_msg"] = ""
 						else
+							-- API 返回错误，标记 token 错误
 							uci:set("openmptcprouter",s[".name"],"token_error","1")
 							mArray.openmptcprouter["vps_admin_error"] = true
 							uci:delete("openmptcprouter",s[".name"],"token")
@@ -1059,6 +1079,7 @@ function interfaces_status()
 							mArray.openmptcprouter["vps_admin"] = false
 							mArray.openmptcprouter["vps_admin_error_msg"] = "Answer error"
 						end
+						-- 提取 VPN 流量统计
 						if status and vpsinfo.vpn ~= nil then
 							mArray.openmptcprouter["vpn_traffic_rx"] = vpsinfo.vpn.rx or "0"
 							mArray.openmptcprouter["vpn_traffic_tx"] = vpsinfo.vpn.tx or "0"
@@ -1068,11 +1089,13 @@ function interfaces_status()
 							mArray.openmptcprouter["vpn_traffic_tx"] = "0"
 							mArray.openmptcprouter["vpn_traffic"] = "0"
 						end
+						-- Shadowsocks 流量
 						if status and vpsinfo.shadowsocks ~= nil then
 							mArray.openmptcprouter["ss_traffic"] = vpsinfo.shadowsocks.traffic or "0"
 						else
 							mArray.openmptcprouter["ss_traffic"] = "0"
 						end
+						-- Shadowsocks-go 流量
 						if status and vpsinfo.shadowsocks_go ~= nil then
 							mArray.openmptcprouter["ss_go_traffic_rx"] = vpsinfo.shadowsocks_go.rx or "0"
 							mArray.openmptcprouter["ss_go_traffic_tx"] = vpsinfo.shadowsocks_go.tx or "0"
@@ -1082,6 +1105,7 @@ function interfaces_status()
 							mArray.openmptcprouter["ss_go_traffic_tx"] = "0"
 							mArray.openmptcprouter["ss_go_traffic"] = "0"
 						end
+						-- V2Ray 流量
 						if status and vpsinfo.v2ray ~= nil then
 							mArray.openmptcprouter["v2ray_traffic_rx"] = vpsinfo.v2ray.rx or "0"
 							mArray.openmptcprouter["v2ray_traffic_tx"] = vpsinfo.v2ray.tx or "0"
@@ -1091,6 +1115,7 @@ function interfaces_status()
 							mArray.openmptcprouter["v2ray_traffic_tx"] = "0"
 							mArray.openmptcprouter["v2ray_traffic"] = "0"
 						end
+						-- XRay 流量
 						if status and vpsinfo.xray ~= nil then
 							mArray.openmptcprouter["xray_traffic_rx"] = vpsinfo.xray.rx or "0"
 							mArray.openmptcprouter["xray_traffic_tx"] = vpsinfo.xray.tx or "0"
@@ -1102,6 +1127,7 @@ function interfaces_status()
 						end
 						mArray.openmptcprouter["proxy_traffic"] = mArray.openmptcprouter["ss_traffic"] + mArray.openmptcprouter["v2ray_traffic"] + mArray.openmptcprouter["xray_traffic"] + mArray.openmptcprouter["ss_go_traffic"]
 						mArray.openmptcprouter["total_traffic"] = mArray.openmptcprouter["proxy_traffic"] + mArray.openmptcprouter["vpn_traffic"]
+					-- 未获得响应
 					else
 						mArray.openmptcprouter["vps_admin"] = false
 						mArray.openmptcprouter["vps_admin_error_msg"] = "No result"
@@ -1116,6 +1142,7 @@ function interfaces_status()
 					mArray.openmptcprouter["vps_admin_error_msg"] = "No token yet available"
 					uci:set("openmptcprouter",s[".name"],"token_error","1")
 				end
+				-- 如果仍然未获取到管理信息，尝试访问根路径测试连通性
 				if mArray.openmptcprouter["vps_admin"] == false then
 					if mArray.openmptcprouter["service_addr_ip"] ~= "" then
 						local vpstest = sys.exec('curl --max-time ' .. timeout .. ' -s -k https://' .. serverip .. ':' .. adminport .. '/')
@@ -1129,7 +1156,7 @@ function interfaces_status()
 			end
 		end
 	end)
-
+	-- 检查内核版本匹配（简单比较主版本）
 	mArray.openmptcprouter["kernel_match"] = true
 	if mArray.openmptcprouter["vps_kernel"] ~= "" then
 		if mArray.openmptcprouter["kernel"]:sub(1,3) == "5.4" and mArray.openmptcprouter["vps_kernel"]:sub(1,3) ~= "5.4" then
@@ -1144,6 +1171,7 @@ function interfaces_status()
 		mArray.openmptcprouter["vps_hostname"] = "Server"
 	end
 	-- Check openmptcprouter service are running
+	-- 检查 VPN 隧道服务是否运行
 	mArray.openmptcprouter["tun_service"] = false
 	mArray.openmptcprouter["tun_state"] = "DOWN"
 	mArray.openmptcprouter["tun6_state"] = "DOWN"
@@ -1158,6 +1186,7 @@ function interfaces_status()
 			tun_dev = get_device("omrvpn")
 		end
 		if tun_dev ~= "" and tun_dev ~= nil then
+			-- 获取隧道对端
 			local peer = get_gateway("omrvpn")
 			if peer == "" then
 				peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep via | grep -v default | awk '{print $1}' | grep -v / | tr -d '\n'"))
@@ -1169,6 +1198,7 @@ function interfaces_status()
 				peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep -m 1 default | awk '/default via/ {print $3}' | grep -v / | tr -d '\n'"))
 			end
 			if peer ~= "" then
+				-- ping 测试隧道连通性
 				local tunnel_ping_test = ut.trim(sys.exec("ping -w 1 -c 1 -I " .. tun_dev .. " " .. peer .. " | grep '100% packet loss'"))
 				if tunnel_ping_test == "" then
 					mArray.openmptcprouter["tun_state"] = "UP"
@@ -1193,12 +1223,13 @@ function interfaces_status()
 				mArray.openmptcprouter["tun6_state"] = "DOWN"
 			end
 		end
+	-- 未启用 VPN
 	elseif uci:get("openmptcprouter","settings","vpn") == "none" then
 		mArray.openmptcprouter["tun_service"] = true
 		mArray.openmptcprouter["tun_state"] = "NONE"
 		mArray.openmptcprouter["tun6_state"] = "NONE"
 	end
-	
+	-- 检测是否启用了多个 VPN（配置冲突）
 	mArray.openmptcprouter["multi_vpn"] = false
 	if uci:get("openmptcprouter","settings","vpn") ~= "none" then
 		current_vpn = uci:get("openmptcprouter","settings","vpn")
@@ -1221,7 +1252,7 @@ function interfaces_status()
 	if uci:get("openmptcprouter","settings","vpn") ~= "none" then
 		mArray.openmptcprouter["vpn"]= uci:get("openmptcprouter","settings","vpn")
 	end
-	-- check Shadowsocks is running
+	-- 检查 shadowsocks 服务进程
 	mArray.openmptcprouter["shadowsocks_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep ss-redir"), "%d+") then
 		mArray.openmptcprouter["shadowsocks_service"] = true
@@ -1231,7 +1262,7 @@ function interfaces_status()
 	if string.find(sys.exec("/usr/bin/pgrep sslocal"), "%d+") then
 		mArray.openmptcprouter["shadowsocksrust_service"] = true
 	end
-
+	-- 判断 shadowsocks 是否启用（至少有一个 server 未禁用）
 	mArray.openmptcprouter["shadowsocks_enabled"] = true
 	local ss_server = "1"
 	ucic:foreach("shadowsocks-libev", "server", function(s)
@@ -1256,7 +1287,7 @@ function interfaces_status()
 		mArray.openmptcprouter["shadowsocksrust_enabled"] = false
 	end
 
-	-- check V2Ray is running
+	-- V2Ray / XRay 状态
 	mArray.openmptcprouter["v2ray_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep v2ray"), "%d+") then
 		mArray.openmptcprouter["v2ray_service"] = true
@@ -1276,6 +1307,7 @@ function interfaces_status()
 	if xray == "1" then
 		mArray.openmptcprouter["xray_enabled"] = true
 	end
+	-- Shadowsocks 密钥和加密方法
 	local ss_key = uci:get("shadowsocks-libev","sss0","key") or ""
 	mArray.openmptcprouter["shadowsocks_service_method"] = uci:get("shadowsocks-libev","sss0","method")
 	if ss_key == "" then
@@ -1291,7 +1323,7 @@ function interfaces_status()
 		mArray.openmptcprouter["shadowsocksrust_service_key"] = true
 	end
 
-	-- Add DHCP infos by parsing dnsmasq config file
+	-- 解析 dnsmasq 配置文件，获取 DHCP 范围信息
 	mArray.openmptcprouter.dhcpd = {}
 	dnsmasq = ut.trim(sys.exec("cat /var/etc/dnsmasq.conf*"))
 	for itf, range_start, range_end, mask, leasetime in dnsmasq:gmatch("range=[%w,!:-]*set:(%w+),(%d+\.%d+\.%d+\.%d+),(%d+\.%d+\.%d+\.%d+),(%d+\.%d+\.%d+\.%d+),(%w+)") do
@@ -1306,6 +1338,7 @@ function interfaces_status()
 		mArray.openmptcprouter.dhcpd[itf].router = ipaddr
 		mArray.openmptcprouter.dhcpd[itf].dns = ipaddr
 	end
+	-- 覆盖 DHCP 选项中的 router 和 dns
 	for itf, option, value in dnsmasq:gmatch("option=(%w+),([%w:-]+),(%d+\.%d+\.%d+\.%d+)") do
 		if mArray.openmptcprouter.dhcpd[itf] then
 			if option == "option:router" or option == "3" then
@@ -1318,7 +1351,7 @@ function interfaces_status()
 	end
 
 
-	-- Parse mptcp kernel info
+	-- 解析 MPTCP fullmesh 信息（从 /proc/net/mptcp_fullmesh）
 	local mptcp = {}
 	local fullmesh = ut.trim(sys.exec("cat /proc/net/mptcp_fullmesh"))
 	for ind, addressId, backup, ipaddr in fullmesh:gmatch("(%d+), (%d+), (%d+), (%d+\.%d+\.%d+\.%d+)") do
@@ -1329,17 +1362,17 @@ function interfaces_status()
 		mptcp[ipaddr].ipaddr= ipaddr
 	end
 
-
+	-- 获取设备型号和主板名称
 	mArray.openmptcprouter['model'] = sys.exec("ubus call system board | jsonfilter -q -e '@.model' 2>/dev/null | tr -d '\n'")
 	local board_name = sys.exec("ubus call system board | jsonfilter -q -e '@.board_name' 2>/dev/null | tr -d '\n'")
-	-- retrieve core temperature
-	--if board_name:match("^raspberrypi.*") then
+	-- 读取 CPU 温度（如果存在 thermal zone）
 	if file_exists("/sys/class/thermal/thermal_zone0/temp") then
 		mArray.openmptcprouter["core_temp"] = sys.exec("cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null"):match("%d+")
 	end
+	-- 负载和运行时间
 	mArray.openmptcprouter["loadavg"] = sys.exec("cat /proc/loadavg 2>/dev/null"):match("[%d%.]+ [%d%.]+ [%d%.]+")
 	mArray.openmptcprouter["uptime"] = sys.exec("cat /proc/uptime 2>/dev/null"):match("[%d%.]+")
-
+	-- 根文件系统类型及是否只读
 	mArray.openmptcprouter["fstype"] = sys.exec("cat /proc/mounts 2>/dev/null | awk '/\\/dev\\/root/ {print $3}' | tr -d '\n'")
 	if mArray.openmptcprouter["fstype"] == "ext4" then
 		if sys.exec("cat /proc/mounts 2>/dev/null | awk '/\\/dev\\/root/ {print $4}' | grep ro") == "" then
@@ -1357,12 +1390,12 @@ function interfaces_status()
 
 
 	mArray.openmptcprouter["direct_output"] = false
-	-- overview status
+	-- 初始化 WAN 和隧道列表
 	mArray.wans = {}
 	mArray.tunnels = {}
 	allintf = {}
 	allmac = {}
-
+	-- 遍历所有网络接口，收集状态
 	uci:foreach("network", "interface", function (section)
 	    local interface = section[".name"]
 	    local net = ntm:get_network(interface)
@@ -1379,18 +1412,13 @@ function interfaces_status()
 	    local state = uci:get("openmptcprouter", interface, "state") or ""
 	    local connectivity = "OK"
 
-	    --if not ipaddr or not gateway then return end
-	    -- Don't show if0 in the overview
-	    --if interface == "lo" then return end
-
+		-- 获取物理设备名
 	    local ifname = get_device(interface)
 	    if ifname == "" or ifname == nil then
 		ifname = section["device"] or ""
 	    end
-	    --if ifname ~= nil and ifname:match("^tun.*") and interface:match("^ovpn.*") then
-	    --ifname = get_device(interface:sub(5))
-	    --end
 	    
+		-- 检查重复的物理设备或 MAC 地址（导致错误）
 	    duplicateif = false
 	    if ifname ~= "" and ifname ~= nil and not (section["device"] ~= nil and section["device"]:match("^@.*")) and (proto == "static" or proto == "dhcp") then
 		if allintf[ifname] then
@@ -1400,7 +1428,6 @@ function interfaces_status()
 		    allintf[ifname] = true
 		end
 	    end
-
 	    duplicatemac = false
 	    if mac ~= "" and mac ~= nil and not (section["device"] ~= nil and section["device"]:match("^@.*")) and not (ifname ~= nil and ifname:match("%.")) then
 		if allmac[mac] then
@@ -1411,12 +1438,12 @@ function interfaces_status()
 		end
 	    end
 
-	    --if multipath == "off" and not ifname:match("^tun.*") then return end
+	    -- 仅处理 multipath 不为 off 的接口
 	    if multipath == "off" then return end
 	    
 	    if enabled == "0" then return end
 
-	    --local connectivity = "OK"
+	    -- 如果之前未获取到 IP，尝试通过 ip 命令获取
 	    if ipaddr == "" and ifname ~= nil and ifname ~= "" and proto ~= "dhcpv6" then
 		    ipaddr = ut.trim(sys.exec("ip -4 -br addr ls dev " .. ifname .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
 	    end
@@ -1432,6 +1459,7 @@ function interfaces_status()
 	    if ipaddr == "" and ip6addr == "" then
 		    connectivity = "ERROR"
 	    else
+		-- 如果公网地址匹配某个接口的地址，则标记 direct_output 为 true
 		if mArray.openmptcprouter["wan_addr"] == ipaddr then
 		    mArray.openmptcprouter["direct_output"] = true
 		end
@@ -1441,7 +1469,7 @@ function interfaces_status()
 		    end
 		end
 	    end
-
+		-- 检查 MPTCP 内核状态（multipath 命令）
 	    local multipath_state = ""
 	    local current_multipath_state = ""
 	    if ifname ~= "" and ifname ~= nil and connectivity ~= "ERROR" then
@@ -1473,7 +1501,7 @@ function interfaces_status()
 		    end
 	    end
 
-	    -- Detect WAN gateway status
+	    -- 获取网关（如果配置中没有，从 ubus 或路由表获取）
 	    local gw_ping = "UP"
 	    local gw_ping6 = "UP"
 	    if gateway == "" and proto ~= "dhcpv6" then
@@ -1509,12 +1537,14 @@ function interfaces_status()
 			gateway6 = ut.trim(sys.exec("ip -6 r list dev " .. ifname .. " | grep via | grep -v default | grep -v metric | awk '{print $1}' | tr -d '\n'"))
 		end
 	    end
+		-- 移动网络信号相关
 	    local signal = ""
 	    local operator = ""
 	    local phonenumber = ""
 	    local donglestate = ""
 	    local networktype = ""
 	    if gateway ~= "" or gateway6 ~= "" then
+			-- 可选：ping 网关检测连通性
 		    if uci:get("openmptcprouter", "settings", "disablegwping") ~= "1" and connectivity ~= "ERROR" then
 			    if gateway ~= "" then
 				    local gw_ping_test = ""
@@ -1553,6 +1583,7 @@ function interfaces_status()
 				gw_ping6 = "DOWN"
 			    end
 		    end
+			-- 华为移动网卡信息获取
 		    if uci:get("openmptcprouter", interface, "manufacturer") == "huawei" and ipaddr ~= "" then
 			    intfdata = ut.trim(sys.exec("omr-huawei " .. ipaddr .. " " .. gateway .. " all"))
 			    if intfdata ~= "" then
@@ -1568,9 +1599,8 @@ function interfaces_status()
 		    gw_ping6 = "DOWN"
 		    connectivity = "ERROR"
 	    end
-	    
+	    -- 3G/4G 调制解调器信息（QMI, 3g, ModemManager）
 	    if ifname ~= "" and ifname ~= nil then
-		    --local proto = section['proto']
 		    if proto == "qmi" then
 			    local device = section['device']
 			    intfdata = ut.trim(sys.exec("omr-qmi " .. device .. " all"))
@@ -1596,11 +1626,10 @@ function interfaces_status()
 			    end
 		    end
 	    end
-
+		-- 服务器 ping 延迟检测
 	    local latency = ""
 	    local server_ping = ""
 	    local server_http = ""
-	    --if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" and ipaddr ~= "" then
 	    if ifname ~= "" and (gateway ~= "" or gateway6 ~= "") and ifname ~= nil and (ipaddr ~= "" or ip6addr ~= "") and connectivity ~= "ERROR" then
 		if uci:get("openmptcprouter", "settings", "disableserverping") ~= "1" then
 		    uci:foreach("openmptcprouter", "server", function(s)
@@ -1665,7 +1694,7 @@ function interfaces_status()
 		    if adminport == "" then
 			    adminport = "65500"
 		    end
-		    -- httping disable for now, with -l (ssl) timeout is ignored
+			-- httping 测试（当前禁用）
 		    if false and server_ping == "UP" and uci:get("openmptcprouter", "settings", "disableserverhttptest") ~= "1" and ipaddr ~= "" and adminport ~= "" then
 			    local server_http_result = ""
 			    local server_http_test = ""
@@ -1686,11 +1715,10 @@ function interfaces_status()
 			    end
 		    end
 	    end
-
+		-- 检查 MPTCP 可用性（通过 UCI 存储的检测结果）
 	    local multipath_available = ""
 	    local multipath_available_state = ""
 	    if connectivity ~= "ERROR" and mArray.openmptcprouter["dns"] == true and ifname ~= nil and ifname ~= "" and (gateway ~= "" or gateway6 ~= "") and (gw_ping == "UP" or gw_ping6 == "UP") and uci:get("openmptcprouter", "settings", "disablemultipathtest") ~= "1" then
-		    -- Test if multipath can work on the connection
 		    local multipath_available_state = uci:get("openmptcprouter",interface,"mptcp_status") or ""
 		    if multipath_available_state == "" then
 			    multipath_available = "NO CHECK"
@@ -1702,32 +1730,16 @@ function interfaces_status()
 	    else
 		    multipath_available = "NO CHECK"
 	    end
-
+		-- 检查接口是否在防火墙 WAN 区域
 	    local zonewan = "NO"
 	    if ut.trim(sys.exec("uci -q get firewall.zone_wan.network | grep '" .. interface .. "'")) ~= "" or interface:match("^wg.*") or interface:match("^ovpn.*") then
 		    zonewan = "OK"
 	    end
 	    
-	    -- Detect if WAN get an IPv6
+	    -- IPv6 发现（已注释，性能问题）
 	    local ipv6_discover = "NONE"
-	    -- Disabled, seems to take a too much time in some case
-	--   if ifname ~= "" and ifname ~= nil and mArray.openmptcprouter["ipv6"] == "enabled" then
-	--	    local ipv6_result = ""
-	--	    local ipv6_result = _ipv6_discover(ifname)
-	--	    if type(ipv6_result) == "table" and #ipv6_result > 0 then
-	--		    local ipv6_addr_test
-	--		    for k,v in ipairs(ipv6_result) do
-	--			    if v.RecursiveDnsServer then
-	--				    if type(v.RecursiveDnsServer) ~= "table" then
-	--					    ipv6_addr_test = sys.exec("ip -6 addr | grep " .. v.RecursiveDnsServer)
-	--					    if ipv6_addr_test == "" then
-	--						    ipv6_discover = "DETECTED"
-	--					    end
-	--				    end
-	--			    end
-	--		    end
-	--	    end
-	--    end
+
+		-- MTU、Whois、公网 IP 等信息
 	    local mtu = ""
 	    local whois = ""
 	    local whois6 = ""
@@ -1767,7 +1779,6 @@ function interfaces_status()
 		    	    whois = uci:get("openmptcprouter",interface,"asn") or ""
 			    if whois == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] == true then
 				    whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
-				    --whois = ut.trim(sys.exec("wget -4 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP .. "' | jsonfilter -q -e '@.as_description'"))
 			    end
 			    if publicIP == mArray.openmptcprouter["wan_addr"] then
 				mArray.openmptcprouter["direct_output"] = true
@@ -1777,7 +1788,6 @@ function interfaces_status()
 		    	    whois6 = uci:get("openmptcprouter",interface,"asn") or ""
 			    if whois6 == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] == true then
 				    whois6 = ut.trim(sys.exec("whois " .. publicIP6 .. " | grep -i 'netname' | awk '{print $2}'"))
-				    --whois6 = ut.trim(sys.exec("wget -6 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP6 .. "' | jsonfilter -q -e '@.as_description'"))
 			    end
 			    if publicIP6 == mArray.openmptcprouter["wan_addr6"] then
 				mArray.openmptcprouter["direct_output"] = true
@@ -1796,6 +1806,7 @@ function interfaces_status()
 			    loop = true
 		    end
 	    end
+		-- 获取收发字节数
 	    local rx = ""
 	    local tx = ""
 	    if ifname ~= "" and ifname ~= nil then
@@ -1806,7 +1817,7 @@ function interfaces_status()
 	    if state == "down" then
 		    connectivity = "ERROR"
 	    end
-	    
+	    -- 组装接口数据
 	    local data = {
 		label = section["label"] or interface,
 		name = interface,
@@ -1849,6 +1860,7 @@ function interfaces_status()
 		state = state,
 		loop = loop,
 	    }
+		-- 根据接口类型放入 tunnels 或 wans 列表
 	    if ifname ~= nil and ifname:match("^tun.*") then
 		    table.insert(mArray.tunnels, data);
 	    elseif ifname ~= nil and ifname:match("^mlvpn.*") then
@@ -1861,17 +1873,11 @@ function interfaces_status()
 		mArray.openmptcprouter["direct_output"] = true
 	end
 
-	--luci.http.prepare_content("application/json")
-	--luci.http.write_json(mArray)
 	return mArray
-	--return "titi"
 end
 
--- This come from OverTheBox by OVH
--- Copyright 2015 OVH <OverTheBox@ovh.net>
--- Simon Lelievre (simon.lelievre@corp.ovh.com)
--- Sebastien Duponcheel <sebastien.duponcheel@ovh.net>
--- Under GPL3+
+
+-- 辅助函数：IPv6 路由发现（未使用，保留自 OverTheBox）
 function _ipv6_discover(interface)
 	local result = {}
 
@@ -1928,7 +1934,7 @@ function _ipv6_discover(interface)
 	return ra6_result
 end
 
-
+-- 仅接口状态（不包含隧道，可能用于快速刷新）
 function interfaces_only_status()
 	local ut      = require "luci.util"
 	local ntm     = require "luci.model.network".init()
@@ -1936,6 +1942,7 @@ function interfaces_only_status()
 	local mArray = {}
 
 	-- OpenMPTCProuter info
+	-- 类似 interfaces_status，但只收集 wans，不区分 tunnels
 	mArray.openmptcprouter = {}
 	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "sss0", "server") or ""
 	if mArray.openmptcprouter["service_addr"] == "" or mArray.openmptcprouter["service_addr"] == "192.168.1.3" then
@@ -1958,6 +1965,7 @@ function interfaces_only_status()
 	allintf = {}
 	allmac = {}
 
+	-- 与 interfaces_status 中遍历接口的代码几乎相同，但最终全部插入 mArray.wans
 	uci:foreach("network", "interface", function (section)
 	    local interface = section[".name"]
 	    local net = ntm:get_network(interface)
@@ -2319,201 +2327,235 @@ function interfaces_only_status()
 end
 
 
-
+-- 定义 RPC 方法列表，供外部调用
 local methods = {
+	-- 获取根文件系统格式, ubus call openmptcprouter getrootfs
 	getrootfs = {
 		call = function()
 			return get_rootfs()
 		end
 	},
+	-- 检测是否使用 EFI 启动, ubus call openmptcprouter getefi
 	getefi = {
 		call = function()
 			return get_efi()
 		end
 	},
+	-- 获取完整状态(包含 wans 和 tunnels), ubus call openmptcprouter status
 	status = {
 		call = function()
 			return interfaces_status()
 		end
 	},
+	-- 仅获取接口状态(不含隧道)，用于快速刷新, ubus call openmptcprouter statusinterfaces
 	statusinterfaces = {
 		call = function()
 			return interfaces_only_status()
 		end
 	},
+	-- 设置 IPv6 状态, ubus call openmptcprouter setIPv6 '{"disable": 1}'
 	setIPv6 = {
 		args = { disable = 0 },
 		call = function(args)
 			set_ipv6_state(args.disable)
 		end
 	},
+	-- 更新 VPS 服务器信息(通知 VPS 端同步配置), ubus call openmptcprouter updateVPS
 	updateVPS = {
 		call = function()
 			update_vps()
 		end
 	},
+	-- 配置端口重定向（注意：redirectports 函数内使用了未定义的变量 value）, ubus call openmptcprouter redirectports '{"server": "myvps", "redirect_ports": 8080}'
 	redirectports = {
 		args = { server = "", redirect_ports = 0},
 		call = function(args)
 			redirectports(args.server,args.redirect_ports)
 		end
 	},
+	-- 设置 TCP keepalive 时间（秒）, ubus call openmptcprouter tcpkeepalivetime '{"tcp_keepalive_time": 7200}'
 	tcpkeepalivetime = {
 		args = { tcp_keepalive_time = 7200 },
 		call = function(args)
 			tcpkeepalivetime(args.tcp_keepalive_time)
 		end
 	},
+	-- 设置 TCP FIN 超时时间（秒）, ubus call openmptcprouter tcpfintimeout '{"tcp_fin_timeout": 60}'
 	tcpfintimeout = {
 		args = { tcp_fin_timeout = 60 },
 		call = function(args)
 			tcpfintimeout(args.tcp_fin_timeout)
 		end
 	},
+	-- 设置 TCP SYN 重试次数, ubus call openmptcprouter tcpsynretries '{"tcp_syn_retries": 3}'
 	tcpsynretries = {
 		args = { tcp_syn_retries = 3 },
 		call = function(args)
 			tcpsynretries(args.tcp_syn_retries)
 		end
 	},
+	-- 设置 TCP Fast Open 值（0-3）, ubus call openmptcprouter tcpfastopen '{"tcp_fastopen": 1}'
 	tcpfastopen = {
 		args = { tcp_fastopen = 1},
 		call = function(args)
 			tcpfastopen(args.tcp_fastopen)
 		end
 	},
+	-- 禁用 IPv6（注意：调用的函数 set_ipv6_disable 未定义，实际应为 disableipv6）, ubus call openmptcprouter disableipv6 '{"disable_ipv6": 1}'
 	disableipv6 = {
 		args = { disable_ipv6 = 0 },
 		call = function(args)
 			set_ipv6_disable(args.disable_ipv6)
 		end
 	},
+	-- 启用/禁用外部连接检查（DNS、公网 IP 检测等）, ubus call openmptcprouter externalcheck '{"externalcheck": 1}'
 	externalcheck = {
 		args = { externalcheck = 0 },
 		call = function(args)
 			externalcheck(args.externalcheck)
 		end
 	},
+	-- 配置 vnstat 数据备份（启用/禁用）, ubus call openmptcprouter savevnstat '{"savevnstat": 1}'
 	savevnstat = {
 		args = { savevnstat = 0 },
 		call = function(args)
 			savevnstat(args.savevnstat)
 		end
 	},
+	-- 禁用 TCP Fast Open（实际控制 shadowsocks 的 fast_open 参数）, ubus call openmptcprouter disablefastopen '{"disablefastopen": 1}'
 	disablefastopen = {
 		args = { disablefastopen = 0 },
 		call = function(args)
 			disablefastopen(args.disablefastopen)
 		end
 	},
+	-- 启用 Shadowsocks 混淆, ubus call openmptcprouter enableobfs '{"enableobfs": 1}'
 	enableobfs = {
 		args = { enableobfs = 0 },
 		call = function(args)
 			enableobfs(args.enableobfs)
 		end
 	},
+	-- 设置 Master 类型（动态/静态）, ubus call openmptcprouter setmastertype '{"master_type": "redundant"}'
 	setmastertype = {
 		args = { master_type = "redundant" },
 		call = function(args)
 			setmastertype(args.setmastertype)
 		end
 	},
+	-- 设置 CPU 最小频率（KHz）, ubus call openmptcprouter cpuscalingmin '{"scaling_min_freq": 600000}'
 	cpuscalingmin = {
 		args = { scaling_min_freq = 0 },
 		call = function(args)
 			cpuscalingmin(args.scaling_min_freq)
 		end
 	},
+	-- 设置 CPU 最大频率（KHz）, ubus call openmptcprouter cpuscalingmax '{"scaling_max_freq": 1500000}'
 	cpuscalingmax = {
 		args = { scaling_max_freq = 0 },
 		call = function(args)
 			cpuscalingmax(args.scaling_max_freq)
 		end
 	},
+	-- 添加服务器（在 openmptcprouter 配置中创建 server 类型的 section）, ubus call openmptcprouter addserver '{"server_name": "myvps"}'
 	addserver = {
 		args = { server_name = "" },
 		call = function(args)
 			add_server(args.server_name)
 		end
 	},
+	-- 删除服务器及相关的路由配置, ubus call openmptcprouter removeserver '{"server_name": "myvps"}'
 	removeserver = {
 		args = { server_name = "" },
 		call = function(args)
 			remove_server(args.server_name)
 		end
 	},
+	-- 添加网络接口（基于 macvlan 创建新的 WAN 接口）, ubus call openmptcprouter addinterface '{"ifname": "eth0"}'
 	addinterface = {
 		args = { ifname = "" },
 		call = function(args)
 			add_interface(args.ifname)
 		end
 	},
+	-- 删除网络接口及相关的 QoS、SQM、防火墙等配置, ubus call openmptcprouter removeinterface '{"intf": "wan1"}'
 	removeinterface = {
 		args = { intf = "" },
 		call = function(args)
 			remove_interface(args.intf)
 		end
 	},
+	-- 设置接口参数（IP、网关、速率等）, ubus call openmptcprouter setinterface '{"intf": "wan1", "proto": "static", "ipaddr": "192.168.1.100", "netmask": "255.255.255.0", "gateway": "192.168.1.1", "sqmenabled": 1, "downloadspeed": 100000, "uploadspeed": 50000}'
 	setinterface = {
 		args = { intf = "", proto = "dhcp", ipaddr = "", netmask = "", gateway = "", sqmenabled = 0, downloadspeed = 0, uploadspeed = 0 },
 		call = function(args)
 			set_interface(args.intf, args.proto, args.ipaddr, args.netmask, args.gateway, args.sqmenabled, args.downloadspeed, args.uploadspeed)
 		end
 	},
+	-- 设置默认VPN类型, ubus call openmptcprouter defaultvpn '{"vpn": "glorytun_udp"}'
 	defaultvpn = {
 		args = { vpn = "glorytun_tcp" },
 		call = function(args)
 			default_vpn(args.vpn)
 		end
 	},
+	-- 配置 VPS 服务器连接参数, ubus call openmptcprouter setserver '{"server": "myvps", "server_ip": "203.0.113.1", "openmptcprouter_vps_key": "mysecretkey"}'
 	setserver = {
 		args = { server = "vps", server_ip = "", openmptcprouter_vps_key = "" },
 		call = function(args)
 			server_settings(args.server, args.server_ip, args.openmptcprouter_vps_key)
 		end
 	},
+	-- 设置 Shadowsocks 加密密钥, ubus call openmptcprouter setshadowsocks '{"key": "aes-256-gcm:yourpassword"}'
 	setshadowsocks = {
 		args = { key = "" },
 		call = function(args)
 			set_shadowsocks(args.shadowsocks_key)
 		end
 	},
+	-- 禁用 Shadowsocks 服务, ubus call openmptcprouter disableshadowsocks '{"disable": 1}'
 	disableshadowsocks = {
 		args = { disable = 0 },
 		call = function(args)
 			disable_shadowsocks(args.disable)
 		end
 	},
+	-- 配置 Glorytun VPN 密钥, ubus call openmptcprouter setglorytun '{"key": "glorytun_shared_key"}'
 	setglorytun = {
 		args = { key = "" },
 		call = function(args)
 			set_glorytun(args.key)
 		end
 	},
+	-- 配置 DSVPN 密钥, ubus call openmptcprouter setdsvpn '{"key": "dsvpn_shared_key"}'
 	setdsvpn = {
 		args = { key = "" },
 		call = function(args)
 			set_dsvpn(args.key)
 		end
 	},
+	-- 配置 MLVPN 密码, ubus call openmptcprouter setmlvpn '{"key": "mlvpn_password"}'
 	setmlvpn = {
 		args = { key = "" },
 		call = function(args)
 			set_mlvpn(args.key)
 		end
 	},
+	-- 配置 OpenVPN 密钥（支持文件上传）, ubus call openmptcprouter setopenvpn '{"key": "/path/to/keyfile"}'
 	setopenvpn = {
 		args = { key = "" },
 		call = function(args)
 			set_openvpn(args.key)
 		end
 	},
+	-- 获取接口的 MPTCP 配置状态（on/off/master）, ubus call openmptcprouter getmptcpconfig '{"interface": "wan1"}'
 	getmptcpconfig = {
 		args = { interface = "" },
 		call = function(args)
 			get_mptcp_config(args.interface)
 		end
 	},
+	-- 设置接口的 MPTCP 配置状态, ubus call openmptcprouter setmptcpconfig '{"interface": "wan1", "state": "on"}'
 	setmptcpconfig = {
 		args = { interface = "", state = "" },
 		call = function(args)
@@ -2523,6 +2565,7 @@ local methods = {
 	
 }
 
+-- 解析标准输入中的 JSON 对象（RPC 参数）
 local function parseInput()
 	local parse = jsonc.new()
 	local done, err
@@ -2544,6 +2587,7 @@ local function parseInput()
 	return parse:get()
 end
 
+-- 验证调用的方法和参数
 local function validateArgs(func, uargs)
 	local method = methods[func]
 	if not method then
@@ -2556,6 +2600,7 @@ local function validateArgs(func, uargs)
 		os.exit(1)
 	end
 
+	-- 移除自动添加的会话字段
 	uargs.ubus_rpc_session = nil
 
 	local k, v
@@ -2571,10 +2616,15 @@ local function validateArgs(func, uargs)
 	return method
 end
 
+-- 主入口：根据命令行参数执行 list 或 call
+
+-- 输出所有方法的参数定义
 if arg[1] == "list" then
 	local _, method, rv = nil, nil, {}
 	for _, method in pairs(methods) do rv[_] = method.args or {} end
 	print((jsonc.stringify(rv):gsub(":%[%]", ":{}")))
+
+-- 调用指定方法
 elseif arg[1] == "call" then
 	local args = parseInput()
 	local method = validateArgs(arg[2], args)

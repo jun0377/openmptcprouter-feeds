@@ -25,6 +25,38 @@ _post_tracking() {
 	done
 }
 
+# 保持探测信息到/tmp/tracker-server/tracker-server.json文件
+_save() {
+
+	local latency_val="${OMR_TRACKER_LATENCY:-0}"
+	[[ "$latency_val" =~ ^[0-9]+$ ]] || latency_val=0
+	local loss_val="${OMR_TRACKER_LOSS:-0}"
+	[[ "$loss_val" =~ ^[0-9]+$ ]] || loss_val=0
+
+	json_init
+	json_add_string status "${OMR_TRACKER_STATUS:-ERROR}"	# 状态
+	json_add_string msg "${OMR_TRACKER_STATUS_MSG:-}"		# 错误信息
+	
+	# 网络正常时才更新如下参数
+	[ "$OMR_TRACKER_STATUS" = "OK" ] && {
+		json_add_int latency "$latency_val"						# 延时rtt
+		json_add_int loss "$loss_val"							# 丢包率
+		json_add_string interface "${interface:-}"				# 探测用的逻辑接口名,如wan0
+		json_add_string device "$device"						# 探测用的物理接口名,如eth1
+	}
+	
+	json_add_int ts "$(date +%s)"							# 时间戳
+	json_add_string timestamp "$(date +"%H:%M:%S")"			# 时间戳,高可读性
+
+	# 探测结果保存目录
+	[ ! -d /tmp/tracker-server ] && mkdir -p /tmp/tracker-server
+
+	# 原子保存
+	local outfile="/tmp/tracker-server/tracker-server.json"
+	local tmpfile="/tmp/tracker-server/.tracker-server.json.$$"
+	json_dump > "$tmpfile" && mv "$tmpfile" "$outfile" || rm -f "$tmpfile"
+}
+
 # 聚合模式下使用multipath命令返回的interface进行测试
 _ping_server_intf_in_mode_aggregate() {
 	local host=$1
@@ -33,7 +65,7 @@ _ping_server_intf_in_mode_aggregate() {
 	for intf in $(multipath 2>/dev/null | awk '/default/ {print $1}'); do
 		local k=0
 		# 重试至上限
-		while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
+		while [ "$k" -le "$retry" ]; do
 			# 绑定指定接口ping服务器
 			ret=$(ping -w "$OMR_TRACKER_TIMEOUT" -c 1 -q -I "$intf" "${host}" 2>&1)
 			# 丢包率
@@ -42,35 +74,16 @@ _ping_server_intf_in_mode_aggregate() {
 			if [ -n "$loss" ] && [ "$loss" != "100" ]; then
 				latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
 				[ -n "$latency" ] && OMR_TRACKER_LATENCY="$latency"
+				OMR_TRACKER_STATUS="OK"
 				OMR_TRACKER_LOSS="$loss"
-				server_ping=true
+			
+				break
+			fi
 
-				# 质量阈值判定
-				if [ "$OMR_TRACKER_CHECK_QUALITY" = "1" ]; then
-					# 之前为 OK，按 FAILURE 阈值判定
-					if [ "$OMR_TRACKER_PREV_STATUS" = "OK" ]; then
-						if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_RECOVERY_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_FAILURE_LOSS" ]; then
-							OMR_TRACKER_STATUS="ERROR"
-							OMR_TRACKER_STATUS_MSG="Packet loss is $OMR_TRACKER_LOSS this is more than failure limit defined at $OMR_TRACKER_FAILURE_LOSS"
-							server_ping=false
-						elif [ -n "$OMR_TRACKER_LATENCY" ] && [ -n "$OMR_TRACKER_FAILURE_LATENCY" ] && [ "$OMR_TRACKER_LATENCY" -ge "$OMR_TRACKER_FAILURE_LATENCY" ]; then
-							OMR_TRACKER_STATUS="ERROR"
-							OMR_TRACKER_STATUS_MSG="Latency is $OMR_TRACKER_LATENCY this is more than failure limit defined at $OMR_TRACKER_FAILURE_LATENCY"
-							server_ping=false
-						fi
-					# 之前为 ERROR，按 RECOVERY 阈值判定
-					elif [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ]; then
-						if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_RECOVERY_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_RECOVERY_LOSS" ]; then
-							OMR_TRACKER_STATUS="ERROR"
-							OMR_TRACKER_STATUS_MSG="Packet loss is $OMR_TRACKER_LOSS this is more than recovery limit defined at $OMR_TRACKER_RECOVERY_LOSS"
-							server_ping=false
-						elif [ -n "$OMR_TRACKER_LATENCY" ] && [ -n "$OMR_TRACKER_RECOVERY_LATENCY" ] && [ "$OMR_TRACKER_LATENCY" -ge "$OMR_TRACKER_RECOVERY_LATENCY" ]; then
-							OMR_TRACKER_STATUS="ERROR"
-							OMR_TRACKER_STATUS_MSG="Latency is $OMR_TRACKER_LATENCY this is more than recovery limit defined at $OMR_TRACKER_RECOVERY_LATENCY"
-							server_ping=false
-						fi
-					fi
-				fi
+			# 丢包率100%
+			if [ -z "$loss" ] || [ "$loss" = "100" ]; then
+				OMR_TRACKER_STATUS="ERROR"
+				OMR_TRACKER_STATUS_MSG="${host} unreachable!"
 			fi
 
 			# 次数+1
@@ -79,6 +92,9 @@ _ping_server_intf_in_mode_aggregate() {
 			sleep "${intervaltries}"
 		done
 	done
+
+	# 保存状态
+	_save
 }
 
 # 单卡模式下检查管理平台连通性
@@ -105,7 +121,8 @@ _ping_server_intf_in_mode_single()
 			latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
 			[ -n "$latency" ] && OMR_TRACKER_LATENCY="$latency"
 			OMR_TRACKER_LOSS="$loss"
-			server_ping=true
+
+			break
 		fi
 
 		# 次数+1
@@ -114,30 +131,10 @@ _ping_server_intf_in_mode_single()
 		sleep "${intervaltries}"
 	done
 
-	[ "$OMR_TRACKER_STATUS" != "OK" ] && logger -t "OMR" "<$basename> ${host} unreachable !"
+	[ "$OMR_TRACKER_STATUS" != "OK" ] && OMR_TRACKER_STATUS_MSG="${host} unreachable!" && logger -t "OMR" "<$basename> ${host} unreachable !"
 	[ "$OMR_TRACKER_STATUS" = "OK" ] && logger -t "OMR" "<$basename> server:${host} local:${device} rtt:${OMR_TRACKER_LATENCY}ms loss:${OMR_TRACKER_LOSS}% "
 
-	if [ -n "$device" ]; then
-		local latency_val="${OMR_TRACKER_LATENCY:-0}"
-		[[ "$latency_val" =~ ^[0-9]+$ ]] || latency_val=0
-		local loss_val="${OMR_TRACKER_LOSS:-0}"
-		[[ "$loss_val" =~ ^[0-9]+$ ]] || loss_val=0
-
-		json_init
-		json_add_string status "${OMR_TRACKER_STATUS:-ERROR}"
-		json_add_string msg "${OMR_TRACKER_STATUS_MSG:-}"
-		json_add_int latency "$latency_val"
-		json_add_int loss "$loss_val"
-		json_add_string interface "${interface:-}"
-		json_add_string device "$device"
-		json_add_int ts "$(date +%s)"
-
-		[ ! -d /tmp/tracker-server ] && mkdir -p /tmp/tracker-server
-
-		local outfile="/tmp/tracker-server/${device}-tracker-server.json"
-		local tmpfile="/tmp/tracker-server/.${device}-tracker-server.json.$$"
-		json_dump > "$tmpfile" && mv "$tmpfile" "$outfile" || rm -f "$tmpfile"
-	fi
+	_save
 }
 
 # 负载均衡模式下检查管理平台连通性
@@ -169,23 +166,33 @@ _ping_server_intf()
 # 聚合模式下逐接口探测VPS的API
 _check_server_api_in_mode_aggregate() {
 	local host=$1
-	local port=$2
 	local valid_ip6=$(valid_subnet6 "$host")
 	for intf in $(multipath 2>/dev/null | awk '/default/ {print $1}'); do
 		local k=0
-		while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
+		while [ "$k" -le "$retry" ]; do
 			if [ "$valid_ip6" != "ok" ]; then
 				ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k --interface "$intf" "https://${host}:${port}/")
 			else
 				ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "https://[${host}%${intf}]:${port}/")
 			fi
 
-			[ -n "$ret" ] && server_ping=true
+			[ -n "$ret" ] && break
 
 			k=$((k+1))
 			sleep "${intervaltries}"
 		done
 	done
+
+	[ -z "$ret" ] && {
+		OMR_TRACKER_STATUS="ERROR"
+		OMR_TRACKER_STATUS_MSG="${host} API test failed!"
+	}
+	[ -n "$ret" ] && {
+		OMR_TRACKER_STATUS="OK"
+	}
+
+	# 保存状态
+	_save
 }
 
 # 单卡模式下进行API检测
@@ -194,7 +201,6 @@ _check_server_api_in_mode_single()
 	[ "single" =  "$(uci -q get global.global.mode)" ] || logger -t "OMR" "<$basename> not single mode! mode:$(uci -q get global.global.mode)"
 
 	local host=$1
-	local port=$2
 	local valid_ip6=$(valid_subnet6 "$host")
 	local interface=$(uci -q get global.single.channel)
 	local device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.device')
@@ -202,21 +208,27 @@ _check_server_api_in_mode_single()
 	[ -z "${device}" ] && logger -t "OMR" "<$basename> unknown interface: ${interface}-${device}"
 
 	local k=0
-	while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
+	while [ "$k" -le "$retry" ]; do
 		if [ "$valid_ip6" != "ok" ]; then
 			ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k --interface "$device" "https://${host}:${port}/")
 		else
 			ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "https://[${host}%${device}]:${port}/")
 		fi
 
-		[ -n "$ret" ] && server_ping=true && return
+		[ -n "$ret" ] && break
 
 		k=$((k+1))
 		sleep "${intervaltries}"
 	done
 
-	logger -t "OMR" "<$basename> ${host}:${port} API test failed ${k} times!"
+	[ -z "$ret" ] && {
+		OMR_TRACKER_STATUS="ERROR"
+		OMR_TRACKER_STATUS_MSG="${host} API test failed!"
+	}
+	[ -n "$ret" ] && OMR_TRACKER_STATUS="OK"
 
+	# 保存状态
+	_save
 }
 
 # 负载均衡模式下进行API检测
@@ -248,8 +260,6 @@ _check_server_api()
 # 服务器API测试和ping测试
 _check_server() {
 	local name=$1
-	local count=0
-	local changes="0"
 	config_get master $1 master
 	config_get ip $1 ip
 	config_get port $1 port
@@ -260,7 +270,6 @@ _check_server() {
 	# 针对每个 IP/域名条目进行探测
 	check_ip() {
 		local ipd=$1
-		server_ping=false
 
 		# 解析 IPv4, resolveip 可以在一定程度上进行IP格式校验
 		ipresolve="$(resolveip -t 5 -4 $ipd | head -n 1)"
@@ -274,8 +283,8 @@ _check_server() {
 
 		# API测试
 		_check_server_api $serverip $port
-		# API测试失败, 进行ping测试
-		_ping_server_intf $serverip
+		# API测试成功, 才进行ping测试
+		[ "$OMR_TRACKER_STATUS" = "OK" ] && _ping_server_intf $serverip
 	}
 
 	# uci配置文件中的服务器ip是一个list, 逐个进行判断
@@ -299,7 +308,6 @@ waittest=${OMR_TRACKER_WAIT_TEST:-0}				# 切换后等待（默认 0）
 # 将检查结果保存到文件/tmp/${interface}-tracker-server.json
 while true; do
 
-	server_ping=false
 	config_load openmptcprouter
 	config_foreach _check_server server
 

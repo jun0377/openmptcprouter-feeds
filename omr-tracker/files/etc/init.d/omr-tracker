@@ -231,25 +231,6 @@ _launch_server_tracker() {
 	sleep 2
 }
 
-# DNS解析辅助函数，检查IP是否有多个解析结果
-_dns_server() {
-	local ip=$1
-	resolv=$(resolveip -4 ${ip} | head -n 1)
-	[ -n "${resolv}" ] && [ "${resolv}" != "${ip}" ] && multiserver=true
-	resolv=$(resolveip -6 ${ip} | head -n 1)
-	[ -n "${resolv}" ] && [ "${resolv}" != "${ip}" ] && multiserver=true
-	ipcount=$((ipcount+1))
-}
-
-# 检查多服务器配置,如果是使用主机名连接的服务器, 一个主机名可能对应多个IP, 都要进行检查
-_multi_server() {
-	local ipcount=0
-	config_get backup $1 backup
-	[ "$backup" = "1" ] && multiserver=true
-	config_list_foreach $1 ip _dns_server
-	[ "$ipcount" != "0" ] && [ "$ipcount" != "1" ] && multiserver=true
-}
-
 # 启动指定接口的追踪器(作为外部命令暴露)
 start_interface() {
 	[ -z "$1" ] && return
@@ -263,11 +244,8 @@ omr_tracker_aggregate() {
 		config_load network
 		config_foreach _launch_tracker interface
 	fi
-
-	multiserver=false
-	config_load openmptcprouter
-	config_foreach _multi_server server
-	[ "$multiserver" = true ] && _launch_server_tracker
+	# 检查管理平台连通性
+	_launch_server_tracker
 }
 
 # 负载均衡模式

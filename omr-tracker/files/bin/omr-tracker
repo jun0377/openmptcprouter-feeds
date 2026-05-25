@@ -537,34 +537,6 @@ while true; do
 
 			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> ip: ${OMR_TRACKER_DEVICE_IP} gw:${OMR_TRACKER_DEVICE_GATEWAY} "
 
-			# IPv6地址和网关
-			if { [ "$OMR_TRACKER_IPV6" = "1" ] || [ "$OMR_TRACKER_IPV6" = "auto" ]; } && { [ "$OMR_TRACKER_FAMILY" = "ipv6" ] || [ "$OMR_TRACKER_FAMILY" = "ipv4ipv6" ]; }; then
-
-				OMR_TRACKER_DEVICE_IP6=$(ip -6 addr show dev "$OMR_TRACKER_DEVICE" scope global | sort -r | grep -m 1 inet6 | awk '{print $2}' | cut -d'/' -s -f1)
-
-				# 尝试从 UCI 获取 IPv6 网关
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
-					OMR_TRACKER_DEVICE_GATEWAY6=$(uci -q get "network.$OMR_TRACKER_INTERFACE.ip6gw")
-				fi
-				# 尝试从 ubus 获取 IPv6 网关（各种匹配规则）
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
-					OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.${OMR_TRACKER_INTERFACE} status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${OMR_TRACKER_DEVICE_IP6}\"].nexthop" | tr -d "\n")
-				fi
-				# 从 ubus 非活动路由中按源地址（完整 IP）匹配默认路由的下一跳
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
-					OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.${OMR_TRACKER_INTERFACE} status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${OMR_TRACKER_DEVICE_IP6}/64\"].nexthop" | tr -d "\n")
-				fi
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
-					OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.${OMR_TRACKER_INTERFACE} status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${OMR_TRACKER_DEVICE_IP6}/56\"].nexthop" | tr -d "\n")
-				fi
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
-					OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.$OMR_TRACKER_INTERFACE status | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
-				fi
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
-					OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.$OMR_TRACKER_INTERFACE status | jsonfilter -q -l 1 -e '@.route[@.nexthop="::"].target' | tr -d "\n")
-				fi
-			fi
-
 			# IPv4 链路探测循环逻辑: 在一个循环中不断尝试探测网络连通性，直到成功或达到最大重试次数
 			if { [ "$OMR_TRACKER_FAMILY" = "ipv4" ] || [ "$OMR_TRACKER_FAMILY" = "ipv4ipv6" ]; } && [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 
@@ -716,118 +688,6 @@ while true; do
 
 			[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
 
-			# 开始执行 IPv6 链路探测逻辑（逻辑与 IPv4 类似）
-			# if [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
-			# 	# setup loop variable
-			# 	if [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ]; then
-			# 		tries="$OMR_TRACKER_TRIES"
-			# 	else
-			# 		tries="$OMR_TRACKER_TRIES_UP"
-			# 	fi
-			# 	# loop until tries attempts have been reached
-			# 	while [ "$tries" -gt 0 ]; do
-
-			# 		_ping "$OMR_TRACKER_DEVICE_GATEWAY6" "$OMR_TRACKER_DEVICE" "no"
-			# 		status=$?
-
-			# 		if $(exit $status) && [ "$OMR_TRACKER_TYPE" = "none" ]; then
-			# 			OMR_TRACKER_STATUS_MSG=""
-			# 			OMR_TRACKER_STATUS="OK"
-			# 			break
-			# 		elif [ "$OMR_TRACKER_TYPE" != "none" ]; then
-			# 			if ! $(exit $status); then
-			# 				OMR_TRACKER_STATUS_MSG="IPv6 gateway down"
-			# 			fi
-			# 			serverip_ping=false
-			# 			if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-			# 				config_load openmptcprouter
-			# 				config_foreach _ping_server server $OMR_TRACKER_DEVICE
-			# 			fi
-			# 			if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-			# 				config_load openmptcprouter
-			# 				config_foreach _httping_server server $OMR_TRACKER_DEVICE
-			# 			fi
-
-			# 			if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST6" ]; then
-			# 				OMR_TRACKER_HOST6=$(resolveip -6 -t 5 $OMR_TRACKER_HOST6 | head -n 1 | tr -d "\n")
-			# 				if [ -n "$OMR_TRACKER_HOST6" ]; then
-			# 					if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; then
-			# 						# Check if route is not used
-			# 						while ! ip -6 route add $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6 > /dev/null 2>&1
-			# 						do
-			# 							logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> Can't create route to $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6. waiting..."
-			# 							sleep 2
-			# 							ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
-			# 							_restart
-			# 						done
-			# 					fi
-			# 					if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-			# 						_ping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE" "yes"
-			# 						statusb=$?
-			# 					elif [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-			# 						_httping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "yes"
-			# 						statusb=$?
-			# 					elif [ "$OMR_TRACKER_TYPE" = "dns" ]; then
-			# 						_dns "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "yes"
-			# 						statusb=$?
-			# 					fi
-			# 					ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
-			# 					if $(exit $statusb); then
-			# 						OMR_TRACKER_STATUS_MSG=""
-			# 						OMR_TRACKER_STATUS="OK"
-			# 					else
-			# 						if [ "$OMR_TRACKER_LIST_HOSTS6" = "" ]; then
-			# 							OMR_TRACKER_LIST_HOSTS6="$OMR_TRACKER_HOST6"
-			# 						else
-			# 							OMR_TRACKER_LIST_HOSTS6="$OMR_TRACKER_LIST_HOSTS6,$OMR_TRACKER_HOST6"
-			# 						fi
-			# 						OMR_TRACKER_STATUS_MSG="check error"
-			# 					fi
-			# 				fi
-			# 			else
-			# 				OMR_TRACKER_STATUS_MSG=""
-			# 				OMR_TRACKER_STATUS="OK"
-			# 			fi
-			# 			if [ "$serverip_ping" != false ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ "$OMR_TRACKER_TYPE" != "httping" ] && [ "$OMR_TRACKER_SERVER_HTTP_TEST" = "1" ]; then
-			# 				serverip_ping=false
-			# 				config_load openmptcprouter
-			# 				config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP6
-			# 				if [ "$serverip_ping" = false ]; then
-			# 					OMR_TRACKER_STATUS_MSG="No access to server API"
-			# 					#OMR_TRACKER_STATUS="ERROR"
-			# 				else
-			# 					OMR_TRACKER_STATUS_MSG=""
-			# 					OMR_TRACKER_STATUS="OK"
-			# 					break
-			# 				fi
-			# 			elif [ "$serverip_ping" = false ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ "$OMR_TRACKER_SERVER_TEST" = "1" ]; then
-			# 				if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-			# 					_ping_server_all
-			# 				fi
-			# 				if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-			# 					_httping_server_all
-			# 				fi
-			# 				if [ "$server_ping" != false ] && [ "$servers" = true ]; then
-			# 					OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG No answer from server"
-			# 					OMR_TRACKER_STATUS="ERROR"
-			# 					#break
-			# 				fi
-			# 			fi
-			# 			[ "$OMR_TRACKER_STATUS" = "OK" ] && break
-			# 		elif ! $(exit $status); then
-			# 			OMR_TRACKER_STATUS_MSG="IPv6 gateway down"
-			# 		fi
-			# 		tries=$((tries - 1))
-			# 		#_restart
-			# 		OMR_TRACKER_HOST6="${OMR_TRACKER_HOSTS6%% *}"
-			# 		[ "$OMR_TRACKER_HOST6" = "$OMR_TRACKER_HOSTS6" ] || {
-			# 			OMR_TRACKER_HOSTS6="${OMR_TRACKER_HOSTS6#* } $OMR_TRACKER_HOST6"
-			# 		}
-			# 		#OMR_TRACKER_TIMEOUT=$((OMR_TRACKER_TIMEOUT * 2))
-			# 		sleep "${OMR_TRACKER_INTERVAL_TRIES:-1}"
-			# 	done
-			# fi
-
 			# 错误处理：如果状态仍为 ERROR，生成具体的错误信息
 			if [ "$OMR_TRACKER_STATUS" = "ERROR" ] && { [ -z "$OMR_TRACKER_DEVICE_IP" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ -z "$OMR_TRACKER_DEVICE_IP6" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ]; }; then
 				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_INTERFACE may have ip issues"
@@ -855,14 +715,6 @@ while true; do
 			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG and $OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP error ($OMR_TRACKER_LIST_HOSTS)"
 		fi
 	fi
-	# 将本轮探测失败的 IPv6 主机列表追加到状态消息中
-	# if [ "$OMR_TRACKER_LIST_HOSTS6" != "" ]; then
-	# 	if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
-	# 		OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP6 error ($OMR_TRACKER_LIST_HOSTS6)"
-	# 	else
-	# 		OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG and $OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP6 error ($OMR_TRACKER_LIST_HOSTS6)"
-	# 	fi
-	# fi
 
 	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
 

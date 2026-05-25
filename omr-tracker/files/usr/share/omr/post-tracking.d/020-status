@@ -16,13 +16,10 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ "$(uci -q get openmptcprouter.$OMR_TRA
 	[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Get status and settings for $OMR_TRACKER_INTERFACE..."
 	# 初始化IP地址变量
 	ipaddr=""
-	ip6addr=""
 	# 如果启用了外部检查且接口不是 VPN
 	if [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ]; then
 		# 获取接口的 IPv4 公网地址
 		[ -n "$OMR_TRACKER_DEVICE_IP" ] && ipaddr="$(omr-ip-intf $OMR_TRACKER_DEVICE)"
-		# 获取接口的 IPv6 公网地址
-		[ -n "$OMR_TRACKER_DEVICE_IP6" ] && ip6addr="$(omr-ip6-intf $OMR_TRACKER_DEVICE)"
 	else
 		# 如果禁用外部检查或接口是 VPN，仅更新时间戳和状态
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")	# 最后检查时间戳
@@ -166,96 +163,6 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ "$(uci -q get openmptcprouter.$OMR_TRA
 		config_foreach traceboxmtutest server
 
 		# 设置接口状态为 up 并更新时间戳
-		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
-		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
-	}
-	# 如果获取到了 IPv6 地址
-	[ -n "$ip6addr" ] && {
-		# 如果启用了外部检查，执行 WHOIS 查询获取 IPv6 的 ASN 信息
-		if [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
-			asn="$(whois $ip6addr 2>/dev/null | grep -m 1 -i 'netname' | awk '{print $2}')"
-		fi
-		# 如果配置中不存在该接口节，则创建
-		[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE)" ] && {
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE=interface
-		}
-		# 检查是否需要更新最新版本信息（通过 IPv6）
-		if [ "$(uci -q get openmptcprouter.latest_versions.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.latest_versions.lc))) -gt 3600 ]; then
-			# 通过 IPv6 获取版本信息
-			latestversions="$(curl -6 -s -m 3 https://www.openmptcprouter.com/version/version.json)"
-			[ -n "$latestversions" ] && {
-				uci -q set openmptcprouter.latest_versions=latest_versions
-				uci -q set openmptcprouter.latest_versions.omr=$(echo $latestversions | jsonfilter -q -e '@.omr')
-				uci -q set openmptcprouter.latest_versions.vps=$(echo $latestversions | jsonfilter -q -e '@.vps')
-				uci -q set openmptcprouter.latest_versions.lc=$(date +"%s")
-			}
-		fi
-		# 如果公网 IPv6 地址发生变化
-		[ -n "$ip6addr" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.publicip)" != "$ip6addr" ] && {
-			previousip6=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.publicip)
-			# 记录 IPv6 地址变更日志
-			_log "New public ip detected for $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE): $ip6addr"
-			# 更新配置中的公网 IP
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip="$ip6addr"
-		}
-		# 保存延迟信息
-		[ -n "$OMR_TRACKER_LATENCY" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
-		# 保存 ASN 信息
-		[ -n "$asn" ] && {
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.asn="$asn"
-		}
-		# 初始化 tracebox 结果变量
-		omrtracebox=""
-		# 定义 IPv6 的 tracebox MTU 测试函数
-		traceboxmtutest() {
-			# 定义内部函数
-			omr_tracebox_mtu() {
-				local serverip=$1
-				# 检查是否为有效 IPv6 地址格式，如果不是则清空
-				[ "$serverip" != "${1#*:[0-9a-fA-F]}" ] && serverip=""
-				# 如果 serverip 有效且不是本地地址，执行 tracebox 探测
-				[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && [ "$(pgrep -f tracebox)" = "" ] && [ "$(uci -q get openmptcprouter.settings.tracebox)" != "0" ] && {
-					omrtracebox="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
-					[ -n "$omrtracebox" ] && [ -z "$(echo $omrtracebox | grep error)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
-				}
-				# 如果不是 VPN 接口，进行 IPv6 MTU 设置
-				if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
-					# 查找网络设备
-					network_device=$(find_network_device ${OMR_TRACKER_INTERFACE})
-					# 如果底层设备配置了 MTU，直接使用
-					if [ -n "$network_device" ] && [ -n "$(uci -q get network.${network_device}.mtu)" ]; then
-						mtu=$(uci -q get network.$(find_network_device ${OMR_TRACKER_INTERFACE}).mtu)
-						[ -n "$mtu" ] && {
-							uci -q set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu=$mtu
-							ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-						}
-					# 否则通过 omr-mtu6 工具动态探测 IPv6 MTU
-					elif [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
-						if [ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ]; then
-							# 探测到服务器的 IPv6 MTU
-							mtu=$(omr-mtu6 $OMR_TRACKER_DEVICE_IP6 $serverip)
-							[ -n "$mtu" ] && {
-								uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
-								ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-							}
-						else
-							# 默认探测到 Cloudflare IPv6 DNS 的 MTU
-							mtu=$(omr-mtu6 $OMR_TRACKER_DEVICE_IP6 2606:4700:4700::1111)
-							[ -n "$mtu" ] && {
-								uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
-								ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-							}
-						fi
-					fi
-				fi
-			}
-			# 遍历服务器 IP 列表执行探测
-			config_list_foreach $1 ip omr_tracebox_mtu
-		}
-		# 加载配置并遍历服务器
-		config_load openmptcprouter
-		config_foreach traceboxmtutest server
-		# 设置接口状态并更新时间戳
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
 	}
