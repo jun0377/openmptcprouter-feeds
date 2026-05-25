@@ -1,17 +1,20 @@
 #!/bin/bash
 # vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
 
+# 此脚本用于探测服务器连通性状态
+
 name=$0
 basename="$(basename $0)"
 
 . /usr/lib/unbound/iptools.sh
+. /usr/share/libubox/jshn.sh
 
 export OMR_TRACKER_STATUS			# 导出探测状态（OK/ERROR）
 export OMR_TRACKER_STATUS_MSG		# 导出状态消息（原因说明）
 export OMR_TRACKER_LATENCY			# 导出探测延迟（ms）
 export OMR_TRACKER_LOSS				# 导出丢包率（百分比整数）
 
-# logger -t "OMR" "<omr-tracker $basename> $0"
+# logger -t "OMR" "<$basename> $0"
 
 # 后置钩子函数
 _post_tracking() {
@@ -85,7 +88,7 @@ _ping_server_intf_in_mode_single()
 	local interface=$(uci -q get global.single.channel)
 	local device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.device')
 	[ -z "${device}" ] && device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.l3_device')
-	[ -z "${device}" ] && logger -t "OMR" "<omr-tracker $basename> unknown interface: ${interface}-${device}"
+	[ -z "${device}" ] && logger -t "OMR" "<$basename> unknown interface: ${interface}-${device}"
 
 	local k=0
 	while [ "$k" -le "$retry" ]; do
@@ -111,14 +114,36 @@ _ping_server_intf_in_mode_single()
 		sleep "${intervaltries}"
 	done
 
-	[ "$OMR_TRACKER_STATUS" != "OK" ] && logger -t "OMR" "<omr-tracker $basename> ${host} unreachable !"
-	[ "$OMR_TRACKER_STATUS" = "OK" ] && logger -t "OMR" "<omr-tracker $basename> server:${host} local:${device} rtt:${OMR_TRACKER_LATENCY}ms loss:${OMR_TRACKER_LOSS}% "
+	[ "$OMR_TRACKER_STATUS" != "OK" ] && logger -t "OMR" "<$basename> ${host} unreachable !"
+	[ "$OMR_TRACKER_STATUS" = "OK" ] && logger -t "OMR" "<$basename> server:${host} local:${device} rtt:${OMR_TRACKER_LATENCY}ms loss:${OMR_TRACKER_LOSS}% "
+
+	if [ -n "$device" ]; then
+		local latency_val="${OMR_TRACKER_LATENCY:-0}"
+		[[ "$latency_val" =~ ^[0-9]+$ ]] || latency_val=0
+		local loss_val="${OMR_TRACKER_LOSS:-0}"
+		[[ "$loss_val" =~ ^[0-9]+$ ]] || loss_val=0
+
+		json_init
+		json_add_string status "${OMR_TRACKER_STATUS:-ERROR}"
+		json_add_string msg "${OMR_TRACKER_STATUS_MSG:-}"
+		json_add_int latency "$latency_val"
+		json_add_int loss "$loss_val"
+		json_add_string interface "${interface:-}"
+		json_add_string device "$device"
+		json_add_int ts "$(date +%s)"
+
+		[ ! -d /tmp/tracker-server ] && mkdir -p /tmp/tracker-server
+
+		local outfile="/tmp/tracker-server/${device}-tracker-server.json"
+		local tmpfile="/tmp/tracker-server/.${device}-tracker-server.json.$$"
+		json_dump > "$tmpfile" && mv "$tmpfile" "$outfile" || rm -f "$tmpfile"
+	fi
 }
 
 # 负载均衡模式下检查管理平台连通性
 _ping_server_intf_in_mode_balance()
 {
-	logger -t "OMR" "<omr-tracker $basename> _ping_server_intf_in_mode_balance!"
+	logger -t "OMR" "<$basename> _ping_server_intf_in_mode_balance!"
 }
 
 # 不同工作模式下使用不同的接口进行检测
@@ -136,7 +161,7 @@ _ping_server_intf()
 			_ping_server_intf_in_mode_balance "$@"
 			;;
 		*)
-			logger -t "OMR" "<omr-tracker $basename> unknown work mode!"
+			logger -t "OMR" "<$basename> unknown work mode!"
 			;;
 	esac
 }
@@ -166,7 +191,7 @@ _check_server_api_in_mode_aggregate() {
 # 单卡模式下进行API检测
 _check_server_api_in_mode_single()
 {
-	[ "single" =  "$(uci -q get global.global.mode)" ] || logger -t "OMR" "<omr-tracker $basename> not single mode! mode:$(uci -q get global.global.mode)"
+	[ "single" =  "$(uci -q get global.global.mode)" ] || logger -t "OMR" "<$basename> not single mode! mode:$(uci -q get global.global.mode)"
 
 	local host=$1
 	local port=$2
@@ -174,7 +199,7 @@ _check_server_api_in_mode_single()
 	local interface=$(uci -q get global.single.channel)
 	local device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.device')
 	[ -z "${device}" ] && device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.l3_device')
-	[ -z "${device}" ] && logger -t "OMR" "<omr-tracker $basename> unknown interface: ${interface}-${device}"
+	[ -z "${device}" ] && logger -t "OMR" "<$basename> unknown interface: ${interface}-${device}"
 
 	local k=0
 	while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
@@ -190,14 +215,14 @@ _check_server_api_in_mode_single()
 		sleep "${intervaltries}"
 	done
 
-	logger -t "OMR" "<omr-tracker $basename> ${host}:${port} API test failed ${k} times!"
+	logger -t "OMR" "<$basename> ${host}:${port} API test failed ${k} times!"
 
 }
 
 # 负载均衡模式下进行API检测
 _check_server_api_in_mode_balance()
 {
-	logger -t "OMR" "<omr-tracker $basename> _check_server_api_in_mode_balance!"
+	logger -t "OMR" "<$basename> _check_server_api_in_mode_balance!"
 }
 
 # 不同工作模式下使用不同的接口进行API检测
@@ -215,7 +240,7 @@ _check_server_api()
 			_check_server_api_in_mode_balance "$@"
 			;;
 		*)
-			logger -t "OMR" "<omr-tracker $basename> unknown work mode!"
+			logger -t "OMR" "<$basename> unknown work mode!"
 			;;
 	esac
 }
@@ -230,7 +255,7 @@ _check_server() {
 	config_get port $1 port
 	serverip=""
 
-	# logger -t "OMR" "<omr-tracker $basename> master:${master} ip:${ip} port:${port}"
+	# logger -t "OMR" "<$basename> master:${master} ip:${ip} port:${port}"
 
 	# 针对每个 IP/域名条目进行探测
 	check_ip() {
@@ -245,7 +270,7 @@ _check_server() {
 		[ -n "$ip6resolve" ] && serverip="$ip6resolve"
 		
 		# IP解析失败
-		[ -z "$serverip" ] && logger -t "OMR" "<omr-tracker $basename> unknown vps ip!" && return
+		[ -z "$serverip" ] && logger -t "OMR" "<$basename> unknown vps ip!" && return
 
 		# API测试
 		_check_server_api $serverip $port
@@ -270,7 +295,8 @@ intervaltries=${OMR_TRACKER_INTERVAL_TRIES:-2}		# 重试间隔（默认 2s）
 retry=${OMR_TRACKER_TRIES:-4}						# 每项重试次数（默认 4）
 waittest=${OMR_TRACKER_WAIT_TEST:-0}				# 切换后等待（默认 0）
 
-# 主循环：优先检测master服务器，再检查备用服务器
+# 主循环：优先检测master服务器，再检查备用服务器(实际上,只有一个master服务器)
+# 将检查结果保存到文件/tmp/${interface}-tracker-server.json
 while true; do
 
 	server_ping=false
