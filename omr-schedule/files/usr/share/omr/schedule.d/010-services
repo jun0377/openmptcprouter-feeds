@@ -207,25 +207,25 @@ if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" =
 fi
 
 # 检查 dnsmasq 是否正常运行
-if [ -f /etc/init.d/dnsmasq ]; then
-	# 如果 dnsmasq 进程不存在，重启它
-	if [ "$(pgrep -f dnsmasq)" = "" ]; then
-		_log "Can't find dnsmasq, restart it..."
-		logger -t "OMR" "<omr-schedule> Can't find dnsmasq, restart it..."
-		/etc/init.d/dnsmasq restart >/dev/null 2>&1
-		logger -t "OMR" "<omr-schedule> /etc/init.d/dnsmasq restart >/dev/null 2>&1"
-		sleep 5
-	# 如果启用额外检查，且 dnsmasq 拒绝连接，则重启
-	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ -z "$(dig +timeout=4 +tries=2 +short @127.0.0.1 www.baidu.com 2>/dev/null | head -n 1)" ]; then
-		logger -t "OMR" "<omr-schedule> Can't resolve via dnsmasq, restart it..."
-		_log "Can't resolve via dnsmasq, restart it..."
-		/etc/init.d/dnsmasq restart >/dev/null 2>&1
-		logger -t "OMR" "<omr-schedule> /etc/init.d/dnsmasq restart >/dev/null 2>&1"
-		sleep 5
-	fi
-fi
+# if [ -f /etc/init.d/dnsmasq ]; then
+# 	# 如果 dnsmasq 进程不存在，重启它
+# 	if [ "$(pgrep -f dnsmasq)" = "" ]; then
+# 		_log "Can't find dnsmasq, restart it..."
+# 		logger -t "OMR" "<omr-schedule> Can't find dnsmasq, restart it..."
+# 		/etc/init.d/dnsmasq restart >/dev/null 2>&1
+# 		logger -t "OMR" "<omr-schedule> /etc/init.d/dnsmasq restart >/dev/null 2>&1"
+# 		sleep 5
+# 	# 如果启用额外检查，且 dnsmasq 拒绝连接，则重启
+# 	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ -z "$(dig +timeout=4 +tries=2 +short @127.0.0.1 www.baidu.com 2>/dev/null | head -n 1)" ]; then
+# 		logger -t "OMR" "<omr-schedule> Can't resolve via dnsmasq, restart it..."
+# 		_log "Can't resolve via dnsmasq, restart it..."
+# 		/etc/init.d/dnsmasq restart >/dev/null 2>&1
+# 		logger -t "OMR" "<omr-schedule> /etc/init.d/dnsmasq restart >/dev/null 2>&1"
+# 		sleep 5
+# 	fi
+# fi
 
-# 如果 dnsmasq 存在但未配置上游 DNS 服务器，则添加默认配置（将请求转发到 127.0.0.1:5353 的 Unbound）
+如果 dnsmasq 存在但未配置上游 DNS 服务器，则添加默认配置（将请求转发到 127.0.0.1:5353 的 Unbound）
 if [ -f /etc/init.d/dnsmasq ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server)" ]; then
 	logger -t "OMR" "<omr-schedule> dnsmasq"
 	uci -q batch <<-EOF >/dev/null
