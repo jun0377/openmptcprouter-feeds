@@ -244,13 +244,15 @@ omr_tracker_aggregate() {
 		config_load network
 		config_foreach _launch_tracker interface
 	fi
+
 	# 检查管理平台连通性
 	_launch_server_tracker
 }
 
 # 负载均衡模式
 omr_tracker_balance() {
-	logger -t "OMR" "<omr-tracker> todo......."
+	# 检查管理平台连通性
+	_launch_server_tracker
 }
 
 # 单卡模式
