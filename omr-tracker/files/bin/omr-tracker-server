@@ -140,7 +140,36 @@ _ping_server_intf_in_mode_single()
 # 负载均衡模式下检查管理平台连通性
 _ping_server_intf_in_mode_balance()
 {
-	logger -t "OMR" "<$basename> _ping_server_intf_in_mode_balance!"
+	local host=$1
+	local k=0
+	while [ "$k" -le "$retry" ]; do
+		# 绑定指定接口ping服务器
+		ret=$(ping -w "$OMR_TRACKER_TIMEOUT" -c 1 -q "${host}" 2>&1)
+		# 丢包率
+		loss=$(echo "$ret" | awk '/packet loss/ {gsub("%","");print $6}' | tr -d '\n')
+		# 丢包率不是100%, 则认为服务器可达
+		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
+			
+			OMR_TRACKER_STATUS="OK"
+
+			# RTT
+			latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
+			[ -n "$latency" ] && OMR_TRACKER_LATENCY="$latency"
+			OMR_TRACKER_LOSS="$loss"
+
+			break
+		fi
+
+		# 次数+1
+		k=$((k+1))
+		# 重试间隔
+		sleep "${intervaltries}"
+	done
+
+	[ "$OMR_TRACKER_STATUS" != "OK" ] && OMR_TRACKER_STATUS_MSG="${host} unreachable!" && logger -t "OMR" "<$basename> ${host} unreachable !"
+	[ "$OMR_TRACKER_STATUS" = "OK" ] && logger -t "OMR" "<$basename> server:${host} local:${device} rtt:${OMR_TRACKER_LATENCY}ms loss:${OMR_TRACKER_LOSS}% "
+
+	_save
 }
 
 # 不同工作模式下使用不同的接口进行检测
@@ -234,7 +263,33 @@ _check_server_api_in_mode_single()
 # 负载均衡模式下进行API检测
 _check_server_api_in_mode_balance()
 {
-	logger -t "OMR" "<$basename> _check_server_api_in_mode_balance!"
+	[ "balance" =  "$(uci -q get global.global.mode)" ] || logger -t "OMR" "<$basename> not balance mode! mode:$(uci -q get global.global.mode)"
+
+	local host=$1
+	local valid_ip6=$(valid_subnet6 "$host")
+
+	local k=0
+	while [ "$k" -le "$retry" ]; do
+		if [ "$valid_ip6" != "ok" ]; then
+			ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "https://${host}:${port}/")
+		else
+			ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "https://[${host}%${device}]:${port}/")
+		fi
+
+		[ -n "$ret" ] && break
+
+		k=$((k+1))
+		sleep "${intervaltries}"
+	done
+
+	[ -z "$ret" ] && {
+		OMR_TRACKER_STATUS="ERROR"
+		OMR_TRACKER_STATUS_MSG="${host} API test failed!"
+	}
+	[ -n "$ret" ] && OMR_TRACKER_STATUS="OK"
+
+	# 保存状态
+	_save
 }
 
 # 不同工作模式下使用不同的接口进行API检测
