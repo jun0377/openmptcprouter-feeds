@@ -1300,7 +1300,15 @@ mode_aggregate() {
 
 # 负载均衡模式
 mode_balance() {
-	logger -t "OMR" "<$FUNCNAME> mode: balance"
+	if [ -f /usr/lib/openmptcprouter-vps/mode_balance.sh ]; then
+		. /usr/lib/openmptcprouter-vps/mode_balance.sh
+	fi
+
+	# 启动聚合模式
+	if type mode_balance_handler >/dev/null 2>&1; then
+		mode_balance_handler
+		return
+	fi
 }
 
 # 单卡模式
@@ -1361,7 +1369,7 @@ start_service() {
 		logger -t "OMR" "<$FUNCNAME> serial changed from ${saved_serial} to ${serial}"
 	fi
 
-	# 工作模式管理
+	# 工作模式管理: 单卡模式 / 聚合模式 / 负载均衡模式
 	work_mode
 
 	# 系统启动时自动恢复备份的 overlay 层软件包

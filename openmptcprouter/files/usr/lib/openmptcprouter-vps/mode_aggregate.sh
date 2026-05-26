@@ -239,8 +239,8 @@ _config_service() {
 	EOF
 }
 
-# 停止负载均衡模式
-function stop_mode_balance() {
+# 停止聚合模式
+stop_mode_aggregate() {
 	echo ""
 }
 
@@ -253,7 +253,10 @@ mode_aggregate_handler() {
 	}
 
 	# 停止负载均衡模式
-	stop_mode_balance
+	[ -f /usr/lib/openmptcprouter-vps/mode_balance.sh ] && {
+		. /usr/lib/openmptcprouter-vps/mode_balance.sh
+		stop_mode_balance
+	}
 
     logger -t "OMR" "<$FUNCNAME>..."
 
