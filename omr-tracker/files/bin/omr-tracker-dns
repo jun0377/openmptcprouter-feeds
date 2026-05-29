@@ -1,0 +1,113 @@
+#!/bin/bash
+# vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
+
+# 此脚本用于检测DNS服务状态
+
+name=$0
+basename="$(basename $0)"
+
+. /usr/share/libubox/jshn.sh
+
+export OMR_TRACKER_DNS_RUNNING      # 进程是否存在
+export OMR_TRACKER_DNS_RESOLVED     # dns解析是否成功
+export OMR_TRACKER_DNS_RESOLVER     # 使用的是unbound还是dnsmasq
+export OMR_TRACKER_DNS_QUERY        # 测试的是哪个域名
+export OMR_TRACKER_DNS_ANSWER       # 域名解析结构
+export OMR_TRACKER_DNS_MSG          # 状态信息
+
+interval="${OMR_TRACKER_INTERVAL:-15}"
+
+# 保持探测信息到/tmp/tracker-dns/tracker-dns.json文件
+_save() {
+	json_init
+	json_add_boolean running "${OMR_TRACKER_DNS_RUNNING:-0}"
+	json_add_boolean resolved "${OMR_TRACKER_DNS_RESOLVED:-0}"
+	json_add_string resolver "${OMR_TRACKER_DNS_RESOLVER:-}"
+	json_add_string query "${OMR_TRACKER_DNS_QUERY:-openwrt.org}"
+	json_add_string answer "${OMR_TRACKER_DNS_ANSWER:-}"
+	json_add_string updated "$(date +"%Y-%m-%d %H:%M:%S")"
+	json_add_string msg "${OMR_TRACKER_DNS_MSG:-DNS service not running}"
+	json_add_int ts "$(date +%s)"
+	json_add_string timestamp "$(date +"%H:%M:%S")"
+
+	[ ! -d /tmp/tracker-dns ] && mkdir -p /tmp/tracker-dns
+
+	local outfile="/tmp/tracker-dns/tracker-dns.json"
+	local tmpfile="/tmp/tracker-dns/.tracker-dns.json.$$"
+	json_dump > "$tmpfile" && mv "$tmpfile" "$outfile" || rm -f "$tmpfile"
+}
+
+# 检查unbound和dnsmasq进程是否存在
+_check_dns_pid() {
+	local unbound_pid dnsmasq_pid
+
+	unbound_pid="$(pgrep -f '/usr/sbin/unbound' 2>/dev/null | head -n 1)"
+	dnsmasq_pid="$(pgrep -f '/usr/sbin/dnsmasq' 2>/dev/null | head -n 1)"
+
+    logger -t "OMR" "<$basename> unbound pid:${unbound_pid} dnsmasq pid:${dnsmasq_pid}"
+
+	if [ -n "$unbound_pid" ]; then
+		OMR_TRACKER_DNS_RUNNING=1
+		OMR_TRACKER_DNS_RESOLVER="unbound"
+        logger -t "OMR" "<$basename> unbound is running..."
+		return 0
+	fi
+
+	if [ -n "$dnsmasq_pid" ]; then
+		OMR_TRACKER_DNS_RUNNING=1
+		OMR_TRACKER_DNS_RESOLVER="dnsmasq"
+        logger -t "OMR" "<$basename> dnsmasq is running..."
+		return 0
+	fi
+
+	OMR_TRACKER_DNS_RUNNING=0
+	OMR_TRACKER_DNS_RESOLVER=""
+	OMR_TRACKER_DNS_MSG="DNS service not running"
+	return 1
+}
+
+# 域名解析测试
+_dig_test() {
+	local domains domain answer
+
+	OMR_TRACKER_DNS_RESOLVED=0
+	OMR_TRACKER_DNS_QUERY="openwrt.org"
+	OMR_TRACKER_DNS_ANSWER=""
+	OMR_TRACKER_DNS_MSG="DNS resolution failed"
+	domains="www.baidu.com www.taobao.com www.qq.com www.aliyun.com www.google.com"
+
+	for domain in $domains; do
+		answer="$(resolveip -t 2 "$domain" 2>/dev/null | head -n 1 | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+		if [ -n "$answer" ]; then
+			OMR_TRACKER_DNS_RESOLVED=1
+			OMR_TRACKER_DNS_QUERY="$domain"
+			OMR_TRACKER_DNS_ANSWER="$answer"
+			OMR_TRACKER_DNS_MSG="DNS resolved successfully"
+
+            logger -t "OMR" "<$basename> resolveip $domain succeess"
+			return 0
+		fi
+	done
+
+    logger -t "OMR" "<$basename> [Failed!] resolveip $domains, but all failed!"
+	return 1
+}
+
+# 主循环
+while true; do
+
+	OMR_TRACKER_DNS_RUNNING=0
+	OMR_TRACKER_DNS_RESOLVED=0
+	OMR_TRACKER_DNS_RESOLVER=""
+	OMR_TRACKER_DNS_QUERY="www.baidu.com"
+	OMR_TRACKER_DNS_ANSWER=""
+	OMR_TRACKER_DNS_MSG="DNS service not running"
+
+	if _check_dns_pid; then
+		_dig_test
+	fi
+
+	_save
+
+	sleep "$interval"
+done

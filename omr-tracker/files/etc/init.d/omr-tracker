@@ -204,6 +204,23 @@ _launch_tracker() {
 	sleep 2
 }
 
+# 启动dns检测服务
+_launch_dns_tracker() {
+	local enabled
+	_validate_section "defaults" "defaults"
+
+	[ "${enabled}" = "0" ] && return
+
+	procd_open_instance "dns"
+	procd_set_param command /bin/omr-tracker-dns
+	procd_append_param env "OMR_TRACKER_INTERVAL=15"
+	procd_set_param limits nofile="51200 51200"
+	procd_set_param respawn 0 10 0
+	procd_set_param stderr 1
+	procd_close_instance
+	sleep 2
+}
+
 # 启动服务器追踪器(用于多服务器场景)
 _launch_server_tracker() {
 	local hosts timeout tries interval interval_tries options type enabled wait_test
@@ -290,6 +307,9 @@ start_service() {
 	
 		count=1111
 	
+		# 检查dns服务是否正常
+		_launch_dns_tracker
+
 		# 获取工作模式
 		local work_mode=$(uci get global.global.mode)
 		[ -z "${work_mode}" ] && {

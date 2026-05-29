@@ -33,6 +33,8 @@ _save() {
 	local loss_val="${OMR_TRACKER_LOSS:-0}"
 	[[ "$loss_val" =~ ^[0-9]+$ ]] || loss_val=0
 
+	[ "$OMR_TRACKER_STATUS" = "OK" ] && OMR_TRACKER_STATUS_MSG="network ready!"
+
 	json_init
 	json_add_string status "${OMR_TRACKER_STATUS:-ERROR}"	# 状态
 	json_add_string msg "${OMR_TRACKER_STATUS_MSG:-}"		# 错误信息
