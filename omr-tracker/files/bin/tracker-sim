@@ -5,54 +5,11 @@
 
 . /lib/functions.sh
 
-ifname=$1               # 逻辑网口名, 如sim1 wan1
-interface=""            # 物理网口名, 如eth1 usb1
-sysfs=""                # sim模组在sysfs中对应的路径
-ttyUSB=""               # 拨号节点
-VID=""                  # 模组的Vendor ID
-PID=""                  # 模组的Product ID
+ifname=$1
 
-MODEM_MANUFACTURE=""    # 模组厂商
-MODEM_MODEL=""          # 模组型号
-MODEM_REVISION=""       # 模组版本
-MODEM_IMEI=""           # 模组IMEI
-MODEM_SN=""             # 模组序列号
-
-SIM_ICCID=""            # SIM卡的ICCID
-SIM_IMSI=""             # SIM卡的IMSI
-SIM_STATUS=""           # SIM卡状态的字符串描述
-SIM_C5GREG=""           # 5G Core 注册状态，即终端在 5G 核心网 的注册状态
-SIM_CREG=""             # EPS域注册状态,即LTE注册状态
-SIM_FREQ=""             # LTE/NR工作频率查询,当前小区的频率信息
-SIM_MONSC=""            # 当前驻留小区信息
-SIM_IPv4=""             # 拨号成功后获取到的IPv4地址
-SIM_IPv6=""             # 拨号成功后获取到的IPv6地址
-
-DIAL_CID=1              # 拨号使用的PDP上下文索引
-DIAL_APN=""             # 拨号使用的APN
-DIAL_NET=""             # 入网方式配置: AUTO SA NSA LTE
-
-DIAL_AUTH_TYPE=""       # 鉴权方式: NONE PAP CHAP
-DIAL_AUTH_USER=""       # 用户名
-DIAL_AUTH_PASSWD=""     # 密码
-
-NR_LOCK_ENABLE=""       # NR锁频/锁小区使能: 0-关闭锁频功能; 1-启用锁定频点功能; 2-启用锁定小区功能; 3-启用锁定Band功能
-NR_LOCK_PCID=""         # NR PCID
-NR_LOCK_BAND=""         # NR频段
-NR_LOCK_FREQ=""         # NR频点
-NR_LOCK_SCS=""          # NR子载波间隔
-NR_FREQLOCK_JSON="{}"   # JSON格式的NR锁频/锁小区信息
-
-LTE_LOCK_ENABLE=""      # LTE锁频/锁小区使能: 0-关闭锁频功能; 1-启用锁定频点功能; 2-启用锁定小区功能; 3-启用锁定Band功能
-LTE_LOCK_PCID=""        # LTE PCID
-LTE_LOCK_BAND=""        # LTE频段
-LTE_LOCK_FREQ=""        # LTE频点
-LTE_FREQLOCK_JSON="{}"  # JSON格式的LTE锁频/锁小区信息
-
-function _log()
-{
-    logger -t "${ifname}" "<${interface} ${ttyUSB}>" "$@"
-    echo "${ifname} <${interface} ${ttyUSB}>" "$@"
+[ -n "$ifname" ] || {
+	logger -t "tracker-sim" "ifname is empty, exit"
+	exit 1
 }
 
 # 保存到tmpfs
@@ -64,42 +21,30 @@ function _save()
     local statusfs="/tmp/tracker-sim/${ifname}"
     [ -d ${statusfs} ] || mkdir -p ${statusfs}
 
-    echo "${state}" > "${statusfs}/${item}"
+    # JSON 美化
+    case "${state}" in
+        {*}|\[{*)
+            echo "${state}" | jq . > "${statusfs}/${item}"
+            ;;
+        *)
+            echo "${state}" > "${statusfs}/${item}"
+            ;;
+    esac
 }
 
-# 拨号成功, 进行DHCP
-function sim_dhcp()
+function _log()
 {
-    # 检查网口是否存在
-    [ -d "/sys/class/net/${interface}" ] || {
-        _log "interface ${interface} not exist, skip dhcp"
-        return 0
-    }
-
-    # 检查网口是否已up
-    ifconfig ${interface} up
-
-    # udhcpc最多试2次,间隔1秒,总超时2秒
-    local res
-    res=$(timeout -k 1 5 udhcpc -i "$interface" -t 5 -T 3 -n -q 2>&1) || {
-        _log "dhcp failed or timeout"
-        return 0
-    }
-
-    printf '%s\n' "$res" | while IFS= read -r line; do
-        [ -n "$line" ] && _log "$line"
-    done
-
-    local ip="$(echo "$res" | awk '/lease of/ {print $4; exit}')"
-    local mask="$(echo "$res" | awk '/ip addr add/ {split($5,a,"/"); print a[2]; exit}')"
-    local gw="$(echo "$res" | sed -n 's/.*setting default routers:[[:space:]]*//p' | awk '{print $1; exit}')"
-    _log "${ip} mask:${mask} gw:${gw}"
+    logger -t "tracker-sim ${ifname}" "<${interface} ${ttyUSB}>" "$@"
 }
+
+_log "ifname=$ifname"
 
 # 基本配置检查: 检查uci配置是否正确
 function check_base
 {
     _save "ifname" "${ifname}"
+
+    _log ">>>>>> ifname:${ifname}"
 
     # 检查sysfs中是否已有模组对应信息
     config_load sim
@@ -147,7 +92,7 @@ function get_product_info()
 {
     # 获取模组厂商信息和IMEI
     if [ -z "${MODEM_MANUFACTURE}" ] || [ -z "${MODEM_MODEL}" ] || [ -z "${MODEM_REVISION}" ] || [ -z "${MODEM_IMEI}" ]; then
-        if atcmd_get_modem_model; then
+        if atcmd_get_modem_model $1; then
             _log "${MODEM_MANUFACTURE} ${MODEM_MODEL} ${MODEM_REVISION} ${MODEM_IMEI}"
             _save "manufacture" "${MODEM_MANUFACTURE}"
             _save "model" "${MODEM_MODEL}"
@@ -160,27 +105,12 @@ function get_product_info()
 
     # 获取模组序列号
     if [ -z ${MODEM_SN} ]; then
-        if atcmd_get_modem_sn; then
+        if atcmd_get_modem_sn $1; then
             _save "sn" "${MODEM_SN}"
         else
             _log "failed to get modem sn"
         fi
     fi
-}
-
-# 初始化
-function initialize
-{
-    # 打开回显
-    atcmd_init_echo
-    # 初始化网卡数量为1
-    atcmd_init_netnum
-    # 设置USB端口形态配置为Linux NCM模式
-    atcmd_init_ncm
-    # 开启SIM卡热插拔
-    atcmd_init_hotplug
-
-    return 0
 }
 
 # 拨号
@@ -241,7 +171,7 @@ function dial
 function check_dial
 {
     # 检查是否插卡
-    atcmd_get_sim_status_realtime
+    atcmd_get_sim_status_realtime $1
     _save "sim_status" "${SIM_STATUS}"
 
     # 判断SIM_STATUS中是否包含: "SIM Initialized" 或 "SIM Ready"
@@ -251,15 +181,15 @@ function check_dial
     fi
 
     # 获取iccid
-    atcmd_get_iccid
+    atcmd_get_iccid $1
     _save "iccid" "${SIM_ICCID}"
 
     # 获取imsi
-    atcmd_get_imsi
+    atcmd_get_imsi $1
     _save "imsi" "${SIM_IMSI}"
 
     # 检查是否需要重新拨号
-    atcmd_get_addr
+    atcmd_get_addr $1
     # IPv4
     [ -z "${SIM_IPv4}" ] || { 
         _log "IP: ${SIM_IPv4}" 
@@ -278,26 +208,34 @@ function check_dial
         _log "IPv6 not ready!"
         _save "IPv6" ""
     }
-
-    # 拨号
-    dial
 }
 
 # 更新实时状态信息
 function update_state
 {
     # SIM卡状态
-    atcmd_get_sim_status_realtime
+    atcmd_get_sim_status_realtime $1
+    _save "sim_status" "${SIM_STATUS}"
+
     # 5G Core注册状态
-    atcmd_get_sim_5GCore_realtime
+    atcmd_get_sim_5GCore_realtime $1
+    _save "C5GREG" "${SIM_C5GREG}"
+
     # EPS域注册状态,即LTE注册状态
-    atcmd_get_sim_EREG_realtime
+    atcmd_get_sim_EREG_realtime $1
+    _save "CLTEREG" "${SIM_CREG}"
+
     # LTE/NR工作频率查询,当前小区的频率信息
-    atcmd_get_sim_freq_realtime
+    atcmd_get_sim_freq_realtime $1
+    _save "freq" "${SIM_FREQ}"
+
     # 当前驻留小区信息
-    atcmd_get_sim_monsc_realtime
+    atcmd_get_sim_monsc_realtime $1
+    _save "monsc" "${SIM_MONSC}"
+
     # 相邻小区信息
-    atcmd_get_sim_monnc_realtime
+    atcmd_get_sim_monnc_realtime $1
+    _save "monnc" "${SIM_MONNC}"
 }
 
 # 主循环
@@ -305,37 +243,32 @@ function _main()
 {
     while true; do
 
-        sleep 5
+        sleep 1
 
         # 检查模组是否已经成功识别了,即sysfs中有相应信息
-        while true; do
-            check_base && break
-            sleep 3
-        done
+        check_base
 
         # 根据VID:PID加载模组对应的AT指令脚本
         [ ! -z ${VID} ] && [ ! -z ${PID} ] && {
 
             ATCMD_FILE=/usr/share/omr/lib/${VID}${PID}.sh
             [ ! -f ${ATCMD_FILE} ] && {
-                logger -t "sim" "<$(basename $0) ${ifname} ${interface} ${ttyUSB}> ${ATCMD_FILE} is not exist!"
+                _log "${ATCMD_FILE} is not exist!"
                 continue;
             }
 
-            . ${ATCMD_FILE}
+            _log "${ATCMD_FILE}"
+            . ${ATCMD_FILE} $ifname
         }
 
-        # 初始化
-        initialize
-
         # 获取模组基本信息
-        get_product_info
+        get_product_info ${ttyUSB}
 
         # 检查拨号状态
-        check_dial
+        check_dial ${ttyUSB}
 
         # 更新实时状态信息
-        update_state
+        update_state ${ttyUSB}
 
     done
 }

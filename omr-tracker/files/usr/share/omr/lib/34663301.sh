@@ -1,5 +1,50 @@
 #!/bin/bash
 
+ifname=$1               # 逻辑网口名, 如sim1 wan1
+# interface=""            # 物理网口名, 如eth1 usb1
+# sysfs=""                # sim模组在sysfs中对应的路径
+# ttyUSB=""               # 拨号节点
+# VID=""                  # 模组的Vendor ID
+# PID=""                  # 模组的Product ID
+
+# MODEM_MANUFACTURE=""    # 模组厂商
+# MODEM_MODEL=""          # 模组型号
+# MODEM_REVISION=""       # 模组版本
+# MODEM_IMEI=""           # 模组IMEI
+# MODEM_SN=""             # 模组序列号
+
+SIM_ICCID=""            # SIM卡的ICCID
+SIM_IMSI=""             # SIM卡的IMSI
+SIM_STATUS=""           # SIM卡状态的字符串描述
+SIM_C5GREG=""           # 5G Core 注册状态，即终端在 5G 核心网 的注册状态
+SIM_CREG=""             # EPS域注册状态,即LTE注册状态
+SIM_FREQ=""             # LTE/NR工作频率查询,当前小区的频率信息
+SIM_MONSC=""            # 当前驻留小区信息
+SIM_MONNC=""            # 相邻小区信息
+SIM_IPv4=""             # 拨号成功后获取到的IPv4地址
+SIM_IPv6=""             # 拨号成功后获取到的IPv6地址
+
+DIAL_CID=1              # 拨号使用的PDP上下文索引
+DIAL_APN=""             # 拨号使用的APN
+DIAL_NET=""             # 入网方式配置: AUTO SA NSA LTE
+
+DIAL_AUTH_TYPE=""       # 鉴权方式: NONE PAP CHAP
+DIAL_AUTH_USER=""       # 用户名
+DIAL_AUTH_PASSWD=""     # 密码
+
+NR_LOCK_ENABLE=""       # NR锁频/锁小区使能: 0-关闭锁频功能; 1-启用锁定频点功能; 2-启用锁定小区功能; 3-启用锁定Band功能
+NR_LOCK_PCID=""         # NR PCID
+NR_LOCK_BAND=""         # NR频段
+NR_LOCK_FREQ=""         # NR频点
+NR_LOCK_SCS=""          # NR子载波间隔
+NR_FREQLOCK_JSON="{}"   # JSON格式的NR锁频/锁小区信息
+
+LTE_LOCK_ENABLE=""      # LTE锁频/锁小区使能: 0-关闭锁频功能; 1-启用锁定频点功能; 2-启用锁定小区功能; 3-启用锁定Band功能
+LTE_LOCK_PCID=""        # LTE PCID
+LTE_LOCK_BAND=""        # LTE频段
+LTE_LOCK_FREQ=""        # LTE频点
+LTE_FREQLOCK_JSON="{}"  # JSON格式的LTE锁频/锁小区信息
+
 # CME错误码转成字符串 (3GPP TS 27.007)
 errMsg=""
 function CNE_ERROR_MSG
@@ -154,17 +199,22 @@ function CNE_ERROR_MSG
     esac
 
     _log "CME ERROR ${code}: ${errMsg}"
+    logger -t "NCM" "ifname:${ifname} CME ERROR ${code}: ${errMsg}"
 }
 
 # 执行AT指令，结果存入_AT_RES全局变量，成功返回0，失败返回1
 function _exec_at
 {
     local ATCMD=$1
+    local ttyUSB=$2
+
     _log "${ATCMD}"
+    logger -t "NCM" "ifname:${ifname} ${ATCMD} ${ttyUSB}"
 
     _AT_RES=$(sms_tool -D -d "$ttyUSB" at "$ATCMD" 2>/dev/null | tr -d '\r')
     if [ -z "$_AT_RES" ] || ! echo "$_AT_RES" | grep -q "OK"; then
         _log "failed to execute $1 by ${ttyUSB}! res=${_AT_RES}"
+        logger -t "NCM" "ifname:${ifname} failed to execute $1 by ${ttyUSB}! res=${_AT_RES}"
         CNE_ERROR_MSG "$_AT_RES"
         return 1
     fi
@@ -175,43 +225,56 @@ function _exec_at
 # 打开回显
 function atcmd_init_echo
 {
-    _exec_at "ATE1" || return 1
+    logger -t "NCM" "ifname:${ifname} atcmd_init_echo $1"
+
+    local ATCMD="ATE1"
+    _exec_at "$ATCMD" $1 || return 1
+
     return 0
 }
 
 # 初始化网卡数量为1
 function atcmd_init_netnum
 {
-    _exec_at "AT^SETNETNUM?" || return 1
+    local ATCMD="AT^SETNETNUM?"
+
+    _exec_at "$ATCMD" $1 || return 1
 
     local NETNUM=$(echo "$_AT_RES" | awk '/^[0-9]+$/{print $1}')
     [ "x${NETNUM}" == "x1" ] && return 0
 
-    _exec_at "AT^SETNETNUM=1" || return 1
+    ATCMD="AT^SETNETNUM=1"
+    _exec_at "$ATCMD" $1 || return 1
+
     return 0
 }
 
 # 设置USB端口形态配置为Linux NCM模式
 function atcmd_init_ncm
 {
-    _exec_at "AT^SETMODE?" || return 1
+    local ATCMD="AT^SETMODE?"
+    _exec_at "$ATCMD" $1 || return 1
 
     local MODE=$(echo "$_AT_RES" | awk '/^[0-9]+$/{print $1}')
     [ "x${MODE}" == "x4" ] && return 0
 
-    _exec_at "AT^SETMODE=4" || return 1
+    ATCMD="AT^SETMODE=4"
+    _exec_at "$ATCMD" $1 || return 1
+
     return 0
 }
 
 # 开启SIM卡热插拔
 function atcmd_init_hotplug
 {
-    _exec_at "AT^TDSIMHP?" || return 1
+    local ATCMD="AT^TDSIMHP?"
+    _exec_at "$ATCMD" $1 || return 1
 
     local HOTPLUG=$(echo "$_AT_RES" | awk '/\^TDSIMHP:/{print $2}')
     [ "x${HOTPLUG}" == "x1" ] && return 0
 
-    _exec_at "AT^TDSIMHP=1" || return 1
+    ATCMD="AT^TDSIMHP=1"
+    _exec_at "$ATCMD" $1 || return 1
 
     return 0
 }
@@ -220,7 +283,7 @@ function atcmd_init_hotplug
 function atcmd_get_apn
 {
     local ATCMD="AT+CGDCONT?"
-    _exec_at "${ATCMD}" || return 1
+    _exec_at "${ATCMD}" $1 || return 1
 
     local PDP_JSON=$(echo "$_AT_RES" | awk -F',' '/\+CGDCONT:/{
         cid=$1
@@ -248,11 +311,10 @@ function atcmd_get_apn
 # 设置apn
 function atcmd_set_apn
 {
-    # 先查询旧的配置, 避免重复设置
-    atcmd_get_apn && [ "${DIAL_APN}" == "$1" ] && return 0
+    local ATCMD="AT+CGDCONT=1,\"IPV4V6\",\"$2\""
+    _exec_at "$ATCMD" $1 || return 1
 
-    local ATCMD="AT+CGDCONT=1,\"IPV4V6\",\"$1\""
-    _exec_at "$ATCMD" || return 1
+    return 0
 }
 
 # 查询入网方式配置, 注意: 是配置, 不是实时状态
@@ -260,14 +322,14 @@ function atcmd_get_net
 {
     # 首先查询是否为LTE入网
     local ATCMD="AT^SYSCFGEX?"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     local acqorder=$(echo "$_AT_RES" | awk -F'[,: ]+' '/SYSCFGEX/{printf "acqorder=%s",$2}')
     [ x"${acqorder}" = "x03" ] && DIAL_NET="LTE" && return 0
 
     # 查询5G入网方式
     ATCMD="AT^C5GOPTION?"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     eval $(echo "$_AT_RES" | awk -F'[,: ]+' '/C5GOPTION/{printf "nr_sa_support_flag=%s nr_dc_mode=%s gc_access_mode=%s",$2,$3,$4}')
 
@@ -285,10 +347,10 @@ function atcmd_get_net
 # 设置入网方式
 function atcmd_set_net
 {
-    NET_SETTING=$(echo "$1" | tr 'a-z' 'A-Z')
+    NET_SETTING=$(echo "$2" | tr 'a-z' 'A-Z')
 
     # 避免重复设置
-    atcmd_get_net && [ "${DIAL_NET}" == "${NET_SETTING}" ] && return 0
+    atcmd_get_net $1 && [ "${DIAL_NET}" == "${NET_SETTING}" ] && return 0
 
     local ATCMD_1=""
     local ATCMD_2=""
@@ -311,8 +373,9 @@ function atcmd_set_net
         ATCMD_2="AT^C5GOPTION=1,1,1"
     }
     
-    _exec_at "$ATCMD_1" || return 1
-    [ ! -z "${ATCMD_2}" ] && { _exec_at "$ATCMD_2" || return 1; }
+    _exec_at "$ATCMD_1" $1 || return 1
+    
+    [ ! -z "${ATCMD_2}" ] && { _exec_at "$ATCMD_2" $1 || return 1; }
 
     return 0
 }
@@ -321,7 +384,7 @@ function atcmd_set_net
 function atcmd_get_auth
 {
     local ATCMD="AT^AUTHDATA?"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     local AUTH_JSON=$(echo "$_AT_RES" | awk -F'[,"]+' '/\^AUTHDATA:/{cid=substr($1,index($1," ")+1); if(cid==1) printf "{\"cid\":\"%s\",\"auth_type\":\"%s\",\"passwd\":\"%s\",\"username\":\"%s\",\"plmn\":\"%s\"}", cid,$2,$3,$4,$5}')
 
@@ -352,11 +415,11 @@ function atcmd_get_auth
 # 设置鉴权
 function atcmd_set_auth
 {
-    local AUTH_TYPE=$(echo "$1" | tr 'a-z' 'A-Z')
+    local AUTH_TYPE=$(echo "$2" | tr 'a-z' 'A-Z')
     local AUTH_USER=""
     local AUTH_PASSWD=""
-    [ -n "$2" ] && AUTH_USER=$(echo "$2" | tr 'a-z' 'A-Z')
-    [ -n "$3" ] && AUTH_PASSWD=$(echo "$3" | tr 'a-z' 'A-Z')
+    [ -n "$2" ] && AUTH_USER=$(echo "$3" | tr 'a-z' 'A-Z')
+    [ -n "$3" ] && AUTH_PASSWD=$(echo "$4" | tr 'a-z' 'A-Z')
 
     [ -z "${AUTH_TYPE}" ] && { _log "auth type required!"; return 1; }
 
@@ -365,7 +428,7 @@ function atcmd_set_auth
     # 不需鉴权
     [ "NONE" == "${AUTH_TYPE}" ] && {
         ATCMD="AT^AUTHDATA=1,0,"
-        _exec_at "$ATCMD" || return 1
+        _exec_at "$ATCMD" $1 || return 1
         return 0
     }
 
@@ -383,7 +446,7 @@ function atcmd_set_auth
         ATCMD="AT^AUTHDATA=1,2,\"\",\"${AUTH_USER}\",\"${AUTH_PASSWD}\""
     }
 
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     return 0
 }
@@ -392,7 +455,7 @@ function atcmd_set_auth
 function atcmd_get_modem_sn()
 {
     local ATCMD="AT+CGSN"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     # AT+CGSN
     # 864640060193826
@@ -405,7 +468,7 @@ function atcmd_get_modem_sn()
 function atcmd_get_modem_model()
 {
     local ATCMD="ATI"
-    _exec_at "${ATCMD}" || return 1
+    _exec_at "${ATCMD}" $1 || return 1
 
     # ATI返回值格式:
     # Manufacturer: TD-Tech Ltd.
@@ -431,7 +494,8 @@ function atcmd_get_modem_model()
 # 获取SIM卡的ICCID
 function atcmd_get_iccid()
 {
-    _exec_at "AT^ICCID?" || return 1
+    local ATCMD="AT^ICCID?"
+    _exec_at "$ATCMD" $1 || return 1
 
     # 有sim卡时的返回值
     # ^ICCID: 89860125801058759095
@@ -442,6 +506,7 @@ function atcmd_get_iccid()
     SIM_ICCID=$(echo "$_AT_RES" | sed -n 's/.*\^ICCID: *//p')
     [ -z "$SIM_ICCID" ] && _log "failed to parse ICCID" && return 1
     _log "ICCID: ${SIM_ICCID}"
+    logger -t "NCM" "ifname:${ifname} ${SIM_ICCID}"
 
     return 0
 }
@@ -449,7 +514,8 @@ function atcmd_get_iccid()
 # 获取SIM卡的IMSI
 function atcmd_get_imsi()
 {
-    _exec_at "AT+CIMI" || return 1
+    local ATCMD="AT+CIMI"
+    _exec_at "$ATCMD" $1 || return 1
 
     # 有sim卡时的返回值
     # 230020216666831
@@ -458,6 +524,7 @@ function atcmd_get_imsi()
     SIM_IMSI=$(echo "$_AT_RES" | sed -n '/^[0-9]\{14,15\}$/p')
     [ -z "$SIM_IMSI" ] && _log "failed to parse IMSI" && return 1
     _log "IMSI: ${SIM_IMSI}"
+    logger -t "NCM" "ifname:${ifname} IMSI: ${SIM_IMSI}"
 
     return 0
 }
@@ -466,7 +533,7 @@ function atcmd_get_imsi()
 function atcmd_get_nr_lock()
 {
     local ATCMD="AT^NRFREQLOCK?"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     # 是否启用锁频或锁小区功能,0-关闭锁频功能; 1-启用锁定频点功能; 2-启用锁定小区功能; 3-启用锁定Band功能
     local operatetype=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $2}')
@@ -529,7 +596,7 @@ function atcmd_get_nr_lock()
 function atcmd_nr_unlock()
 {
     local ATCMD="AT^NRFREQLOCK=0"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     return 0
 }
@@ -537,16 +604,16 @@ function atcmd_nr_unlock()
 # 5G锁频点, 必须同时锁频段 不锁PCI小区
 function atcmd_nr_arfcn_lock()
 {
-    local band=$1
-    local freq=$2
-    local scs=$3
+    local band=$2
+    local freq=$3
+    local scs=$4
 
     [ -z "${band}" ] && { _log "band required!" && return 1; }
     [ -z "${freq}" ] && { _log "arfcn required!" && return 1; }
     [ -z "${scs}" ] && { _log "scs required!" && return 1; }
 
     local ATCMD="AT^NRFREQLOCK=1,0,1,\"${band}\",\"${freq}\",\"${scs}\""
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     return 0
 }
@@ -554,10 +621,10 @@ function atcmd_nr_arfcn_lock()
 # 5G 锁PCI 必须同时锁频段和频点 
 function atcmd_nr_pci_lock()
 {
-    local band=$1
-    local freq=$2
-    local scs=$3
-    local pcid=$4
+    local band=$2
+    local freq=$3
+    local scs=$4
+    local pcid=$5
 
     [ -z "${band}" ] && { _log "band required!" && return 1; }
     [ -z "${freq}" ] && { _log "arfcn required!" && return 1; }
@@ -565,7 +632,7 @@ function atcmd_nr_pci_lock()
     [ -z "${pcid}" ] && { _log "pcid required!" && return 1; }
 
     local ATCMD="AT^NRFREQLOCK=2,0,1,\"${band}\",\"${freq}\",\"${scs}\",\"${pcid}\""
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     return 0
 }
@@ -573,11 +640,11 @@ function atcmd_nr_pci_lock()
 # 锁5G频段 不锁频点 不锁PCI小区
 function atcmd_nr_band_lock()
 {
-    local band=$1
+    local band=$2
     [ -z "${band}" ] && { _log "band required!" && return 1; }
 
     local ATCMD="AT^NRFREQLOCK=3,0,1,\"${NRBAND}\""
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     return 0
 }
@@ -585,26 +652,26 @@ function atcmd_nr_band_lock()
 # 锁5G频段/PCI小区
 function atcmd_set_nr_lock()
 {
-    local nr_operatetype=$1
-    local nr_pcid=$2
-    local nr_band=$3
-    local nr_freq=$4
-    local nr_scs=$5
+    local nr_operatetype=$2
+    local nr_pcid=$3
+    local nr_band=$4
+    local nr_freq=$5
+    local nr_scs=$6
 
     [ -z "${nr_operatetype}" ] && { _log "operatetype required!" && return -1; }
 
     case "$nr_operatetype" in
         0) 
-            atcmd_nr_unlock
+            atcmd_nr_unlock $1
             ;;
         1) 
-            atcmd_nr_arfcn_lock "${nr_band}" "${nr_freq}" "${nr_scs}"
+            atcmd_nr_arfcn_lock $1 "${nr_band}" "${nr_freq}" "${nr_scs}"
             ;;
         2)
-            atcmd_nr_pci_lock "${nr_band}" "${nr_freq}" "${nr_scs}" "${nr_pcid}"
+            atcmd_nr_pci_lock $1 "${nr_band}" "${nr_freq}" "${nr_scs}" "${nr_pcid}"
             ;;  
         3)  
-            atcmd_nr_band_lock "${nr_band}"
+            atcmd_nr_band_lock $1 "${nr_band}"
             ;;
     esac
 
@@ -614,7 +681,7 @@ function atcmd_set_nr_lock()
 function atcmd_lte_unlock()
 {
     local ATCMD="AT^LTEFREQLOCK=0"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
     
     return 0
 } 
@@ -622,14 +689,14 @@ function atcmd_lte_unlock()
 # 4G 锁频点
 function atcmd_lte_arfcn_lock()
 {
-    local band=$1
-    local freq=$2
+    local band=$2
+    local freq=$3
 
     [ -z "${band}" ] && { _log "band required!" && return -1; }
     [ -z "${freq}" ] && { _log "freq required!" && return -1; }
 
     local ATCMD="AT^LTEFREQLOCK=1,0,1,\"${band}\",\"${freq}\""
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     return 0
 }
@@ -637,16 +704,16 @@ function atcmd_lte_arfcn_lock()
 # 4G 锁小区
 function atcmd_lte_pci_lock()
 {
-    local band=$1
-    local freq=$2
-    local pcid=$3
+    local band=$2
+    local freq=$3
+    local pcid=$4
 
     [ -z "${band}" ] && { _log "band required!" && return -1; }
     [ -z "${freq}" ] && { _log "freq required!" && return -1; }
     [ -z "${pcid}" ] && { _log "pcid required!" && return -1; }
 
     local ATCMD="AT^LTEFREQLOCK=2,0,1,\"${band}\",\"${freq}\",\"${pcid}\""
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     return 0
 }
@@ -654,11 +721,11 @@ function atcmd_lte_pci_lock()
 # 4G 锁band 不锁频点 不锁PCI小区
 function atcmd_lte_band_lock()
 {
-    local band=$1
+    local band=$2
     [ -z "${band}" ] && { _log "band required!" && return -1; }
 
     local ATCMD="AT^LTEFREQLOCK=3,0,${LTEBAND_COUNT},\"${LTEBAND}\""
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     return 0
 }
@@ -675,7 +742,7 @@ function atcmd_get_lte_lock()
     local pci=""                  # 需要锁定的小区ID,字符串类型，每个pci之间使用“,”分开，pci的取值范围0~1007
 
     local ATCMD="AT^LTEFREQLOCK?"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     local res=$(echo "$_AT_RES" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g')
 
@@ -735,25 +802,25 @@ function atcmd_get_lte_lock()
 # 锁LTE频段/PCI小区
 function atcmd_set_lte_lock()
 {
-    local lte_operatetype=$1
-    local pcid=$2
-    local band=$3
-    local freq=$4
+    local lte_operatetype=$2
+    local pcid=$3
+    local band=$4
+    local freq=$5
 
     [ -z "${lte_operatetype}" ] && { _log "operatetype required!" && return 1; }
 
     case "$lte_operatetype" in
         0) 
-            atcmd_lte_unlock
+            atcmd_lte_unlock $1
             ;;
         1) 
-            atcmd_lte_arfcn_lock "${band}" "${freq}"
+            atcmd_lte_arfcn_lock $1 "${band}" "${freq}"
             ;;
         2)
-            atcmd_lte_pci_lock "${band}" "${freq}" "${pcid}"
+            atcmd_lte_pci_lock $1 "${band}" "${freq}" "${pcid}"
             ;;  
         3)
-            atcmd_lte_band_lock "${band}"
+            atcmd_lte_band_lock $1 "${band}"
             ;;
     esac
 
@@ -764,7 +831,7 @@ function atcmd_set_lte_lock()
 function atcmd_set_airplane_on()
 {
     local ATCMD="AT+CFUN=0"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     return 0
 }
@@ -773,7 +840,7 @@ function atcmd_set_airplane_on()
 function atcmd_set_airplane_off()
 {
     local ATCMD="AT+CFUN=1"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     return 0
 }
@@ -782,7 +849,7 @@ function atcmd_set_airplane_off()
 function atcmd_connect()
 {
     local ATCMD="AT^NDISDUP=1,1"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
     
     return 0
 }
@@ -791,7 +858,8 @@ function atcmd_connect()
 function atcmd_disconnect()
 {
     local ATCMD="AT^NDISDUP=1,0"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
+    logger -t "NCM" "ifname:${ifname} ${ATCMD}"
 
     return 0
 }
@@ -813,7 +881,7 @@ function atcmd_get_sim_status_realtime()
     # 100: 卡错误（初始化过程中，卡失败）
 
     local ATCMD="AT^SIMSQ?"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     CPIN_TEXT=$(echo "$_AT_RES" | awk -F'[,:]+' '/\^SIMSQ:/{
         mode=$2
@@ -836,6 +904,7 @@ function atcmd_get_sim_status_realtime()
     }')
 
     SIM_STATUS="$CPIN_TEXT"
+    logger -t "NCM" "ifname:${ifname} ${SIM_STATUS}"
 }
 
 # 5G Core注册状态, 即终端在 5G 核心网 的注册状态
@@ -849,7 +918,7 @@ function atcmd_get_sim_5GCore_realtime()
     # AcT: 接入技术 10：EUTRAN-5GC 11：NR-5GC
 
     local ATCMD="AT+C5GREG?"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     C5GREG_JSON=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\+C5GREG:/{
         n=$2
@@ -893,7 +962,7 @@ function atcmd_get_sim_EREG_realtime()
     # AcT: 整型值，当前网络的接入技术 0-GSM 1-GSM Compact 2-UTRAN 3-GSM w/EGPRS 4-UTRAN w/HSDPA 5-UTRAN w/HSUPA 6-UTRAN w/HSDPA 和HSUPA 7-E-UTRAN 10-EUTRAN-5GC 11-NR-5GC
 
     local ATCMD="AT+CEREG?"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     CEREG_JSON=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\+CEREG:/{
         n=$2
@@ -933,7 +1002,7 @@ function atcmd_get_sim_EREG_realtime()
         printf "{\"n\":\"%s\",\"stat\":\"%s\",\"lac\":%s,\"ci\":%s,\"act\":\"%s\"}", n,stat_text,lac_json,ci_json,act_text
     }')
 
-    SIM_CREG=CEREG_JSON
+    SIM_CREG="$CEREG_JSON"
 }
 
 # LTE/NR工作频率查询,当前小区的频率信息
@@ -949,7 +1018,7 @@ function atcmd_get_sim_freq_realtime()
     # <CR><LF>OK<CR><LF>
 
     local ATCMD="AT+CEREG?"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     HFREQINFO_JSON=$(echo "$_AT_RES" | awk '
         /\^HFREQINFO:/ {
@@ -985,7 +1054,7 @@ function atcmd_get_sim_freq_realtime()
             exit
         }')
 
-    SIM_FREQ=HFREQINFO_JSON
+    SIM_FREQ="$HFREQINFO_JSON"
 }
 
 # 当前驻留小区信息
@@ -1026,7 +1095,7 @@ function atcmd_get_sim_monsc_realtime()
     local NSA=""
 
     local ATCMD="AT^MONSC"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     # NSA时会同时返回NR和LTE的驻网信息, 需特殊处理
     echo "$_AT_RES" | grep -q 'NR' && echo "$_AT_RES" | grep -q 'LTE' && NSA="yes"
@@ -1069,13 +1138,40 @@ function atcmd_get_sim_monsc_realtime()
     # 未驻留到小区时,尝试从IMSI中获取运营商信息
     T=$(echo "$_AT_RES" | awk '/CIMI:/{gsub(/.*CIMI[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
     [ -n "$T" ] && MCC=$(echo "$T" | cut -c1-3) && MNC=$(echo "$T" | cut -c4-5)
+
+    # 拼装成JSON
+    case "$RAT" in
+        "NR/SA")
+            SIM_MONSC=$(printf '{"rat":"%s","mcc":"%s","mnc":"%s","cell":{"type":"nr","arfcn":"%s","scs":"%s","cell_id":"%s","pci":"%s","tac":"%s","rsrp":"%s","rsrq":"%s","sinr":"%s"}}' \
+                "$RAT" "$MCC" "$MNC" "$NR_ARFCN" "$NR_SCS" "$NR_CELL_ID" "$NR_PCI" "$NR_TAC" "$NR_RSRP" "$NR_RSRQ" "$NR_SINR")
+            ;;
+        "LTE")
+            SIM_MONSC=$(printf '{"rat":"%s","mcc":"%s","mnc":"%s","cell":{"type":"lte","arfcn":"%s","cell_id":"%s","pci":"%s","tac":"%s","rsrp":"%s","rsrq":"%s","rssi":"%s"}}' \
+                "$RAT" "$MCC" "$MNC" "$LTE_ARFCN" "$LTE_CELL_ID" "$LTE_PCI" "$LTE_TAC" "$LTE_RSRP" "$LTE_RSRQ" "$LTE_RSSI")
+            ;;
+        "WCDMA")
+            SIM_MONSC=$(printf '{"rat":"%s","mcc":"%s","mnc":"%s","cell":{"type":"wcdma","arfcn":"%s","psc":"%s","cell_id":"%s","lac":"%s","rscp":"%s","rxlev":"%s","ecno":"%s","drx":"%s","ura":"%s"}}' \
+                "$RAT" "$MCC" "$MNC" "$WCDMA_ARFCN" "$WCDMA_PCS" "$WCDMA_CELL_ID" "$LAC" "$RSCP" "$RXLEV" "$ECNO" "$DRX" "$URA")
+            ;;
+        "NR/NSA")
+            SIM_MONSC=$(printf '{"rat":"%s","mcc":"%s","mnc":"%s","nr_cell":{"arfcn":"%s","scs":"%s","cell_id":"%s","pci":"%s","tac":"%s","rsrp":"%s","rsrq":"%s","sinr":"%s"},"lte_cell":{"mcc":"%s","mnc":"%s","arfcn":"%s","cell_id":"%s","pci":"%s","tac":"%s","rsrp":"%s","rsrq":"%s","rssi":"%s"}}' \
+                "$RAT" "$MCC" "$MNC" \
+                "$NR_ARFCN" "$NR_SCS" "$NR_CELL_ID" "$NR_PCI" "$NR_TAC" "$NR_RSRP" "$NR_RSRQ" "$NR_SINR" \
+                "$LTE_MCC" "$LTE_MNC" "$LTE_ARFCN" "$LTE_CELL_ID" "$LTE_PCI" "$LTE_TAC" "$LTE_RSRP" "$LTE_RSRQ" "$LTE_RSSI")
+            ;;
+        *)
+            SIM_MONSC="{}"
+            ;;
+    esac
+
+    return 0
 }
 
 # 相邻小区信息
 function atcmd_get_sim_monnc_realtime()
 {
     local ATCMD="AT^MONNC"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     # 格式: ^MONNC: <RAT>[,<cell_paras>]
     # 每种 RAT 可能有多行 (GSM最多6个, WCDMA/LTE/NR最多16个)
@@ -1110,13 +1206,17 @@ function atcmd_get_sim_monnc_realtime()
     NC_WCDMA_JSON=$(echo "$NC_WCDMA" | awk -F',' 'NF>=4{printf "%s{\"arfcn\":\"%s\",\"psc\":\"%s\",\"rscp\":\"%s\",\"ecno\":\"%s\"}", (NR>1?",":""),$1,$2,$3,$4}' | awk 'BEGIN{printf "["} {printf "%s",$0} END{printf "]"}')
     NC_LTE_JSON=$(echo "$NC_LTE" | awk -F',' 'NF>=5{printf "%s{\"arfcn\":\"%s\",\"pci\":\"%s\",\"rsrp\":\"%s\",\"rsrq\":\"%s\",\"rxlev\":\"%s\"}", (NR>1?",":""),$1,$2,$3,$4,$5}' | awk 'BEGIN{printf "["} {printf "%s",$0} END{printf "]"}')
     NC_NR_JSON=$(echo "$NC_NR" | awk -F',' 'NF>=5{printf "%s{\"arfcn\":\"%s\",\"pci\":\"%s\",\"rsrp\":\"%s\",\"rsrq\":\"%s\",\"sinr\":\"%s\"}", (NR>1?",":""),$1,$2,$3,$4,$5}' | awk 'BEGIN{printf "["} {printf "%s",$0} END{printf "]"}')
+
+    # 封装成一个整体大的JSON
+    SIM_MONNC=$(printf '{"gsm":%s,"wcdma":%s,"lte":%s,"nr":%s}' \
+        "$NC_GSM_JSON" "$NC_WCDMA_JSON" "$NC_LTE_JSON" "$NC_NR_JSON")
 }
 
 # 查询PDP上下文实际使用的IP地址
 function atcmd_get_addr()
 {
     local ATCMD="AT+CGPADDR=1"
-    _exec_at "$ATCMD" || return 1
+    _exec_at "$ATCMD" $1 || return 1
 
     # AT+CGPADDR=1
     # +CGPADDR: 1,"10.130.211.28","36.8.132.13.110.0.125.201.24.187.158.93.237.218.64.128"
@@ -1137,6 +1237,122 @@ function atcmd_get_addr()
     #     _log "IPv4: ${SIM_IPv4}, IPv6: ${SIM_IPv6}"
     # else
     #     _log "IPv4: ${SIM_IPv4}"
+    fi
+
+    return 0
+}
+
+# 初始化
+function atcmd_init
+{
+    logger -t "NCM" "ifname:${ifname} atcmd_init $1"
+    # 打开回显
+    atcmd_init_echo $1
+    # 初始化网卡数量为1
+    atcmd_init_netnum $1
+    # 设置USB端口形态配置为Linux NCM模式
+    atcmd_init_ncm $1
+    # 开启SIM卡热插拔
+    atcmd_init_hotplug $1
+
+    return 0
+}
+
+# 拨号
+function dial
+{
+    # 必须先断开连接才能激活PDP上下文
+    atcmd_disconnect $1
+
+    # 设置APN
+    local apn=$(uci -q get sim.$ifname.apn)
+    [ -z ${apn} ] && {
+        echo "apn required! (uci -q get sim.$ifname.apn)"
+        logger -t "NCM" "ifname:${ifname} apn required! (uci -q get sim.$ifname.apn)"
+        return 1
+    }
+    atcmd_set_apn $1 $apn
+
+    # 设置入网方式
+    local net=$(uci -q get sim.$ifname.net)
+    atcmd_set_net $1 $net
+
+    # 设置鉴权
+    local auth=$(uci -q get sim.$ifname.auth)
+    local user=$(uci -q get sim.$ifname.user)
+    local passwd=$(uci -q get sim.$ifname.passwd)
+    atcmd_set_auth $1 $auth $user $passwd
+
+
+    # 锁5G频段/PCI小区
+    local nr_lock=$(uci -q get sim.$ifname.nrPciLock)
+    local nr_pcid=$(uci -q get sim.$ifname.nrPciPcid)
+    local nr_band=$(uci -q get sim.$ifname.nrPciBand)
+    local nr_freq=$(uci -q get sim.$ifname.nrPciFreq)
+    local nr_scs=$(uci -q get sim.$ifname.nrPciScs)
+    atcmd_set_nr_lock $1 $nr_lock $nr_pcid $nr_band $nr_freq $nr_scs
+
+    # 锁LTE频段/PCI小区
+    local lte_lock=$(uci -q get sim.$ifname.ltePciLock)
+    local lte_pcid=$(uci -q get sim.$ifname.ltePciPcid)
+    local lte_band=$(uci -q get sim.$ifname.ltePciBand)
+    local lte_freq=$(uci -q get sim.$ifname.ltePciFreq)
+    atcmd_set_lte_lock $1 $lte_lock $lte_pcid $lte_band $lte_freq
+
+    # 切换一次飞行模式
+    atcmd_set_airplane_on $1
+    sleep 3
+    atcmd_set_airplane_off $1
+
+    # 拨号
+    if atcmd_connect $1; then
+        return 0
+    fi
+
+    return 1
+}
+
+# 拨号
+function atcmd_dial
+{
+    # 检查是否插卡
+    atcmd_get_sim_status_realtime $1
+
+    # 判断SIM_STATUS中是否包含: "SIM Initialized" 或 "SIM Ready"
+    if ! echo "${SIM_STATUS}" | grep -qE "SIM Initialized|SIM Ready"; then
+        return 1
+    fi
+
+    # 获取iccid
+    atcmd_get_iccid $1
+
+    # 获取imsi
+    atcmd_get_imsi $1
+
+    # 检查是否需要重新拨号
+    atcmd_get_addr $1
+    # IPv4
+    [ -z "${SIM_IPv4}" ] || { 
+        echo "IPv4: ${SIM_IPv4}"
+        logger -t "NCM" "ifname:${ifname} IPv4:${SIM_IPv4}"
+    } 
+    [ -z "${SIM_IPv4}" ] && { 
+        echo "IPv4 not ready!"
+        logger -t "NCM" "ifname:${ifname} IPv4 not ready!"
+    }
+    # IPv6
+    [ -z "${SIM_IPv6}" ] || {
+        echo "IPv6: ${SIM_IPv6}"
+        logger -t "NCM" "ifname:${ifname} IPv6: ${SIM_IPv6}"
+    }
+    [ -z "${SIM_IPv6}" ] && {
+        echo "IPv6 not ready!"
+        logger -t "NCM" "ifname:${ifname} IPv6 not ready!"
+    }
+
+    # 拨号
+    if ! dial $1; then
+        return 1
     fi
 
     return 0
