@@ -12,26 +12,6 @@ ifname=$1
 	exit 1
 }
 
-# 保存到tmpfs
-function _save()
-{
-    local item=$1       # 参数项
-    local state=$2      # 参数值
-
-    local statusfs="/tmp/tracker-sim/${ifname}"
-    [ -d ${statusfs} ] || mkdir -p ${statusfs}
-
-    # JSON 美化
-    case "${state}" in
-        {*}|\[{*)
-            echo "${state}" | jq . > "${statusfs}/${item}"
-            ;;
-        *)
-            echo "${state}" > "${statusfs}/${item}"
-            ;;
-    esac
-}
-
 function _log()
 {
     logger -t "tracker-sim ${ifname}" "<${interface} ${ttyUSB}>" "$@"
@@ -42,8 +22,6 @@ _log "ifname=$ifname"
 # 基本配置检查: 检查uci配置是否正确
 function check_base
 {
-    _save "ifname" "${ifname}"
-
     _log ">>>>>> ifname:${ifname}"
 
     # 检查sysfs中是否已有模组对应信息
@@ -53,7 +31,6 @@ function check_base
     [ ! -d "$sysfs" ] && _log "sysfs is not exist! sysfs:${sysfs}" && return 1
 
     _log "sysfs:${sysfs}"
-    _save "sysfs" "${sysfs}"
 
     # 获取拨号所需的/dev/ttyUSB节点
     config_get ttyUSB "$ifname" ttyUSB
@@ -63,24 +40,16 @@ function check_base
     [ -z "$ttyUSB" ] && _log "can not find ttyUSB in $sysfs/$ttyUSB" && return 1
     ttyUSB="/dev/${ttyUSB}"
 
-    _save "ttyUSB" "${ttyUSB}"
-
     # 获取对应的真实物理网口（sysfs下的usb接口目录包含net子目录，其中即为网口名）
     interface=$(ls "$sysfs"/*/net/ 2>/dev/null)
     [ -z "$interface" ] && _log "can not find interface in ${sysfs}" && return 1
-
-    _save "interface" "${interface}"
 
     # 获取模组的VID:PID
     VID=$(cat /sys/bus/usb/devices/$(basename $sysfs)/idVendor)
     [ -z "$VID" ] && _log "unknown Vendor! " && return 1
 
-    _save "VID" "${VID}"
-
     PID=$(cat /sys/bus/usb/devices/$(basename $sysfs)/idProduct)
     [ -z "$PID" ] && _log "unknown Product! " && return 1
-
-    _save "PID" "${PID}"
 
     _log "VID:PID=$VID:$PID"
 
@@ -94,10 +63,6 @@ function get_product_info()
     if [ -z "${MODEM_MANUFACTURE}" ] || [ -z "${MODEM_MODEL}" ] || [ -z "${MODEM_REVISION}" ] || [ -z "${MODEM_IMEI}" ]; then
         if atcmd_get_modem_model $1; then
             _log "${MODEM_MANUFACTURE} ${MODEM_MODEL} ${MODEM_REVISION} ${MODEM_IMEI}"
-            _save "manufacture" "${MODEM_MANUFACTURE}"
-            _save "model" "${MODEM_MODEL}"
-            _save "revision" "${MODEM_REVISION}"
-            _save "imei" "${MODEM_IMEI}"
         else
             _log "failed to get modem info"
         fi
@@ -106,7 +71,7 @@ function get_product_info()
     # 获取模组序列号
     if [ -z ${MODEM_SN} ]; then
         if atcmd_get_modem_sn $1; then
-            _save "sn" "${MODEM_SN}"
+            _log "sn: ${MODEM_SN}"
         else
             _log "failed to get modem sn"
         fi
@@ -172,7 +137,6 @@ function check_dial
 {
     # 检查是否插卡
     atcmd_get_sim_status_realtime $1
-    _save "sim_status" "${SIM_STATUS}"
 
     # 判断SIM_STATUS中是否包含: "SIM Initialized" 或 "SIM Ready"
     if ! echo "${SIM_STATUS}" | grep -qE "SIM Initialized|SIM Ready"; then
@@ -182,31 +146,25 @@ function check_dial
 
     # 获取iccid
     atcmd_get_iccid $1
-    _save "iccid" "${SIM_ICCID}"
 
     # 获取imsi
     atcmd_get_imsi $1
-    _save "imsi" "${SIM_IMSI}"
 
     # 检查是否需要重新拨号
     atcmd_get_addr $1
     # IPv4
     [ -z "${SIM_IPv4}" ] || { 
         _log "IP: ${SIM_IPv4}" 
-        _save "IPv4" "${SIM_IPv4}"
     } 
     [ -z "${SIM_IPv4}" ] && { 
         _log "IPv4 not ready!"
-        _save "IPv4" ""
     }
     # IPv6
     [ -z "${SIM_IPv6}" ] || {
         _log "IP: ${SIM_IPv6}"
-        _save "IPv6" "${SIM_IPv6}"
     }
     [ -z "${SIM_IPv6}" ] && {
         _log "IPv6 not ready!"
-        _save "IPv6" ""
     }
 }
 
@@ -215,27 +173,21 @@ function update_state
 {
     # SIM卡状态
     atcmd_get_sim_status_realtime $1
-    _save "sim_status" "${SIM_STATUS}"
 
     # 5G Core注册状态
     atcmd_get_sim_5GCore_realtime $1
-    _save "C5GREG" "${SIM_C5GREG}"
 
     # EPS域注册状态,即LTE注册状态
     atcmd_get_sim_EREG_realtime $1
-    _save "CLTEREG" "${SIM_CREG}"
 
     # LTE/NR工作频率查询,当前小区的频率信息
     atcmd_get_sim_freq_realtime $1
-    _save "freq" "${SIM_FREQ}"
 
     # 当前驻留小区信息
     atcmd_get_sim_monsc_realtime $1
-    _save "monsc" "${SIM_MONSC}"
 
     # 相邻小区信息
     atcmd_get_sim_monnc_realtime $1
-    _save "monnc" "${SIM_MONNC}"
 }
 
 # 主循环
@@ -243,7 +195,7 @@ function _main()
 {
     while true; do
 
-        sleep 1
+        sleep 5
 
         # 检查模组是否已经成功识别了,即sysfs中有相应信息
         check_base

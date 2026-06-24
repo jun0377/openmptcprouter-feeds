@@ -45,6 +45,15 @@ LTE_LOCK_BAND=""        # LTE频段
 LTE_LOCK_FREQ=""        # LTE频点
 LTE_FREQLOCK_JSON="{}"  # JSON格式的LTE锁频/锁小区信息
 
+# 由 tracker-sim 在 source 本文件前通过 check_base 设置的 sysfs 变量
+# 在此处统一保存到 tmpfs
+_save "ifname" "${ifname}"
+_save "sysfs" "${sysfs}"
+_save "ttyUSB" "${ttyUSB}"
+_save "interface" "${interface}"
+_save "VID" "${VID}"
+_save "PID" "${PID}"
+
 # CME错误码转成字符串 (3GPP TS 27.007)
 errMsg=""
 function CNE_ERROR_MSG
@@ -199,7 +208,27 @@ function CNE_ERROR_MSG
     esac
 
     _log "CME ERROR ${code}: ${errMsg}"
-    logger -t "NCM" "ifname:${ifname} CME ERROR ${code}: ${errMsg}"
+    # logger -t "NCM" "ifname:${ifname} CME ERROR ${code}: ${errMsg}"
+}
+
+# 保存到tmpfs
+function _save()
+{
+    local item=$1       # 参数项
+    local state=$2      # 参数值
+
+    local statusfs="/tmp/tracker-sim/${ifname}"
+    [ -d ${statusfs} ] || mkdir -p ${statusfs}
+
+    # JSON 美化
+    case "${state}" in
+        {*}|\[{*)
+            echo "${state}" | jq . > "${statusfs}/${item}"
+            ;;
+        *)
+            echo "${state}" > "${statusfs}/${item}"
+            ;;
+    esac
 }
 
 # 执行AT指令，结果存入_AT_RES全局变量，成功返回0，失败返回1
@@ -209,12 +238,12 @@ function _exec_at
     local ttyUSB=$2
 
     _log "${ATCMD}"
-    logger -t "NCM" "ifname:${ifname} ${ATCMD} ${ttyUSB}"
+    # logger -t "NCM" "ifname:${ifname} ${ATCMD} ${ttyUSB}"
 
     _AT_RES=$(sms_tool -D -d "$ttyUSB" at "$ATCMD" 2>/dev/null | tr -d '\r')
     if [ -z "$_AT_RES" ] || ! echo "$_AT_RES" | grep -q "OK"; then
         _log "failed to execute $1 by ${ttyUSB}! res=${_AT_RES}"
-        logger -t "NCM" "ifname:${ifname} failed to execute $1 by ${ttyUSB}! res=${_AT_RES}"
+        # logger -t "NCM" "ifname:${ifname} failed to execute $1 by ${ttyUSB}! res=${_AT_RES}"
         CNE_ERROR_MSG "$_AT_RES"
         return 1
     fi
@@ -462,6 +491,7 @@ function atcmd_get_modem_sn()
     # OK
 
     MODEM_SN=$(echo "$_AT_RES" | awk '/^[0-9]+$/{print $1; exit}')
+    [ -n "${MODEM_SN}" ] && _save "sn" "${MODEM_SN}"
 }
 
 # 获取模组的厂商/型号/版本/IMEI
@@ -488,6 +518,11 @@ function atcmd_get_modem_model()
     [ -z "$MODEM_REVISION" ] && return 1
     [ -z "$MODEM_IMEI" ] && return 1
 
+    _save "manufacture" "${MODEM_MANUFACTURE}"
+    _save "model" "${MODEM_MODEL}"
+    _save "revision" "${MODEM_REVISION}"
+    _save "imei" "${MODEM_IMEI}"
+
     return 0
 }
 
@@ -506,7 +541,8 @@ function atcmd_get_iccid()
     SIM_ICCID=$(echo "$_AT_RES" | sed -n 's/.*\^ICCID: *//p')
     [ -z "$SIM_ICCID" ] && _log "failed to parse ICCID" && return 1
     _log "ICCID: ${SIM_ICCID}"
-    logger -t "NCM" "ifname:${ifname} ${SIM_ICCID}"
+    _save "iccid" "${SIM_ICCID}"
+    # logger -t "NCM" "ifname:${ifname} ${SIM_ICCID}"
 
     return 0
 }
@@ -524,7 +560,8 @@ function atcmd_get_imsi()
     SIM_IMSI=$(echo "$_AT_RES" | sed -n '/^[0-9]\{14,15\}$/p')
     [ -z "$SIM_IMSI" ] && _log "failed to parse IMSI" && return 1
     _log "IMSI: ${SIM_IMSI}"
-    logger -t "NCM" "ifname:${ifname} IMSI: ${SIM_IMSI}"
+    _save "imsi" "${SIM_IMSI}"
+    # logger -t "NCM" "ifname:${ifname} IMSI: ${SIM_IMSI}"
 
     return 0
 }
@@ -904,7 +941,8 @@ function atcmd_get_sim_status_realtime()
     }')
 
     SIM_STATUS="$CPIN_TEXT"
-    logger -t "NCM" "ifname:${ifname} ${SIM_STATUS}"
+    _save "sim_status" "${SIM_STATUS}"
+    # logger -t "NCM" "ifname:${ifname} ${SIM_STATUS}"
 }
 
 # 5G Core注册状态, 即终端在 5G 核心网 的注册状态
@@ -949,6 +987,7 @@ function atcmd_get_sim_5GCore_realtime()
     }')
 
     SIM_C5GREG="$C5GREG_JSON"
+    _save "C5GREG" "${SIM_C5GREG}"
 }
 
 # EPS域注册状态,即LTE注册状态
@@ -1003,6 +1042,7 @@ function atcmd_get_sim_EREG_realtime()
     }')
 
     SIM_CREG="$CEREG_JSON"
+    _save "CLTEREG" "${SIM_CREG}"
 }
 
 # LTE/NR工作频率查询,当前小区的频率信息
@@ -1055,6 +1095,7 @@ function atcmd_get_sim_freq_realtime()
         }')
 
     SIM_FREQ="$HFREQINFO_JSON"
+    _save "freq" "${SIM_FREQ}"
 }
 
 # 当前驻留小区信息
@@ -1164,6 +1205,8 @@ function atcmd_get_sim_monsc_realtime()
             ;;
     esac
 
+    _save "monsc" "${SIM_MONSC}"
+
     return 0
 }
 
@@ -1210,6 +1253,7 @@ function atcmd_get_sim_monnc_realtime()
     # 封装成一个整体大的JSON
     SIM_MONNC=$(printf '{"gsm":%s,"wcdma":%s,"lte":%s,"nr":%s}' \
         "$NC_GSM_JSON" "$NC_WCDMA_JSON" "$NC_LTE_JSON" "$NC_NR_JSON")
+    _save "monnc" "${SIM_MONNC}"
 }
 
 # 查询PDP上下文实际使用的IP地址
@@ -1238,6 +1282,9 @@ function atcmd_get_addr()
     # else
     #     _log "IPv4: ${SIM_IPv4}"
     fi
+
+    _save "IPv4" "${SIM_IPv4:-}"
+    _save "IPv6" "${SIM_IPv6:-}"
 
     return 0
 }
@@ -1268,7 +1315,7 @@ function dial
     local apn=$(uci -q get sim.$ifname.apn)
     [ -z ${apn} ] && {
         echo "apn required! (uci -q get sim.$ifname.apn)"
-        logger -t "NCM" "ifname:${ifname} apn required! (uci -q get sim.$ifname.apn)"
+        # logger -t "NCM" "ifname:${ifname} apn required! (uci -q get sim.$ifname.apn)"
         return 1
     }
     atcmd_set_apn $1 $apn
@@ -1334,20 +1381,20 @@ function atcmd_dial
     # IPv4
     [ -z "${SIM_IPv4}" ] || { 
         echo "IPv4: ${SIM_IPv4}"
-        logger -t "NCM" "ifname:${ifname} IPv4:${SIM_IPv4}"
+        # logger -t "NCM" "ifname:${ifname} IPv4:${SIM_IPv4}"
     } 
     [ -z "${SIM_IPv4}" ] && { 
         echo "IPv4 not ready!"
-        logger -t "NCM" "ifname:${ifname} IPv4 not ready!"
+        # logger -t "NCM" "ifname:${ifname} IPv4 not ready!"
     }
     # IPv6
     [ -z "${SIM_IPv6}" ] || {
         echo "IPv6: ${SIM_IPv6}"
-        logger -t "NCM" "ifname:${ifname} IPv6: ${SIM_IPv6}"
+        # logger -t "NCM" "ifname:${ifname} IPv6: ${SIM_IPv6}"
     }
     [ -z "${SIM_IPv6}" ] && {
         echo "IPv6 not ready!"
-        logger -t "NCM" "ifname:${ifname} IPv6 not ready!"
+        # logger -t "NCM" "ifname:${ifname} IPv6 not ready!"
     }
 
     # 拨号
