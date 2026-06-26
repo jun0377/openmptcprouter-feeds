@@ -18,6 +18,7 @@ SIM_IMSI=""             # SIM卡的IMSI
 SIM_STATUS=""           # SIM卡状态的字符串描述
 SIM_C5GREG=""           # 5G Core 注册状态，即终端在 5G 核心网 的注册状态
 SIM_CREG=""             # EPS域注册状态,即LTE注册状态
+SIM_PLMN=""             # 运营商信息
 SIM_FREQ=""             # LTE/NR工作频率查询,当前小区的频率信息
 SIM_MONSC=""            # 当前驻留小区信息
 SIM_MONNC=""            # 相邻小区信息
@@ -44,6 +45,26 @@ LTE_LOCK_PCID=""        # LTE PCID
 LTE_LOCK_BAND=""        # LTE频段
 LTE_LOCK_FREQ=""        # LTE频点
 LTE_FREQLOCK_JSON="{}"  # JSON格式的LTE锁频/锁小区信息
+
+# 保存到tmpfs
+function _save()
+{
+    local item=$1       # 参数项
+    local state=$2      # 参数值
+
+    local statusfs="/tmp/tracker-sim/${ifname}"
+    [ -d ${statusfs} ] || mkdir -p ${statusfs}
+
+    # JSON 美化
+    case "${state}" in
+        {*}|\[{*)
+            echo "${state}" | jq . > "${statusfs}/${item}"
+            ;;
+        *)
+            echo "${state}" > "${statusfs}/${item}"
+            ;;
+    esac
+}
 
 # 由 tracker-sim 在 source 本文件前通过 check_base 设置的 sysfs 变量
 # 在此处统一保存到 tmpfs
@@ -211,25 +232,7 @@ function CNE_ERROR_MSG
     # logger -t "NCM" "ifname:${ifname} CME ERROR ${code}: ${errMsg}"
 }
 
-# 保存到tmpfs
-function _save()
-{
-    local item=$1       # 参数项
-    local state=$2      # 参数值
 
-    local statusfs="/tmp/tracker-sim/${ifname}"
-    [ -d ${statusfs} ] || mkdir -p ${statusfs}
-
-    # JSON 美化
-    case "${state}" in
-        {*}|\[{*)
-            echo "${state}" | jq . > "${statusfs}/${item}"
-            ;;
-        *)
-            echo "${state}" > "${statusfs}/${item}"
-            ;;
-    esac
-}
 
 # 执行AT指令，结果存入_AT_RES全局变量，成功返回0，失败返回1
 function _exec_at
@@ -304,6 +307,130 @@ function atcmd_init_hotplug
 
     ATCMD="AT^TDSIMHP=1"
     _exec_at "$ATCMD" $1 || return 1
+
+    return 0
+}
+
+# 当前时间戳
+function atcmd_timestamp()
+{
+    TIMESTAMP=$(date "+%Y-%m-%dT%H:%M:%S")
+    _save "timestamp" "${TIMESTAMP}"
+}
+
+# 获取运营商信息
+function atcmd_get_plmn()
+{
+    # 查询运营商
+    # AT^EONS=1
+    # ^EONS: 1,46011,"4E2D56FD75354FE1","4E2D56FD75354FE1",1,"4E2D56FD75354FE1"
+    # OK
+    local ATCMD="AT^EONS=1"
+    _exec_at "$ATCMD" $1 || return 1
+
+    local eons_fields=""
+    local mode=""
+    local plmn=""
+    local country=""
+    local long_name_hex=""
+    local short_name_hex=""
+    local spn_flag=""
+    local spn_name_hex=""
+    local long_name=""
+    local short_name=""
+    local spn_name=""
+
+    eons_fields=$(echo "$_AT_RES" | awk -F'[,:]+' '/\^EONS:/{
+        mode=$2
+        plmn=$3
+        long_name=$4
+        short_name=$5
+        spn_flag=$6
+        spn_name=$7
+
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", mode)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", plmn)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", long_name)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", short_name)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", spn_flag)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", spn_name)
+        gsub(/"/, "", long_name)
+        gsub(/"/, "", short_name)
+        gsub(/"/, "", spn_name)
+
+        printf "%s\t%s\t%s\t%s\t%s\t%s", mode, plmn, long_name, short_name, spn_flag, spn_name
+        exit
+    }')
+
+    [ -z "$eons_fields" ] && _log "failed to parse PLMN from AT^EONS=1" && return 1
+
+    IFS='	' read -r mode plmn long_name_hex short_name_hex spn_flag spn_name_hex <<EOF
+$eons_fields
+EOF
+
+    [ -z "$plmn" ] && _log "PLMN is empty" && return 1
+
+    long_name="$long_name_hex"
+    short_name="$short_name_hex"
+    spn_name="$spn_name_hex"
+
+    # UCS2 hex -> UTF-8 纯 shell 解码 (无 iconv/xxd 依赖)
+    _ucs2be_hex_to_utf8() {
+        local hex="$1"
+        local i=0 codepoint
+
+        while [ $i -lt ${#hex} ]; do
+            # 读取 2 字节 (4 个 hex 字符) = 1 个 UCS-2 码点
+            codepoint=$(( 0x${hex:i:4} ))
+            i=$(( i + 4 ))
+
+            if [ "$codepoint" -lt 128 ]; then
+                # U+0000 - U+007F: 1 byte UTF-8
+                printf "\\$(printf '%03o' "$codepoint")"
+            elif [ "$codepoint" -lt 2048 ]; then
+                # U+0080 - U+07FF: 2 byte UTF-8
+                printf "\\$(printf '%03o' $(( 0xC0 | (codepoint >> 6) )))"
+                printf "\\$(printf '%03o' $(( 0x80 | (codepoint & 0x3F) )))"
+            else
+                # U+0800 - U+FFFF: 3 byte UTF-8
+                printf "\\$(printf '%03o' $(( 0xE0 | (codepoint >> 12) )))"
+                printf "\\$(printf '%03o' $(( 0x80 | ((codepoint >> 6) & 0x3F) )))"
+                printf "\\$(printf '%03o' $(( 0x80 | (codepoint & 0x3F) )))"
+            fi
+        done
+    }
+
+    echo "$long_name_hex" | grep -qE '^[0-9A-Fa-f]+$' && [ $(( ${#long_name_hex} % 4 )) -eq 0 ] && \
+        long_name=$(_ucs2be_hex_to_utf8 "$long_name_hex")
+    echo "$short_name_hex" | grep -qE '^[0-9A-Fa-f]+$' && [ $(( ${#short_name_hex} % 4 )) -eq 0 ] && \
+        short_name=$(_ucs2be_hex_to_utf8 "$short_name_hex")
+    echo "$spn_name_hex" | grep -qE '^[0-9A-Fa-f]+$' && [ $(( ${#spn_name_hex} % 4 )) -eq 0 ] && \
+        spn_name=$(_ucs2be_hex_to_utf8 "$spn_name_hex")
+
+    # 根据 PLMN 从 mccmnc.dat 查找国家名称
+    local mccmnc_file="/usr/share/modemdata/libs/mccmnc.dat"
+    if [ -f "$mccmnc_file" ]; then
+        country=$(grep "^${plmn};" "$mccmnc_file" 2>/dev/null | head -1 | cut -d';' -f2)
+    fi
+
+    SIM_PLMN=$(printf '{"mode":"%s","plmn":"%s","country":"%s","long_name":"%s","long_name_hex":"%s","short_name":"%s","short_name_hex":"%s","spn_flag":"%s","spn_name":"%s","spn_name_hex":"%s"}' \
+        "$mode" "$plmn" "$country" "$long_name" "$long_name_hex" "$short_name" "$short_name_hex" "$spn_flag" "$spn_name" "$spn_name_hex")
+
+    # {
+    #     "mode": "1",
+    #     "plmn": "46001",
+    #     "country": "China"
+    #     "long_name": "中国联通",
+    #     "long_name_hex": "4E2D56FD8054901A",
+    #     "short_name": "中国联通",
+    #     "short_name_hex": "4E2D56FD8054901A",
+    #     "spn_flag": "",
+    #     "spn_name": "",
+    #     "spn_name_hex": ""
+    # }
+
+
+    _save "plmn" "${SIM_PLMN}"
 
     return 0
 }
@@ -986,6 +1113,19 @@ function atcmd_get_sim_5GCore_realtime()
         printf "{\"n\":\"%s\",\"stat\":\"%s\",\"tac\":\"%s\",\"ci\":\"%s\",\"act\":\"%s\"}", n,stat_text,tac,ci,act_text
     }')
 
+    local ts=$(date "+%Y-%m-%dT%H:%M:%S")
+
+    # root@MP-Router:/tmp/tracker-sim/sim1# cat C5GREG 
+    # {
+    # "timestamp": "2026-06-26T08:49:03",     # 更新时间戳
+    # "n": "2",                               # 主动上报状态, 0-禁止主动上报; 1 - 使能主动上报; 2-使能部分信息的主动上报
+    # "stat": "已注册本地网",                   # 附网状态
+    # "tac": "59090A",                        # 位置码信息  
+    # "ci": "0000000592E60002",               # 小区信息
+    # "act": "NR-5GC"                         # 网络接入技术: EUTRAN-5GC / NR-5GC
+    # }
+
+    C5GREG_JSON=$(echo "$C5GREG_JSON" | sed "s/^{/{\"timestamp\":\"${ts}\",/")
     SIM_C5GREG="$C5GREG_JSON"
     _save "C5GREG" "${SIM_C5GREG}"
 }
@@ -1042,6 +1182,9 @@ function atcmd_get_sim_EREG_realtime()
     }')
 
     SIM_CREG="$CEREG_JSON"
+    local ts=$(date "+%Y-%m-%dT%H:%M:%S")
+    CEREG_JSON=$(echo "$CEREG_JSON" | sed "s/^{/{\"timestamp\":\"${ts}\",/")
+    SIM_CREG="$CEREG_JSON"
     _save "CLTEREG" "${SIM_CREG}"
 }
 
@@ -1057,7 +1200,7 @@ function atcmd_get_sim_freq_realtime()
     # ]<CR><LF>
     # <CR><LF>OK<CR><LF>
 
-    local ATCMD="AT+CEREG?"
+    local ATCMD="AT^HFREQINFO?"
     _exec_at "$ATCMD" $1 || return 1
 
     HFREQINFO_JSON=$(echo "$_AT_RES" | awk '
@@ -1094,6 +1237,9 @@ function atcmd_get_sim_freq_realtime()
             exit
         }')
 
+    SIM_FREQ="$HFREQINFO_JSON"
+    local ts=$(date "+%Y-%m-%dT%H:%M:%S")
+    HFREQINFO_JSON=$(echo "$HFREQINFO_JSON" | sed "s/^{/{\"timestamp\":\"${ts}\",/")
     SIM_FREQ="$HFREQINFO_JSON"
     _save "freq" "${SIM_FREQ}"
 }
@@ -1139,7 +1285,7 @@ function atcmd_get_sim_monsc_realtime()
     _exec_at "$ATCMD" $1 || return 1
 
     # NSA时会同时返回NR和LTE的驻网信息, 需特殊处理
-    echo "$_AT_RES" | grep -q 'NR' && echo "$_AT_RES" | grep -q 'LTE' && NSA="yes"
+    echo "$_AT_RES" | grep -q '^MONSC:.*NR' && echo "$_AT_RES" | grep -q '^MONSC:.*LTE' && NSA="yes"
     if [ x"${NSA}" == x"yes" ]; then
         RAT="NSA"
     else
@@ -1205,6 +1351,8 @@ function atcmd_get_sim_monsc_realtime()
             ;;
     esac
 
+    local ts=$(date "+%Y-%m-%dT%H:%M:%S")
+    SIM_MONSC=$(echo "$SIM_MONSC" | sed "s/^{/{\"timestamp\":\"${ts}\",/")
     _save "monsc" "${SIM_MONSC}"
 
     return 0
@@ -1253,6 +1401,8 @@ function atcmd_get_sim_monnc_realtime()
     # 封装成一个整体大的JSON
     SIM_MONNC=$(printf '{"gsm":%s,"wcdma":%s,"lte":%s,"nr":%s}' \
         "$NC_GSM_JSON" "$NC_WCDMA_JSON" "$NC_LTE_JSON" "$NC_NR_JSON")
+    local ts=$(date "+%Y-%m-%dT%H:%M:%S")
+    SIM_MONNC=$(echo "$SIM_MONNC" | sed "s/^{/{\"timestamp\":\"${ts}\",/")
     _save "monnc" "${SIM_MONNC}"
 }
 
