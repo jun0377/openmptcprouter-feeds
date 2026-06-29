@@ -1,17 +1,6 @@
 #!/bin/bash
 
 ifname=$1               # 逻辑网口名, 如sim1 wan1
-# interface=""            # 物理网口名, 如eth1 usb1
-# sysfs=""                # sim模组在sysfs中对应的路径
-# ttyUSB=""               # 拨号节点
-# VID=""                  # 模组的Vendor ID
-# PID=""                  # 模组的Product ID
-
-# MODEM_MANUFACTURE=""    # 模组厂商
-# MODEM_MODEL=""          # 模组型号
-# MODEM_REVISION=""       # 模组版本
-# MODEM_IMEI=""           # 模组IMEI
-# MODEM_SN=""             # 模组序列号
 
 SIM_ICCID=""            # SIM卡的ICCID
 SIM_IMSI=""             # SIM卡的IMSI
@@ -45,6 +34,11 @@ LTE_LOCK_PCID=""        # LTE PCID
 LTE_LOCK_BAND=""        # LTE频段
 LTE_LOCK_FREQ=""        # LTE频点
 LTE_FREQLOCK_JSON="{}"  # JSON格式的LTE锁频/锁小区信息
+
+function _log()
+{
+    logger -t "tracker-sim ${ifname}" "<${interface} ${ttyUSB}>" "$@"
+}
 
 # 保存到tmpfs
 function _save()
@@ -314,7 +308,7 @@ function atcmd_init_hotplug
 # 当前时间戳
 function atcmd_timestamp()
 {
-    TIMESTAMP=$(date "+%Y-%m-%dT%H:%M:%S")
+    TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
     _save "timestamp" "${TIMESTAMP}"
 }
 
@@ -698,53 +692,54 @@ function atcmd_get_nr_lock()
 {
     local ATCMD="AT^NRFREQLOCK?"
     _exec_at "$ATCMD" $1 || return 1
+    _log $_AT_RES
 
-    # 是否启用锁频或锁小区功能,0-关闭锁频功能; 1-启用锁定频点功能; 2-启用锁定小区功能; 3-启用锁定Band功能
-    local operatetype=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $2}')
-    # 禁止移动性flag; 0-不允许重选和切换; 1-允许重选和切换
-    local forbidFlag=""
-    # 锁的个数(1~20)
-    local num=""                  
-    # 字符串类型，携带一组band参数，每个band信息使用“,”号隔开，band取值范围0～65535
-    local band=""
-    # 当前锁定的SSB频点，取值范围0～4294967295; 当锁频类型为锁频点和所小区时候设置该参数，锁band时不能设置该参数
-    local arfcn=""
-    # 频点的scstype信息，锁类型为锁频点和锁小区时候携带; 每个参数使用“,”号隔开，取值范围0～4
-    local scstype=""
-    # 需要锁定的小区ID,字符串类型，每个pci之间使用“,”分开，pci的取值范围0~1007
-    local pci=""
+    # 返回格式 (多行):
+    # ^NRFREQLOCK: <operatetype>
+    # [<forbidFlag>,<num>]
+    # [<band>,<arfcn>,<scstype>,<pci>]
+    # ...重复num行...
+    # OK
 
-    case "${operatetype}" in
-        "0")
-            # 关闭锁频功能
-            ;;
-        "1")
-            # 启用锁定频点功能
-            forbidFlag=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $3}')
-            num=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $4}')
-            # 解析多行 band,arfcn,scstype
-            band=$(echo "$_AT_RES" | awk '/\^NRFREQLOCK:/{next} NF>=1{print $1}' | tr '\n' ',' | sed 's/,$//')
-            arfcn=$(echo "$_AT_RES" | awk '/\^NRFREQLOCK:/{next} NF>=2{print $2}' | tr '\n' ',' | sed 's/,$//')
-            scstype=$(echo "$_AT_RES" | awk '/\^NRFREQLOCK:/{next} NF>=3{print $3}' | tr '\n' ',' | sed 's/,$//')
-            ;;
-        "2")
-            # 启用锁定小区功能
-            forbidFlag=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $3}')
-            num=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $4}')
-            # 解析多行 band,arfcn,scstype,pci
-            band=$(echo "$_AT_RES" | awk '/\^NRFREQLOCK:/{next} NF>=1{print $1}' | tr '\n' ',' | sed 's/,$//')
-            arfcn=$(echo "$_AT_RES" | awk '/\^NRFREQLOCK:/{next} NF>=2{print $2}' | tr '\n' ',' | sed 's/,$//')
-            scstype=$(echo "$_AT_RES" | awk '/\^NRFREQLOCK:/{next} NF>=3{print $3}' | tr '\n' ',' | sed 's/,$//')
-            pci=$(echo "$_AT_RES" | awk '/\^NRFREQLOCK:/{next} NF>=4{print $4}' | tr '\n' ',' | sed 's/,$//')
-            ;;
-        "3")
-            # 启用锁定Band功能
-            forbidFlag=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $3}')
-            num=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $4}')
-            # 只解析 band
-            band=$(echo "$_AT_RES" | awk '/\^NRFREQLOCK:/{next} NF>=1{print $1}' | tr '\n' ',' | sed 's/,$//')
-            ;;
-    esac
+    local operatetype="" forbidFlag="" num=""
+    local band="" arfcn="" scstype="" pci=""
+
+    # 用 awk 逐行解析，每行按逗号分隔
+    eval $(echo "$_AT_RES" | tr -d '"' | awk -F',' '
+        BEGIN { op=""; forbid=""; n=0; pc=0; split("", bands); split("", arfcns); split("", scs); split("", pcis) }
+        /^\^NRFREQLOCK:/ {
+            split($1, a, /[: ]+/)
+            op = a[2]
+            next
+        }
+        /^OK/ { next }
+        /^$/ { next }
+        /^AT/ { next }
+        {
+            # 如果 forbid/n 还未解析且 NF==2，则是 forbid,num 行
+            if (forbid == "" && NF == 2) {
+                forbid = $1; n = $2
+                next
+            }
+            # 否则是数据行: band,arfcn,scstype,pci
+            pc++
+            bands[pc] = $1
+            arfcns[pc] = $2
+            if (NF >= 3) scs[pc] = $3
+            if (NF >= 4) pcis[pc] = $4
+        }
+        END {
+            printf "operatetype=%s forbidFlag=%s num=%s", (op==""?"0":op), (forbid==""?"0":forbid), (n==""?"0":n)
+            for (i=1; i<=pc; i++) {
+                sep = (i==1 ? " " : ",")
+                printf " band=\"%s%s\" arfcn=\"%s%s\" scstype=\"%s%s\" pci=\"%s%s\"",
+                    (i>1?",":""), bands[i],
+                    (i>1?",":""), arfcns[i],
+                    (i>1?",":""), scs[i],
+                    (i>1?",":""), pcis[i]
+            }
+        }
+    ')
 
     # 封装成 JSON
     local BAND_JSON=$(echo "$band" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}; printf "]"}')    
@@ -754,6 +749,8 @@ function atcmd_get_nr_lock()
     NR_FREQLOCK_JSON=$(printf '{"operatetype":"%s","forbid_flag":"%s","num":"%s","band":%s,"arfcn":%s,"scstype":%s,"pci":%s}' \
         "${operatetype}" "${forbidFlag}" "${num}" \
         "${BAND_JSON:-[]}" "${ARFCN_JSON:-[]}" "${SCSTYPE_JSON:-[]}" "${PCI_JSON:-[]}")
+
+    _save "nrlock_setting" "${NR_FREQLOCK_JSON}"
 }
 
 # 解锁5G 频段/PCI小区
@@ -807,7 +804,7 @@ function atcmd_nr_band_lock()
     local band=$2
     [ -z "${band}" ] && { _log "band required!" && return 1; }
 
-    local ATCMD="AT^NRFREQLOCK=3,0,1,\"${NRBAND}\""
+    local ATCMD="AT^NRFREQLOCK=3,0,1,\"${band}\""
     _exec_at "$ATCMD" $1 || return 1
 
     return 0
@@ -888,7 +885,7 @@ function atcmd_lte_band_lock()
     local band=$2
     [ -z "${band}" ] && { _log "band required!" && return -1; }
 
-    local ATCMD="AT^LTEFREQLOCK=3,0,${LTEBAND_COUNT},\"${LTEBAND}\""
+    local ATCMD="AT^LTEFREQLOCK=3,0,1,\"${band}\""
     _exec_at "$ATCMD" $1 || return 1
 
     return 0
@@ -897,70 +894,60 @@ function atcmd_lte_band_lock()
 # 查询LTE 锁频 锁小区设置
 function atcmd_get_lte_lock()
 {
-    # 查询LTE锁频 锁小区设置
-    local operatetype=""          # 是否启用锁频或锁小区功能,0-关闭锁频功能; 1-启用锁定频点功能; 2-启用锁定小区功能; 3-启用锁定Band功能
-    local forbidFlag=""           # 禁止移动性flag; 0-不允许重选和切换; 1-允许重选和切换
-    local num=""                  # 锁的个数(1~20)
-    local band=""                 # 字符串类型，携带一组band参数，每个band信息使用“,”号隔开，band取值范围0～65535
-    local arfcn=""                # 当前锁定的SSB频点，取值范围0～4294967295; 当锁频类型为锁频点和所小区时候设置该参数，锁band时不能设置该参数
-    local pci=""                  # 需要锁定的小区ID,字符串类型，每个pci之间使用“,”分开，pci的取值范围0~1007
-
     local ATCMD="AT^LTEFREQLOCK?"
     _exec_at "$ATCMD" $1 || return 1
+    _log $_AT_RES
 
-    local res=$(echo "$_AT_RES" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g')
+    # 返回格式 (多行, 同 NR):
+    # ^LTEFREQLOCK: <operatetype>
+    # [<forbidFlag>,<num>]
+    # [<band>,<arfcn>[,<pci>]]
+    # ...重复num行...
+    # OK
 
-    case "${operatetype}" in
-        "0")
-            # 关闭锁频功能
-            ;;
-        "1")
-            # 启用锁定频点功能
-            forbidFlag=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\^LTEFREQLOCK:/{print $3}')
-            num=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\^LTEFREQLOCK:/{print $4}')
-            # 解析多行 band,arfcn
-            band=$(echo "$_AT_RES" | awk '/\^LTEFREQLOCK:/{next} NF>=1{print $1}' | tr '\n' ',' | sed 's/,$//')
-            arfcn=$(echo "$_AT_RES" | awk '/\^LTEFREQLOCK:/{next} NF>=2{print $2}' | tr '\n' ',' | sed 's/,$//')
-            ;;
-        "2")
-            # 启用锁定小区功能
-            forbidFlag=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\^LTEFREQLOCK:/{print $3}')
-            num=$(echo "$_AT_RES" | awk -F'[,: ]+' '/\^LTEFREQLOCK:/{print $4}')
-            # 解析多行 band,arfcn,pci
-            band=$(echo "$_AT_RES" | awk '/\^LTEFREQLOCK:/{next} NF>=1{print $1}' | tr '\n' ',' | sed 's/,$//')
-            arfcn=$(echo "$_AT_RES" | awk '/\^LTEFREQLOCK:/{next} NF>=2{print $2}' | tr '\n' ',' | sed 's/,$//')
-            pci=$(echo "$_AT_RES" | awk '/\^LTEFREQLOCK:/{next} NF>=4{print $3}' | tr '\n' ',' | sed 's/,$//')
-            ;;
-        "3")
-            # 0= ^LTEFREQLOCK: 3 0,2 1 1 OK
-            # 启用锁定Band功能
-            eval $(echo "$res" | awk -F'[ ,]+' '{
-                for (i = 1; i <= NF; i++) {
-                    if ($i == "^LTEFREQLOCK:") {
-                        oper = $(i + 1)
-                        forbid = $(i + 2)
-                        n = $(i + 3)
-                        bands = ""
-                        for (j = i + 4; j <= i + 3 + n && j <= NF; j++) {
-                            if ($(j) == "OK") break
-                            bands = bands (bands == "" ? "" : ",") $(j)
-                        }
-                        printf "operatetype=%s forbidFlag=%s num=%s band=\"%s\"", oper, forbid, n, bands
-                        exit
-                    }
-                }
-            }')
-            ;;
-    esac
+    local operatetype="" forbidFlag="" num=""
+    local band="" arfcn="" pci=""
+
+    eval $(echo "$_AT_RES" | tr -d '"' | awk -F',' '
+        BEGIN { op=""; forbid=""; n=0; pc=0; split("", bands); split("", arfcns); split("", pcis) }
+        /^\^LTEFREQLOCK:/ {
+            split($1, a, /[: ]+/)
+            op = a[2]
+            next
+        }
+        /^OK/ { next }
+        /^$/ { next }
+        /^AT/ { next }
+        {
+            if (forbid == "" && NF == 2) {
+                forbid = $1; n = $2
+                next
+            }
+            pc++
+            bands[pc] = $1
+            arfcns[pc] = $2
+            if (NF >= 3) pcis[pc] = $3
+        }
+        END {
+            printf "operatetype=%s forbidFlag=%s num=%s", (op==""?"0":op), (forbid==""?"0":forbid), (n==""?"0":n)
+            for (i=1; i<=pc; i++) {
+                printf " band=\"%s%s\" arfcn=\"%s%s\" pci=\"%s%s\"",
+                    (i>1?",":""), bands[i],
+                    (i>1?",":""), arfcns[i],
+                    (i>1?",":""), pcis[i]
+            }
+        }
+    ')
 
     # 封装成 JSON
-    # 将逗号分隔的多个band封装为数组
     local BAND_JSON=$(echo "$band" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}; printf "]"}')    
     local ARFCN_JSON=$(echo "$arfcn" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}; printf "]"}')
     local PCI_JSON=$(echo "$pci" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}; printf "]"}')    
-    LTE_FREQLOCK_JSON=$(printf '{"operatetype":"%s","forbid_flag":"%s","num":"%s","band":%s,"arfcn":%s,"scstype":%s,"pci":%s}' \
+    LTE_FREQLOCK_JSON=$(printf '{"operatetype":"%s","forbid_flag":"%s","num":"%s","band":%s,"arfcn":%s,"pci":%s}' \
         "${operatetype}" "${forbidFlag}" "${num}" \
-        "${BAND_JSON:-[]}" "${ARFCN_JSON:-[]}" "${SCSTYPE_JSON:-[]}" "${PCI_JSON:-[]}")
+        "${BAND_JSON:-[]}" "${ARFCN_JSON:-[]}" "${PCI_JSON:-[]}")
+
+    _save "ltelock_setting" "${LTE_FREQLOCK_JSON}"
 }
 
 # 锁LTE频段/PCI小区
@@ -1113,11 +1100,11 @@ function atcmd_get_sim_5GCore_realtime()
         printf "{\"n\":\"%s\",\"stat\":\"%s\",\"tac\":\"%s\",\"ci\":\"%s\",\"act\":\"%s\"}", n,stat_text,tac,ci,act_text
     }')
 
-    local ts=$(date "+%Y-%m-%dT%H:%M:%S")
+    local ts=$(date "+%Y-%m-%d %H:%M:%S")
 
     # root@MP-Router:/tmp/tracker-sim/sim1# cat C5GREG 
     # {
-    # "timestamp": "2026-06-26T08:49:03",     # 更新时间戳
+    # "timestamp": "08:49:03",                # 更新时间戳
     # "n": "2",                               # 主动上报状态, 0-禁止主动上报; 1 - 使能主动上报; 2-使能部分信息的主动上报
     # "stat": "已注册本地网",                   # 附网状态
     # "tac": "59090A",                        # 位置码信息  
@@ -1182,7 +1169,7 @@ function atcmd_get_sim_EREG_realtime()
     }')
 
     SIM_CREG="$CEREG_JSON"
-    local ts=$(date "+%Y-%m-%dT%H:%M:%S")
+    local ts=$(date "+%Y-%m-%d %H:%M:%S")
     CEREG_JSON=$(echo "$CEREG_JSON" | sed "s/^{/{\"timestamp\":\"${ts}\",/")
     SIM_CREG="$CEREG_JSON"
     _save "CLTEREG" "${SIM_CREG}"
@@ -1238,7 +1225,7 @@ function atcmd_get_sim_freq_realtime()
         }')
 
     SIM_FREQ="$HFREQINFO_JSON"
-    local ts=$(date "+%Y-%m-%dT%H:%M:%S")
+    local ts=$(date "+%Y-%m-%d %H:%M:%S")
     HFREQINFO_JSON=$(echo "$HFREQINFO_JSON" | sed "s/^{/{\"timestamp\":\"${ts}\",/")
     SIM_FREQ="$HFREQINFO_JSON"
     _save "freq" "${SIM_FREQ}"
@@ -1351,7 +1338,7 @@ function atcmd_get_sim_monsc_realtime()
             ;;
     esac
 
-    local ts=$(date "+%Y-%m-%dT%H:%M:%S")
+    local ts=$(date "+%Y-%m-%d %H:%M:%S")
     SIM_MONSC=$(echo "$SIM_MONSC" | sed "s/^{/{\"timestamp\":\"${ts}\",/")
     _save "monsc" "${SIM_MONSC}"
 
@@ -1401,7 +1388,7 @@ function atcmd_get_sim_monnc_realtime()
     # 封装成一个整体大的JSON
     SIM_MONNC=$(printf '{"gsm":%s,"wcdma":%s,"lte":%s,"nr":%s}' \
         "$NC_GSM_JSON" "$NC_WCDMA_JSON" "$NC_LTE_JSON" "$NC_NR_JSON")
-    local ts=$(date "+%Y-%m-%dT%H:%M:%S")
+    local ts=$(date "+%Y-%m-%d %H:%M:%S")
     SIM_MONNC=$(echo "$SIM_MONNC" | sed "s/^{/{\"timestamp\":\"${ts}\",/")
     _save "monnc" "${SIM_MONNC}"
 }
@@ -1435,6 +1422,101 @@ function atcmd_get_addr()
 
     _save "IPv4" "${SIM_IPv4:-}"
     _save "IPv6" "${SIM_IPv6:-}"
+
+    return 0
+}
+
+# 查询信号强度
+function atcmd_HCSQ()
+{
+    local ATCMD="AT^HCSQ?"
+    _exec_at "$ATCMD" $1 || return 1
+
+    # ^HCSQ: "WCDMA",30,30,58
+    # ^HCSQ: "LTE",45,60,150,30
+    # ^HCSQ: "NR",85,200,30
+    # ^HCSQ: "NOSERVICE"
+
+    local sysmode="" rssi="" rsrp="" sinr="" rsrq="" rscp="" ecio=""
+
+    sysmode=$(echo "$_AT_RES" | awk -F'[," ]+' '/\^HCSQ:/{gsub(/"/,"",$2); print $2; exit}')
+    [ -z "$sysmode" ] && { _log "failed to parse HCSQ sysmode"; return 1; }
+
+    if [ "$sysmode" = "NOSERVICE" ]; then
+        SIM_HCSQ='{"sysmode":"NOSERVICE"}'
+        _save "hcsq" "${SIM_HCSQ}"
+        return 0
+    fi
+
+    # 根据 sysmode 解析各参数
+    case "$sysmode" in
+        "GSM")
+            rssi=$(echo "$_AT_RES" | awk -F'[," ]+' '/\^HCSQ:/{print $3}')
+            ;;
+        "WCDMA")
+            rssi=$(echo "$_AT_RES" | awk -F'[," ]+' '/\^HCSQ:/{print $3}')
+            rscp=$(echo "$_AT_RES" | awk -F'[," ]+' '/\^HCSQ:/{print $4}')
+            ecio=$(echo "$_AT_RES" | awk -F'[," ]+' '/\^HCSQ:/{print $5}')
+            ;;
+        "LTE")
+            rssi=$(echo "$_AT_RES" | awk -F'[," ]+' '/\^HCSQ:/{print $3}')
+            rsrp=$(echo "$_AT_RES" | awk -F'[," ]+' '/\^HCSQ:/{print $4}')
+            sinr=$(echo "$_AT_RES" | awk -F'[," ]+' '/\^HCSQ:/{print $5}')
+            rsrq=$(echo "$_AT_RES" | awk -F'[," ]+' '/\^HCSQ:/{print $6}')
+            ;;
+        "NR")
+            rsrp=$(echo "$_AT_RES" | awk -F'[," ]+' '/\^HCSQ:/{print $3}')
+            sinr=$(echo "$_AT_RES" | awk -F'[," ]+' '/\^HCSQ:/{print $4}')
+            rsrq=$(echo "$_AT_RES" | awk -F'[," ]+' '/\^HCSQ:/{print $5}')
+            ;;
+    esac
+
+    # 索引值 -> dBm/dB 近似值转换
+    # RSSI: 0=-121dBm, 96=-25dBm, 255=unknown
+    _rssi_to_dbm() {
+        local v="$1"
+        [ -z "$v" ] || [ "$v" = "255" ] && { echo "null"; return; }
+        echo "$(( v - 121 ))"
+    }
+    # RSRP: 0=-141dBm, 97=-44dBm, 255=unknown
+    _rsrp_to_dbm() {
+        local v="$1"
+        [ -z "$v" ] || [ "$v" = "255" ] && { echo "null"; return; }
+        echo "$(( v - 141 ))"
+    }
+    # SINR: 0=-20dB, 251=30dB, 255=unknown, step=0.2dB
+    # 返回一位小数的 dB 值，用整数*10 表示避免浮点
+    _sinr_to_db_x10() {
+        local v="$1"
+        [ -z "$v" ] || [ "$v" = "255" ] && { echo "null"; return; }
+        echo "$(( (v - 1) * 2 - 200 ))"
+    }
+    # RSRQ: 0=-19.5dB, 34=-3dB, 255=unknown, step=0.5dB
+    _rsrq_to_db_x10() {
+        local v="$1"
+        [ -z "$v" ] || [ "$v" = "255" ] && { echo "null"; return; }
+        echo "$(( (v - 1) * 5 - 195 ))"
+    }
+    # RSCP: same as RSSI, 0=-121dBm, 96=-25dBm
+    # ECIO: 0=<-32dB, 65=>0dB, step=0.5dB
+    _ecio_to_db_x10() {
+        local v="$1"
+        [ -z "$v" ] || [ "$v" = "255" ] && { echo "null"; return; }
+        echo "$(( (v - 1) * 5 - 325 ))"
+    }
+
+    # 组装 JSON
+    SIM_HCSQ=$(printf '{"sysmode":"%s"' "$sysmode")
+    [ -n "$rssi" ] && SIM_HCSQ="${SIM_HCSQ},\"rssi\":${rssi},\"rssi_dbm\":$(_rssi_to_dbm "$rssi")"
+    [ -n "$rsrp" ] && SIM_HCSQ="${SIM_HCSQ},\"rsrp\":${rsrp},\"rsrp_dbm\":$(_rsrp_to_dbm "$rsrp")"
+    [ -n "$sinr" ] && [ "$sinr" != "255" ] && SIM_HCSQ="${SIM_HCSQ},\"sinr\":${sinr},\"sinr_db\":$(awk "BEGIN {printf \"%.1f\", $(_sinr_to_db_x10 "$sinr")/10}")"
+    [ -n "$rsrq" ] && [ "$rsrq" != "255" ] && SIM_HCSQ="${SIM_HCSQ},\"rsrq\":${rsrq},\"rsrq_db\":$(awk "BEGIN {printf \"%.1f\", $(_rsrq_to_db_x10 "$rsrq")/10}")"
+    [ -n "$rscp" ] && SIM_HCSQ="${SIM_HCSQ},\"rscp\":${rscp},\"rscp_dbm\":$(_rssi_to_dbm "$rscp")"
+    [ -n "$ecio" ] && [ "$ecio" != "255" ] && SIM_HCSQ="${SIM_HCSQ},\"ecio\":${ecio},\"ecio_db\":$(awk "BEGIN {printf \"%.1f\", $(_ecio_to_db_x10 "$ecio")/10}")"
+
+    SIM_HCSQ="${SIM_HCSQ}}"
+
+    _save "hcsq" "${SIM_HCSQ}"
 
     return 0
 }
@@ -1480,21 +1562,42 @@ function dial
     local passwd=$(uci -q get sim.$ifname.passwd)
     atcmd_set_auth $1 $auth $user $passwd
 
+    # 锁5G频段
+    local nrBandLock=$(uci -q get sim.$ifname.nrBandLock)
+    # 去掉前导的 n/N（如 n78 → 78）
+    nrBandLock=$(echo "$nrBandLock" | sed 's/^[nN]//')
+    # 锁5G PCI小区
+    local nrPciLockEnable=$(uci -q get sim.$ifname.nrPciLockEnable)
+    local nrPciPcid=$(uci -q get sim.$ifname.nrPciPcid)
+    local nrPciBand=$(uci -q get sim.$ifname.nrPciBand)
+    local nrPciFreq=$(uci -q get sim.$ifname.nrPciFreq)
+    local nrPciScs=$(uci -q get sim.$ifname.nrPciScs)
 
-    # 锁5G频段/PCI小区
-    local nr_lock=$(uci -q get sim.$ifname.nrPciLock)
-    local nr_pcid=$(uci -q get sim.$ifname.nrPciPcid)
-    local nr_band=$(uci -q get sim.$ifname.nrPciBand)
-    local nr_freq=$(uci -q get sim.$ifname.nrPciFreq)
-    local nr_scs=$(uci -q get sim.$ifname.nrPciScs)
-    atcmd_set_nr_lock $1 $nr_lock $nr_pcid $nr_band $nr_freq $nr_scs
+    if [ -n "$nrBandLock" ] && [ "$nrBandLock" != "unlocked" ]; then
+        atcmd_nr_band_lock $1 "$nrBandLock"
+    elif [ -n "$nrPciLockEnable" ] && [ "$nrPciLockEnable" = "locked" ]; then
+        atcmd_nr_pci_lock $1 "$nrPciBand" "$nrPciFreq" "$nrPciScs" "$nrPciPcid"
+    else
+        atcmd_nr_unlock $1
+    fi
 
-    # 锁LTE频段/PCI小区
-    local lte_lock=$(uci -q get sim.$ifname.ltePciLock)
-    local lte_pcid=$(uci -q get sim.$ifname.ltePciPcid)
-    local lte_band=$(uci -q get sim.$ifname.ltePciBand)
-    local lte_freq=$(uci -q get sim.$ifname.ltePciFreq)
-    atcmd_set_lte_lock $1 $lte_lock $lte_pcid $lte_band $lte_freq
+    # 锁LTE频段
+    local lteBandLock=$(uci -q get sim.$ifname.lteBandLock)
+    # 去掉前导的 b/B/n/N
+    lteBandLock=$(echo "$lteBandLock" | sed 's/^[bBnN]//')
+    # 锁LTE PCI小区
+    local ltePciLockEnable=$(uci -q get sim.$ifname.ltePciLockEnable)
+    local ltePciPcid=$(uci -q get sim.$ifname.ltePciPcid)
+    local ltePciBand=$(uci -q get sim.$ifname.ltePciBand)
+    local ltePciFreq=$(uci -q get sim.$ifname.ltePciFreq)
+
+    if [ -n "$lteBandLock" ] && [ "$lteBandLock" != "unlocked" ]; then
+        atcmd_lte_band_lock $1 "$lteBandLock"
+    elif [ -n "$ltePciLockEnable" ] && [ "$ltePciLockEnable" = "locked" ]; then
+        atcmd_lte_pci_lock $1 "$ltePciBand" "$ltePciFreq" "$ltePciPcid"
+    else
+        atcmd_lte_unlock $1
+    fi
 
     # 切换一次飞行模式
     atcmd_set_airplane_on $1

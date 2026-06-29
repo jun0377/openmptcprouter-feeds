@@ -177,6 +177,9 @@ function update_state
     # 运营商信息
     atcmd_get_plmn $1
 
+    # 信号强度
+    atcmd_HCSQ $1
+
     # 5G Core注册状态
     atcmd_get_sim_5GCore_realtime $1
 
@@ -191,6 +194,10 @@ function update_state
 
     # 相邻小区信息
     atcmd_get_sim_monnc_realtime $1
+
+    # 查询锁频/锁小区状态
+    atcmd_get_lte_lock $1
+    atcmd_get_nr_lock $1
 }
 
 # 主循环
@@ -201,7 +208,7 @@ function _main()
         # 状态更新时间戳
         atcmd_timestamp
 
-        sleep 10
+        sleep 5
 
         # 检查模组是否已经成功识别了,即sysfs中有相应信息
         check_base
