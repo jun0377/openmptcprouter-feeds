@@ -36,28 +36,28 @@ _set_lan_ip() {
 	local lanMask=$(echo ${response} | jsonfilter -e '@.lanmask')
 
     # lan ip
-	if [ ! -z "${lanIP}" ] && [ "${lanIP}" != "$(uci get network.lan.ipaddr)" ]; then
-        logger -t "OMR" "<$FUNCNAME> lan ip changed from $(uci get network.lan.ipaddr) to ${lanIP}"
-		uci set network.lan.ipaddr=${lanIP}
-		logger -t "OMR" "<$FUNCNAME> uci set network.lan.ipaddr=${lanIP}"
-	else
-		logger -t "OMR" "<$FUNCNAME> lanIP:${lanIP}"
-	fi
+	# if [ ! -z "${lanIP}" ] && [ "${lanIP}" != "$(uci get network.lan.ipaddr)" ]; then
+    #     logger -t "OMR" "<$FUNCNAME> lan ip changed from $(uci get network.lan.ipaddr) to ${lanIP}"
+	# 	uci set network.lan.ipaddr=${lanIP}
+	# 	logger -t "OMR" "<$FUNCNAME> uci set network.lan.ipaddr=${lanIP}"
+	# else
+	# 	logger -t "OMR" "<$FUNCNAME> lanIP:${lanIP}"
+	# fi
 
     # lan mask
-	if [ ! -z "${lanMask}" ] && [ "${lanMask}" != "$(uci get network.lan.netmask)" ]; then
-        logger -t "OMR" "<$FUNCNAME> lan netmask changed from $(uci get network.lan.netmask) to ${lanMask}"
-		uci set network.lan.netmask=${lanMask}
-		logger -t "OMR" "<$FUNCNAME> uci set network.lan.netmask=${lanMask}"
-	else
-		logger -t "OMR" "<$FUNCNAME> lanMask:${lanMask}"
-	fi
+	# if [ ! -z "${lanMask}" ] && [ "${lanMask}" != "$(uci get network.lan.netmask)" ]; then
+    #     logger -t "OMR" "<$FUNCNAME> lan netmask changed from $(uci get network.lan.netmask) to ${lanMask}"
+	# 	uci set network.lan.netmask=${lanMask}
+	# 	logger -t "OMR" "<$FUNCNAME> uci set network.lan.netmask=${lanMask}"
+	# else
+	# 	logger -t "OMR" "<$FUNCNAME> lanMask:${lanMask}"
+	# fi
 
-	uci commit network
-	logger -t "OMR" "<$FUNCNAME> uci commit network"
+	# uci commit network
+	# logger -t "OMR" "<$FUNCNAME> uci commit network"
 	
-	# 立即生效
-	ifdown lan && ifup lan
+	# # 立即生效
+	# ifdown lan && ifup lan
 }
 
 # 设备和VPS之间同步VPN接口的IP地址配置
