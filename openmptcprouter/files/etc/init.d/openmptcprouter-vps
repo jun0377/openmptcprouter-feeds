@@ -214,6 +214,11 @@ _set_openvpn_vps() {
 		# return
 	}
 
+	[ -n "$(uci -q get openvpn.omr2)" ] && uci delete openvpn.omr2
+	[ -n "$(uci -q get openvpn.omr3)" ] && uci delete openvpn.omr3
+	[ -n "$(uci -q get openvpn.omr4)" ] && uci delete openvpn.omr4
+	[ -n "$(uci -q changes openvpn)" ] && uci commit openvpn
+
 	local port="$(uci -q get openvpn.omr.port)"						# 服务器端口 65301
 	local cipher="$(uci -q get openvpn.omr.cipher)"					# 加密算法
 	local key="$(base64 /etc/luci-uploads/client.key | tr -d "\n")"	# 客户端秘钥
