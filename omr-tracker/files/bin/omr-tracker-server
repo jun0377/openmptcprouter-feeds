@@ -338,10 +338,10 @@ _check_server() {
 		# IP解析失败
 		[ -z "$serverip" ] && logger -t "OMR" "<$basename> unknown vps ip!" && return
 
-		# API测试
-		_check_server_api $serverip $port
-		# API测试成功, 才进行ping测试
-		[ "$OMR_TRACKER_STATUS" = "OK" ] && _ping_server_intf $serverip
+		# ping测试（判断网络连通性）
+		_ping_server_intf $serverip
+		# 网络连通后, 才进行API测试
+		[ "$OMR_TRACKER_STATUS" = "OK" ] && _check_server_api $serverip $port
 	}
 
 	# uci配置文件中的服务器ip是一个list, 逐个进行判断

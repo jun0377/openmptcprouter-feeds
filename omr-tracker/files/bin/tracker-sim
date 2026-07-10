@@ -200,6 +200,17 @@ function update_state
     atcmd_get_nr_lock $1
 }
 
+# 查询是否使能,未使能则不再继续查询状态
+function check_enable()
+{
+    local enabled=$(uci -q get sim.$ifname.enable)
+    [ "$enabled" != "1" ] && [ "$enabled" != "true" ] && {
+        _log "sim.$ifname is disabled, skip..."
+        return 1
+    }
+    return 0
+}
+
 # 主循环
 function _main()
 {
@@ -228,6 +239,9 @@ function _main()
 
         # 获取模组基本信息
         get_product_info ${ttyUSB}
+
+        # 查询是否使能,未使能则不再继续查询状态
+        check_enable || continue
 
         # 检查拨号状态
         check_dial ${ttyUSB}

@@ -226,7 +226,72 @@ function CNE_ERROR_MSG
     # logger -t "NCM" "ifname:${ifname} CME ERROR ${code}: ${errMsg}"
 }
 
+# 将所有执行的AT指令保存到 /tmp/tracker-sim/<ifname>/at_log.jsonl
+# 每条 AT 指令及其完整响应保存为一条 JSONL 记录，并带有单调递增 seq
+# 采用双文件轮转，避免因 truncate 导致前端增量读取时丢失日志
+function _next_at_log_seq()
+{
+    local log_dir="/tmp/tracker-sim/${ifname}"
+    local seq_file="${log_dir}/at_log.seq"
+    local seq=0
 
+    [ -f "$seq_file" ] && seq=$(cat "$seq_file" 2>/dev/null)
+    case "$seq" in
+        ''|*[!0-9]*) seq=0 ;;
+    esac
+
+    seq=$((seq + 1))
+    echo "$seq" > "$seq_file"
+    echo "$seq"
+}
+
+function _rotate_at_log_if_needed()
+{
+    local log_dir="/tmp/tracker-sim/${ifname}"
+    local log_file="${log_dir}/at_log.jsonl"
+    local log_file_prev="${log_dir}/at_log.jsonl.1"
+    local MAX_LOG_ENTRIES=300
+
+    [ -f "$log_file" ] || return 0
+
+    local entry_count=$(wc -l < "$log_file" 2>/dev/null)
+    case "$entry_count" in
+        ''|*[!0-9]*) entry_count=0 ;;
+    esac
+
+    if [ "$entry_count" -ge "$MAX_LOG_ENTRIES" ]; then
+        rm -f "$log_file_prev"
+        mv "$log_file" "$log_file_prev"
+    fi
+}
+
+function at_log()
+{
+    local ttyUSB=$1
+    local atcmd=$2
+    local at_res=$3
+
+    local log_dir="/tmp/tracker-sim/${ifname}"
+    local log_file="${log_dir}/at_log.jsonl"
+    local seq=""
+    local ts=""
+    local entry_json=""
+
+    mkdir -p "$log_dir"
+    _rotate_at_log_if_needed
+
+    seq=$(_next_at_log_seq)
+    ts=$(date '+%Y-%m-%d %H:%M:%S')
+    entry_json=$(jq -cn \
+        --arg seq "$seq" \
+        --arg ts "$ts" \
+        --arg tty "$ttyUSB" \
+        --arg cmd "$atcmd" \
+        --arg res "$at_res" \
+        '{seq: ($seq | tonumber), ts: $ts, tty: $tty, cmd: $cmd, res: $res}')
+
+    [ -n "$entry_json" ] && echo "$entry_json" >> "$log_file"
+}
 
 # 执行AT指令，结果存入_AT_RES全局变量，成功返回0，失败返回1
 function _exec_at
@@ -238,6 +303,9 @@ function _exec_at
     # logger -t "NCM" "ifname:${ifname} ${ATCMD} ${ttyUSB}"
 
     _AT_RES=$(sms_tool -D -d "$ttyUSB" at "$ATCMD" 2>/dev/null | tr -d '\r')
+
+    at_log "${ttyUSB}" "${ATCMD}" "${_AT_RES}"
+
     if [ -z "$_AT_RES" ] || ! echo "$_AT_RES" | grep -q "OK"; then
         _log "failed to execute $1 by ${ttyUSB}! res=${_AT_RES}"
         # logger -t "NCM" "ifname:${ifname} failed to execute $1 by ${ttyUSB}! res=${_AT_RES}"
