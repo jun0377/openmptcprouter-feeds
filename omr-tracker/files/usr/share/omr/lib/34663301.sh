@@ -850,17 +850,32 @@ function atcmd_nr_arfcn_lock()
 # 5G 锁PCI 必须同时锁频段和频点 
 function atcmd_nr_pci_lock()
 {
-    local band=$2
-    local freq=$3
-    local scs=$4
-    local pcid=$5
+    local forbidFlag=$2     # 0:允许切换与重选 1:不允许
+    local band=$3
+    local freq=$4
+    local scs=$5
+    local pcid=$6
 
+    _log "nr_pci_lock forbid:${forbidFlag} band:${band} freq:${freq} scs:${scs} pcid:${pcid}"
+
+    [ -z "${forbidFlag}" ] && { _log "forbidFlag required!" && return 1; }
     [ -z "${band}" ] && { _log "band required!" && return 1; }
     [ -z "${freq}" ] && { _log "arfcn required!" && return 1; }
     [ -z "${scs}" ] && { _log "scs required!" && return 1; }
     [ -z "${pcid}" ] && { _log "pcid required!" && return 1; }
 
-    local ATCMD="AT^NRFREQLOCK=2,0,1,\"${band}\",\"${freq}\",\"${scs}\",\"${pcid}\""
+    local band_count=$(echo "$band" | wc -w)
+    local freq_count=$(echo "$freq" | wc -w)
+    local scs_count=$(echo "$scs" | wc -w)
+    local pcid_count=$(echo "$pcid" | wc -w)
+
+    # 如果 band_count freq_count scs_count pcid_count 不相等, 报错并退出
+    if [ "$band_count" != "$freq_count" ] || [ "$band_count" != "$scs_count" ] || [ "$band_count" != "$pcid_count" ]; then
+        _log "param count mismatch! band:${band_count} freq:${freq_count} scs:${scs_count} pcid:${pcid_count}"
+        return 1
+    fi
+
+    local ATCMD="AT^NRFREQLOCK=2,${forbidFlag},${band_count},\"${band// /,}\",\"${freq// /,}\",\"${scs// /,}\",\"${pcid// /,}\""
     _exec_at "$ATCMD" $1 || return 1
 
     return 0
@@ -882,11 +897,14 @@ function atcmd_nr_band_lock()
 function atcmd_set_nr_lock()
 {
     local nr_operatetype=$2
-    local nr_pcid=$3
-    local nr_band=$4
-    local nr_freq=$5
-    local nr_scs=$6
+    local forbidFlag=$3
+    local nr_pcid=$4
+    local nr_band=$5
+    local nr_freq=$6
+    local nr_scs=$7
 
+    # 将所有参数都输出到日志
+    _log "nr_lock op:${nr_operatetype} forbid:${forbidFlag} pcid:${nr_pcid} band:${nr_band} freq:${nr_freq} scs:${nr_scs}"
     [ -z "${nr_operatetype}" ] && { _log "operatetype required!" && return -1; }
 
     case "$nr_operatetype" in
@@ -897,7 +915,7 @@ function atcmd_set_nr_lock()
             atcmd_nr_arfcn_lock $1 "${nr_band}" "${nr_freq}" "${nr_scs}"
             ;;
         2)
-            atcmd_nr_pci_lock $1 "${nr_band}" "${nr_freq}" "${nr_scs}" "${nr_pcid}"
+            atcmd_nr_pci_lock $1 "${forbidFlag}" "${nr_band}" "${nr_freq}" "${nr_scs}" "${nr_pcid}"
             ;;  
         3)  
             atcmd_nr_band_lock $1 "${nr_band}"
@@ -1640,11 +1658,12 @@ function dial
     local nrPciBand=$(uci -q get sim.$ifname.nrPciBand)
     local nrPciFreq=$(uci -q get sim.$ifname.nrPciFreq)
     local nrPciScs=$(uci -q get sim.$ifname.nrPciScs)
+    local nrPciForbidFlag=$(uci -q get sim.$ifname.nrPciForbidFlag)
 
     if [ -n "$nrBandLock" ] && [ "$nrBandLock" != "unlocked" ]; then
         atcmd_nr_band_lock $1 "$nrBandLock"
     elif [ -n "$nrPciLockEnable" ] && [ "$nrPciLockEnable" = "locked" ]; then
-        atcmd_nr_pci_lock $1 "$nrPciBand" "$nrPciFreq" "$nrPciScs" "$nrPciPcid"
+        atcmd_nr_pci_lock $1 "$nrPciForbidFlag" "$nrPciBand" "$nrPciFreq" "$nrPciScs" "$nrPciPcid"
     else
         atcmd_nr_unlock $1
     fi

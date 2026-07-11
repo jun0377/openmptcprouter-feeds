@@ -104,12 +104,15 @@ function dial
 
 
     # 锁5G频段/PCI小区
-    local nr_lock=$(uci -q get sim.$ifname.nrPciLock)
+    local nr_lock_enable=$(uci -q get sim.$ifname.nrPciLockEnable)
+    local nr_lock=0
+    [ "$nr_lock_enable" = "locked" ] && nr_lock=2
     local nr_pcid=$(uci -q get sim.$ifname.nrPciPcid)
     local nr_band=$(uci -q get sim.$ifname.nrPciBand)
     local nr_freq=$(uci -q get sim.$ifname.nrPciFreq)
     local nr_scs=$(uci -q get sim.$ifname.nrPciScs)
-    atcmd_set_nr_lock $nr_lock $nr_pcid $nr_band $nr_freq $nr_scs
+    local nr_forbidFlag=$(uci -q get sim.$ifname.nrPciForbidFlag)
+    atcmd_set_nr_lock $nr_lock $nr_forbidFlag $nr_pcid $nr_band $nr_freq $nr_scs
 
     # 锁LTE频段/PCI小区
     local lte_lock=$(uci -q get sim.$ifname.ltePciLock)
