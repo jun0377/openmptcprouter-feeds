@@ -773,39 +773,41 @@ function atcmd_get_nr_lock()
     local band="" arfcn="" scstype="" pci=""
 
     # 用 awk 逐行解析，每行按逗号分隔
-    eval $(echo "$_AT_RES" | tr -d '"' | awk -F',' '
+    eval $(echo "$_AT_RES" | tr -d '"' | awk '
         BEGIN { op=""; forbid=""; n=0; pc=0; split("", bands); split("", arfcns); split("", scs); split("", pcis) }
         /^\^NRFREQLOCK:/ {
-            split($1, a, /[: ]+/)
-            op = a[2]
+            op = $2
             next
         }
         /^OK/ { next }
         /^$/ { next }
         /^AT/ { next }
         {
-            # 如果 forbid/n 还未解析且 NF==2，则是 forbid,num 行
-            if (forbid == "" && NF == 2) {
-                forbid = $1; n = $2
+            split($1, a, ",")
+            # forbidFlag,num 行：逗号分隔为2段且 forbid 尚未赋值
+            if (forbid == "" && length(a[2]) > 0 && length(a[3]) == 0) {
+                forbid = a[1]
+                n = a[2]
                 next
             }
-            # 否则是数据行: band,arfcn,scstype,pci
+            # 锁条目行：band,arfcn,scstype,pci
             pc++
-            bands[pc] = $1
-            arfcns[pc] = $2
-            if (NF >= 3) scs[pc] = $3
-            if (NF >= 4) pcis[pc] = $4
+            bands[pc] = a[1]
+            arfcns[pc] = a[2]
+            if (length(a[3]) > 0) scs[pc] = a[3]
+            if (length(a[4]) > 0) pcis[pc] = a[4]
         }
         END {
             printf "operatetype=%s forbidFlag=%s num=%s", (op==""?"0":op), (forbid==""?"0":forbid), (n==""?"0":n)
-            for (i=1; i<=pc; i++) {
-                sep = (i==1 ? " " : ",")
-                printf " band=\"%s%s\" arfcn=\"%s%s\" scstype=\"%s%s\" pci=\"%s%s\"",
-                    (i>1?",":""), bands[i],
-                    (i>1?",":""), arfcns[i],
-                    (i>1?",":""), scs[i],
-                    (i>1?",":""), pcis[i]
-            }
+            printf " band=\""
+            for (i=1; i<=pc; i++) printf "%s%s", (i>1?",":""), bands[i]
+            printf "\" arfcn=\""
+            for (i=1; i<=pc; i++) printf "%s%s", (i>1?",":""), arfcns[i]
+            printf "\" scstype=\""
+            for (i=1; i<=pc; i++) printf "%s%s", (i>1?",":""), scs[i]
+            printf "\" pci=\""
+            for (i=1; i<=pc; i++) printf "%s%s", (i>1?",":""), pcis[i]
+            printf "\""
         }
     ')
 
@@ -948,18 +950,32 @@ function atcmd_lte_arfcn_lock()
     return 0
 }
 
-# 4G 锁小区
+# 4G 锁小区  支持同时设置多条
 function atcmd_lte_pci_lock()
 {
-    local band=$2
-    local freq=$3
-    local pcid=$4
+    local forbidFlag=$2     # 0:允许切换与重选 1:不允许
+    local band=$3
+    local freq=$4
+    local pcid=$5
 
-    [ -z "${band}" ] && { _log "band required!" && return -1; }
-    [ -z "${freq}" ] && { _log "freq required!" && return -1; }
-    [ -z "${pcid}" ] && { _log "pcid required!" && return -1; }
+    _log "lte_pci_lock forbid:${forbidFlag} band:${band} freq:${freq} pcid:${pcid}"
 
-    local ATCMD="AT^LTEFREQLOCK=2,0,1,\"${band}\",\"${freq}\",\"${pcid}\""
+    [ -z "${forbidFlag}" ] && { _log "forbidFlag required!" && return 1; }
+    [ -z "${band}" ] && { _log "band required!" && return 1; }
+    [ -z "${freq}" ] && { _log "arfcn required!" && return 1; }
+    [ -z "${pcid}" ] && { _log "pcid required!" && return 1; }
+
+    local band_count=$(echo "$band" | wc -w)
+    local freq_count=$(echo "$freq" | wc -w)
+    local pcid_count=$(echo "$pcid" | wc -w)
+
+    # 如果 band_count freq_count pcid_count 不相等, 报错并退出
+    if [ "$band_count" != "$freq_count" ] || [ "$band_count" != "$pcid_count" ]; then
+        _log "param count mismatch! band:${band_count} freq:${freq_count} pcid:${pcid_count}"
+        return 1
+    fi
+
+    local ATCMD="AT^LTEFREQLOCK=2,${forbidFlag},${band_count},\"${band// /,}\",\"${freq// /,}\",\"${pcid// /,}\""
     _exec_at "$ATCMD" $1 || return 1
 
     return 0
@@ -994,34 +1010,42 @@ function atcmd_get_lte_lock()
     local operatetype="" forbidFlag="" num=""
     local band="" arfcn="" pci=""
 
-    eval $(echo "$_AT_RES" | tr -d '"' | awk -F',' '
+    # 调试日志: 查看_AT_RES原始内容
+    local lte_lines=$(echo "$_AT_RES" | wc -l)
+    # _log "lte_res lines:${lte_lines} raw:[$(echo "$_AT_RES" | tr '\n' '|')]"
+
+    eval $(echo "$_AT_RES" | tr -d '"' | awk '
         BEGIN { op=""; forbid=""; n=0; pc=0; split("", bands); split("", arfcns); split("", pcis) }
         /^\^LTEFREQLOCK:/ {
-            split($1, a, /[: ]+/)
-            op = a[2]
+            op = $2
             next
         }
         /^OK/ { next }
         /^$/ { next }
         /^AT/ { next }
         {
-            if (forbid == "" && NF == 2) {
-                forbid = $1; n = $2
+            split($1, a, ",")
+            # forbidFlag,num 行：逗号分隔为2段且 forbid 尚未赋值
+            if (forbid == "" && length(a[2]) > 0 && length(a[3]) == 0) {
+                forbid = a[1]
+                n = a[2]
                 next
             }
+            # 锁条目行：band,arfcn[,pci]
             pc++
-            bands[pc] = $1
-            arfcns[pc] = $2
-            if (NF >= 3) pcis[pc] = $3
+            bands[pc] = a[1]
+            arfcns[pc] = a[2]
+            if (length(a[3]) > 0) pcis[pc] = a[3]
         }
         END {
             printf "operatetype=%s forbidFlag=%s num=%s", (op==""?"0":op), (forbid==""?"0":forbid), (n==""?"0":n)
-            for (i=1; i<=pc; i++) {
-                printf " band=\"%s%s\" arfcn=\"%s%s\" pci=\"%s%s\"",
-                    (i>1?",":""), bands[i],
-                    (i>1?",":""), arfcns[i],
-                    (i>1?",":""), pcis[i]
-            }
+            printf " band=\""
+            for (i=1; i<=pc; i++) printf "%s%s", (i>1?",":""), bands[i]
+            printf "\" arfcn=\""
+            for (i=1; i<=pc; i++) printf "%s%s", (i>1?",":""), arfcns[i]
+            printf "\" pci=\""
+            for (i=1; i<=pc; i++) printf "%s%s", (i>1?",":""), pcis[i]
+            printf "\""
         }
     ')
 
@@ -1040,9 +1064,10 @@ function atcmd_get_lte_lock()
 function atcmd_set_lte_lock()
 {
     local lte_operatetype=$2
-    local pcid=$3
-    local band=$4
-    local freq=$5
+    local forbidFlag=$3
+    local pcid=$4
+    local band=$5
+    local freq=$6
 
     [ -z "${lte_operatetype}" ] && { _log "operatetype required!" && return 1; }
 
@@ -1054,7 +1079,7 @@ function atcmd_set_lte_lock()
             atcmd_lte_arfcn_lock $1 "${band}" "${freq}"
             ;;
         2)
-            atcmd_lte_pci_lock $1 "${band}" "${freq}" "${pcid}"
+            atcmd_lte_pci_lock $1 "${forbidFlag}" "${band}" "${freq}" "${pcid}"
             ;;  
         3)
             atcmd_lte_band_lock $1 "${band}"
@@ -1674,14 +1699,16 @@ function dial
     lteBandLock=$(echo "$lteBandLock" | sed 's/^[bBnN]//')
     # 锁LTE PCI小区
     local ltePciLockEnable=$(uci -q get sim.$ifname.ltePciLockEnable)
-    local ltePciPcid=$(uci -q get sim.$ifname.ltePciPcid)
-    local ltePciBand=$(uci -q get sim.$ifname.ltePciBand)
-    local ltePciFreq=$(uci -q get sim.$ifname.ltePciFreq)
+    local ltePciForbidFlag=$(uci -q get sim.$ifname.ltePciForbidFlag)
+    [ -z "$ltePciForbidFlag" ] && ltePciForbidFlag=0
 
     if [ -n "$lteBandLock" ] && [ "$lteBandLock" != "unlocked" ]; then
         atcmd_lte_band_lock $1 "$lteBandLock"
     elif [ -n "$ltePciLockEnable" ] && [ "$ltePciLockEnable" = "locked" ]; then
-        atcmd_lte_pci_lock $1 "$ltePciBand" "$ltePciFreq" "$ltePciPcid"
+        local ltePciPcid=$(uci -q get sim.$ifname.ltePciPcid)
+        local ltePciBand=$(uci -q get sim.$ifname.ltePciBand)
+        local ltePciFreq=$(uci -q get sim.$ifname.ltePciFreq)
+        atcmd_lte_pci_lock $1 "$ltePciForbidFlag" "$ltePciBand" "$ltePciFreq" "$ltePciPcid"
     else
         atcmd_lte_unlock $1
     fi

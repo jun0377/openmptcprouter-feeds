@@ -115,11 +115,15 @@ function dial
     atcmd_set_nr_lock $nr_lock $nr_forbidFlag $nr_pcid $nr_band $nr_freq $nr_scs
 
     # 锁LTE频段/PCI小区
-    local lte_lock=$(uci -q get sim.$ifname.ltePciLock)
+    local lte_lock=$(uci -q get sim.$ifname.ltePciLockEnable)
     local lte_pcid=$(uci -q get sim.$ifname.ltePciPcid)
     local lte_band=$(uci -q get sim.$ifname.ltePciBand)
     local lte_freq=$(uci -q get sim.$ifname.ltePciFreq)
-    atcmd_set_lte_lock $lte_lock $lte_pcid $lte_band $lte_freq
+    local lte_forbidFlag=$(uci -q get sim.$ifname.ltePciForbidFlag)
+    [ -z "$lte_forbidFlag" ] && lte_forbidFlag=0
+    local lte_lock_type=0
+    [ "$lte_lock" = "locked" ] && lte_lock_type=2
+    atcmd_set_lte_lock $lte_lock_type $lte_forbidFlag $lte_pcid $lte_band $lte_freq
 
     # 切换一次飞行模式
     atcmd_set_airplane_on
