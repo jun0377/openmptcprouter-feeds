@@ -8,7 +8,7 @@ function stop_mode_balance() {
 
 # 负载均衡模式处理逻辑
 mode_balance_handler() {
-	logger -t "OMR" "<$FUNCNAME> mode: single"
+	logger -t "OMR-VPS" "<$FUNCNAME> mode: single"
 
     # 停止单卡模式
 	[ -f /usr/lib/openmptcprouter-vps/mode_single.sh ] && {
