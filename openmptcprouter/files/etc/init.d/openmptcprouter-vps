@@ -214,6 +214,11 @@ _set_openvpn_vps() {
 		# return
 	}
 
+	[ "$(uci -q get network.omrvpn.proto)" != "none" ] && {
+		uci set network.omrvpn.proto='none'
+		uci commit network
+	}
+
 	[ -n "$(uci -q get openvpn.omr2)" ] && uci delete openvpn.omr2
 	[ -n "$(uci -q get openvpn.omr3)" ] && uci delete openvpn.omr3
 	[ -n "$(uci -q get openvpn.omr4)" ] && uci delete openvpn.omr4
