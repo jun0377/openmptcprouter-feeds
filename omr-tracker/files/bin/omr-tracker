@@ -284,19 +284,20 @@ _ping() {
 	# 3G / QMI / NCM / ... 用不带-B的ping方式
 	if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ "$OMR_TRACKER_NO_BIND" = "1" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; }; then
 		
-		# -I device：绑定接口; -w timeout：总超时; -c count：次数; -s size：payload 大小; -t ttl：TTL
-		# -Q 184：TOS/DSCP（184=0xB8，常见对应 EF/高优先级，作者注释里说 CS7 但 56 才是 CS7；此处需结合实现理解）
+		# BusyBox ash 中续行反斜杠后面不能再跟注释，否则会破坏整条 ping 命令。
+		# 这里按原参数完整拼接，确保 NCM/3G/QMI 接口的探测与手工执行一致。
 		ret=$(ping -I "${device}" \
-			-w "$OMR_TRACKER_TIMEOUT" \			# 总超时时间
-			-c "$OMR_TRACKER_COUNT" \			# 发包数量
-			-s "$OMR_TRACKER_SIZE" \			# 数据包负载大小
-			-t "$OMR_TRACKER_MAX_TTL" \			# TTL 值
-			-Q 184 \							# DSCP/TOS 标记（0xB8，高优先级）
+			-w "$OMR_TRACKER_TIMEOUT" \
+			-c "$OMR_TRACKER_COUNT" \
+			-s "$OMR_TRACKER_SIZE" \
+			-t "$OMR_TRACKER_MAX_TTL" \
+			-Q 184 \
 			"${host}" 2>&1
 		)
 
 		# 从 ping 输出中提取丢包百分比
 		loss=$(echo "$ret" | awk '/packet loss/ && !/errors/ {gsub("%","");print $6}' | tr -d '\n')
+		logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> _ping ${host}: loss=[${loss}] ret_firstline=[$(echo "$ret" | head -1)]"
 		
 		# 非100%丢包视为 可达
 		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
@@ -410,12 +411,13 @@ _httping() {
 # 逻辑: 使用dig命令通过指定接口向目标服务器1.1.1.1查询域名。如果能收到解析结果，则认为链路正常，并以查询耗时作为延迟
 _dns() {
 	local host=$1				# DNS 服务器地址（作为 dig 的 @server）
-	local deviceip=$2			# 本地源 IP（dig -b 绑定源地址）
-	ret=$(dig @"${host}" \
-		-b "${deviceip}" \						# 绑定源 IP，确保查询从指定接口发出
-		    +time="$OMR_TRACKER_TIMEOUT" \		# 单次查询超时
-		    +tries="$OMR_TRACKER_COUNT" \		# 重试次数
-		    one.one.one.one						# 查询目标域名（Cloudflare DNS 的域名）
+		local deviceip=$2			# 本地源 IP（dig -b 绑定源地址）
+		# 与 _ping 一样，续行反斜杠后面不能挂注释，否则 dig 参数会被拆断。
+		ret=$(dig @"${host}" \
+			-b "${deviceip}" \
+			+time="$OMR_TRACKER_TIMEOUT" \
+			+tries="$OMR_TRACKER_COUNT" \
+			one.one.one.one
 	) && echo "$ret" | grep -sq "1.1.1.1" && {								# 验证响应中包含预期的 IP 地址
 		OMR_TRACKER_LATENCY=$(echo "$ret" | awk '/Query time/{print $4}')	# 提取查询耗时作为延迟
 		return 0	# 探测成功
@@ -550,7 +552,10 @@ while true; do
 				fi
 
 				# 内层重试循环，每次失败后递减 tries，直到成功或耗尽重试次数
+				__attempt=0
+				__attempts_max=$tries
 				while [ "$tries" -gt 0 ]; do
+					__attempt=$((__attempt + 1))
 
 					# 第一步：首先尝试 Ping 网关, 如果连网关都 Ping 不通，说明物理链路或本地网络有问题，无需浪费时间去 Ping 互联网上的目标
 					if [ -n "$OMR_TRACKER_DEVICE_ROUTE" ]; then
@@ -560,6 +565,8 @@ while true; do
 						_ping "$OMR_TRACKER_DEVICE_GATEWAY" "$OMR_TRACKER_DEVICE" "no"
 						status=$?
 					fi
+					if $(exit $status); then __gw_result="OK"; else __gw_result="FAIL"; fi
+					logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> [attempt ${__attempt}/${__attempts_max}] ping gw ${OMR_TRACKER_DEVICE_GATEWAY}: ${__gw_result}"
 
 					# 如果网关通了且配置为不探测（none），则直接判定为 OK
 					if $(exit $status) && [ "$OMR_TRACKER_TYPE" = "none" ]; then
@@ -570,7 +577,12 @@ while true; do
 					elif [ "$OMR_TRACKER_TYPE" != "none" ]; then
 						# 网关不通时记录错误信息，但不立即退出，继续尝试探测互联网目标
 						if ! $(exit $status); then
-							OMR_TRACKER_STATUS_MSG="IPv4 gateway down"
+							# 3G/QMI/NCM 接口的网关通常不响应 ICMP，这是正常行为，不视为错误
+							if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; then
+								OMR_TRACKER_STATUS_MSG="gateway ICMP not responding (expected for NCM/3G/QMI)"
+							else
+								OMR_TRACKER_STATUS_MSG="IPv4 gateway down"
+							fi
 						fi
 
 						serverip_ping=false
@@ -593,12 +605,19 @@ while true; do
 							# 因为这些接口通常没有默认路由或路由优先级较低
 							if [ -n "$OMR_TRACKER_HOST" ]; then
 								if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; then
-									# Check if route is not used
-									while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2>&1
+									# 获取接口对应的策略路由表号（通常等于 metric 值）
+								# NCM/3G/QMI 接口使用策略路由（from <ip> lookup <table>），路由必须加到正确的表才能命中
+								_omr_ncm_rtable=$(uci -q get network.$OMR_TRACKER_INTERFACE.ip4table)
+								[ -z "$_omr_ncm_rtable" ] && _omr_ncm_rtable=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
+								[ -z "$_omr_ncm_rtable" ] && _omr_ncm_rtable="main"
+								_omr_ncm_table_opt=""
+								[ "$_omr_ncm_rtable" != "main" ] && _omr_ncm_table_opt="table $_omr_ncm_rtable"
+
+									while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP $_omr_ncm_table_opt > /dev/null 2>&1
 									do
-										logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
+										logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP table ${_omr_ncm_rtable}. waiting..."
 										sleep 2
-										ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
+										ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" $_omr_ncm_table_opt > /dev/null 2>&1
 										_restart		# 切换到下一个探测目标
 									done
 								fi
@@ -615,8 +634,15 @@ while true; do
 									statusb=$?
 								fi
 
+								if $(exit $statusb); then __host_result="OK"; else __host_result="FAIL"; fi
+								logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> [attempt ${__attempt}/${__attempts_max}] ${OMR_TRACKER_TYPE} ${OMR_TRACKER_HOST}: ${__host_result}"
+
 								# 探测完成后删除临时添加的主机路由（避免路由表污染）
+							if [ -n "$_omr_ncm_table_opt" ]; then
+								ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" $_omr_ncm_table_opt > /dev/null 2>&1
+							else
 								[ -n "$(ip route show ${OMR_TRACKER_HOST} via ${OMR_TRACKER_DEVICE_GATEWAY} dev ${OMR_TRACKER_DEVICE} src ${OMR_TRACKER_DEVICE_IP})" ] && ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
+							fi
 								# 判断探测结果
 								if $(exit $statusb); then
 									OMR_TRACKER_STATUS="OK"			# 探测成功，链路正常

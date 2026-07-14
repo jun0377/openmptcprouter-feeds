@@ -214,6 +214,7 @@ _set_openvpn_vps() {
 		# return
 	}
 
+	# bug fix: 协议应该为none, 而不是dhcp
 	[ "$(uci -q get network.omrvpn.proto)" != "none" ] && {
 		uci set network.omrvpn.proto='none'
 		uci commit network
@@ -1392,7 +1393,6 @@ start_service() {
 # 服务触发器，当相关服务或配置发生变化时，OpenMPTCPRouter的VPS组件能够适当地响应
 service_triggers() {
 	# 当如下服务发生reload时, 会自动触发当前服务的reload
-	logger -t "OMR-VPS" "<$FUNCNAME> restart triggered by openvpn"
 	procd_add_reload_trigger openvpn
 	# 当工作模式发生变化时, 自动触发当前服务的work_mode, 这一行似乎没有正常工作
 	# procd_add_config_trigger "config.change" "global" /etc/init.d/openmptcprouter-vps work_mode

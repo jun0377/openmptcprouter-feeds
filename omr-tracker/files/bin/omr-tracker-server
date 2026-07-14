@@ -14,6 +14,11 @@ export OMR_TRACKER_STATUS_MSG		# 导出状态消息（原因说明）
 export OMR_TRACKER_LATENCY			# 导出探测延迟（ms）
 export OMR_TRACKER_LOSS				# 导出丢包率（百分比整数）
 
+export OMR_OPENVPN_TRACKER_STATUS		# openvpn隧道探测状态（OK/ERROR）
+export OMR_OPENVPN_TRACKER_STATUS_MSG	# openvpn隧道状态消息
+export OMR_OPENVPN_TRACKER_LATENCY		# openvpn隧道探测延迟（ms）
+export OMR_OPENVPN_TRACKER_LOSS			# openvpn隧道丢包率（百分比整数）
+
 # logger -t "OMR" "<$basename> $0"
 
 # 后置钩子函数
@@ -58,6 +63,103 @@ _save() {
 	local tmpfile="/tmp/tracker-server/.tracker-server.json.$$"
 	json_dump > "$tmpfile" && mv "$tmpfile" "$outfile" || rm -f "$tmpfile"
 }
+
+# 保存openvpn探测结果到 /tmp/tracker-server/tracker-openvpn.json
+_save_openvpn() {
+
+	local latency_val="${OMR_OPENVPN_TRACKER_LATENCY:-0}"
+	[[ "$latency_val" =~ ^[0-9]+$ ]] || latency_val=0
+	local loss_val="${OMR_OPENVPN_TRACKER_LOSS:-0}"
+	[[ "$loss_val" =~ ^[0-9]+$ ]] || loss_val=0
+
+	[ "$OMR_OPENVPN_TRACKER_STATUS" = "OK" ] && OMR_OPENVPN_TRACKER_STATUS_MSG="tunnel ready!"
+
+	json_init
+	json_add_string status "${OMR_OPENVPN_TRACKER_STATUS:-ERROR}"
+	json_add_string msg "${OMR_OPENVPN_TRACKER_STATUS_MSG:-}"
+
+	[ "$OMR_OPENVPN_TRACKER_STATUS" = "OK" ] && {
+		json_add_int latency "$latency_val"
+		json_add_int loss "$loss_val"
+		json_add_string device "${tun_device:-}"
+		json_add_string local_ip "${tun_local_ip:-}"
+		json_add_string gateway "${tun_gateway:-}"
+	}
+
+	json_add_int ts "$(date +%s)"
+	json_add_string timestamp "$(date +"%H:%M:%S")"
+
+	[ ! -d /tmp/tracker-server ] && mkdir -p /tmp/tracker-server
+
+	local outfile="/tmp/tracker-server/tracker-openvpn.json"
+	local tmpfile="/tmp/tracker-server/.tracker-openvpn.json.$$"
+	json_dump > "$tmpfile" && mv "$tmpfile" "$outfile" || rm -f "$tmpfile"
+}
+
+# openvpn延时探测
+# _ping_openvpn() {
+
+# 	# 重置状态
+# 	OMR_OPENVPN_TRACKER_STATUS="ERROR"
+# 	OMR_OPENVPN_TRACKER_STATUS_MSG=""
+# 	OMR_OPENVPN_TRACKER_LATENCY=""
+# 	OMR_OPENVPN_TRACKER_LOSS=""
+
+# 	# 仅当openvpn启用时才探测
+# 	[ "$(uci -q get openvpn.omr.enabled)" != "1" ] && {
+# 		OMR_OPENVPN_TRACKER_STATUS_MSG="OpenVPN disabled"
+# 		_save_openvpn
+# 		return
+# 	}
+
+# 	# 获取tun设备名，默认为tun0
+# 	tun_device="$(uci -q get openvpn.omr.dev)"
+# 	[ -z "$tun_device" ] && tun_device="tun0"
+
+# 	# 检查tun设备是否存在且已启动
+# 	tun_local_ip=$(ip -4 -br addr ls dev "$tun_device" 2>/dev/null | awk -F'[ /]+' '{print $3}')
+# 	[ -z "$tun_local_ip" ] && {
+# 		OMR_OPENVPN_TRACKER_STATUS_MSG="tun device ${tun_device} not ready"
+# 		_save_openvpn
+# 		return
+# 	}
+
+# 	# 获取服务端tun口IP（即隧道的网关地址）
+# 	tun_gateway=$(ip route show dev "$tun_device" 2>/dev/null | awk '/^default/ {print $3}')
+# 	if [ -z "$tun_gateway" ]; then
+# 		tun_gateway=$(ip route show dev "$tun_device" 2>/dev/null | awk '/via/ {print $3}' | head -n1)
+# 	fi
+# 	[ -z "$tun_gateway" ] && {
+# 		OMR_OPENVPN_TRACKER_STATUS_MSG="gateway not found for ${tun_device}"
+# 		_save_openvpn
+# 		return
+# 	}
+
+# 	# ping命令探测
+# 	local k=0
+# 	while [ "$k" -le "$retry" ]; do
+# 		ret=$(ping -w "$OMR_TRACKER_TIMEOUT" -c 1 -q "$tun_gateway" 2>&1)
+# 		loss=$(echo "$ret" | awk '/packet loss/ {gsub("%","");print $6}' | tr -d '\n')
+# 		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
+# 			latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
+# 			[ -n "$latency" ] && OMR_OPENVPN_TRACKER_LATENCY="$latency"
+# 			OMR_OPENVPN_TRACKER_STATUS="OK"
+# 			OMR_OPENVPN_TRACKER_LOSS="$loss"
+# 			logger -t "OMR" "<$basename> openvpn tun:${tun_device} local:${tun_local_ip} gw:${tun_gateway} rtt:${latency:-0}ms loss:${loss}%"
+# 			break
+# 		fi
+
+# 		k=$((k+1))
+# 		sleep "${intervaltries}"
+# 	done
+
+# 	[ "$OMR_OPENVPN_TRACKER_STATUS" != "OK" ] && {
+# 		OMR_OPENVPN_TRACKER_STATUS_MSG="OpenVPN ${tun_gateway} unreachable!"
+# 		logger -t "OMR" "<$basename> openvpn ${tun_gateway} unreachable!"
+# 	}
+
+# 	_save_openvpn
+# }
 
 # 聚合模式下使用multipath命令返回的interface进行测试
 _ping_server_intf_in_mode_aggregate() {
