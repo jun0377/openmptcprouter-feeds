@@ -1,5 +1,9 @@
 #!/bin/sh
+
+# version为空说明时首次安装或重置后首次开机
 if [ "$(uci -q get openmptcprouter.settings.version)" = "" ]; then
+
+	# 设置unbound监听端口为5353
 	if [ "$(uci -q get unbound.@unbound[-1].listen_port | grep 5353)" = "" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set unbound.@unbound[-1].listen_port=5353
@@ -16,6 +20,8 @@ if [ "$(uci -q get openmptcprouter.settings.version)" = "" ]; then
 			commit unbound
 		EOF
 	fi
+
+	# 配置dnsmasq->unbound的DNS转发链, 将dnsmasq的DNS请求转发到本地5353端口,即unbound监听的端口
 	if [ "$(uci -q show dhcp | grep 127.0.0.1#5353)" = "" ]; then
 		uci -q batch <<-EOF >/dev/null
 			add_list dhcp.@dnsmasq[-1].server="127.0.0.1#5353"
@@ -24,13 +30,17 @@ if [ "$(uci -q get openmptcprouter.settings.version)" = "" ]; then
 		EOF
 	fi
 fi
+
+# 将 unbound 的匿名 section 重命名 为固定名称 ub_main
 if [ -z "$(uci -q get unbound.ub_main)" ]; then
 	uci -q batch <<-EOF >/dev/null
 		rename unbound.@unbound[-1]=ub_main
 		commit unbound
 	EOF
 fi
+
 # Make unbound listen on loopback only
+# 强制 unbound 只监听 loopback 接口, 不对外暴露
 if [ -z "$(uci -q get unbound.ub_main.interface)" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set unbound.ub_main.interface_auto='0'
@@ -38,6 +48,8 @@ if [ -z "$(uci -q get unbound.ub_main.interface)" ]; then
 		commit unbound
 	EOF
 fi
+
+# 配置了unbound的 本地域名解析来源 ，并清理不兼容的选项
 if [ -z "$(uci -q get unbound.ub_dhcp_link)" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set unbound.ub_main.dhcp_link='dnsmasq'
@@ -49,6 +61,8 @@ if [ -z "$(uci -q get unbound.ub_dhcp_link)" ]; then
 	EOF
 
 fi
+
+# 阻止浏览器的 DoH(DNS-over-HTTPS)绕过本地 DNS 解析
 if [ "$(uci -q show dhcp | grep 'use-application-dns.net')" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		add_list dhcp.@dnsmasq[-1].server="/use-application-dns.net/"
@@ -56,6 +70,7 @@ if [ "$(uci -q show dhcp | grep 'use-application-dns.net')" = "" ]; then
 	EOF
 fi
 
+# 配置dnsmasq为纯转发器模式, 并将DNS解析权完全交给unbound
 if [ "$(uci -q get dhcp.@dnsmasq[0].rebind_domain)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set dhcp.@dnsmasq[-1].noresolv=1
@@ -65,12 +80,16 @@ if [ "$(uci -q get dhcp.@dnsmasq[0].rebind_domain)" = "" ]; then
 		commit dhcp
 	EOF
 fi
+
+# 设置dnsmasq同时向上游转发的最大并发DNS查询数, 默认值是 150
 if [ "$(uci -q get dhcp.@dnsmasq[0].dnsforwardmax)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set dhcp.@dnsmasq[-1].dnsforwardmax='1500'
 		commit dhcp
 	EOF
 fi
+
+# 发送一个 无效的 WPAD 配置 来消除 Windows 客户端的网络延迟
 if [ "$(uci -q get dhcp.lan.dhcp_options)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		uci add_list dhcp.lan.dhcp_option='252,"\n"'
@@ -78,6 +97,7 @@ if [ "$(uci -q get dhcp.lan.dhcp_options)" = "" ]; then
 	EOF
 fi
 
+# unbound 与 https-dns-proxy 的互斥控制, 确保两者不同时运行
 if [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep 127.0.0.1)" ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep 127.0.0.1#5353)" ]; then
 	/etc/init.d/https-dns-proxy start
 	/etc/init.d/https-dns-proxy enable
@@ -95,6 +115,8 @@ fi
 #	commit unbound
 #EOF
 
+# 预置了 unbound 的 权威区（auth_zone）和 转发区（forward_zone）, 
+# 让用户可以在 LuCI 界面中一键切换 DNS 上游
 if [ -z "$(uci -q show unbound.auth_icann)" ]; then
 	uci -q batch <<-EOF >/dev/null
 		del unbound.auth_icann
@@ -108,7 +130,7 @@ if [ -z "$(uci -q show unbound.auth_icann)" ]; then
 		add_list unbound.auth_icann.zone_name='arpa.'
 		add_list unbound.auth_icann.zone_name='in-addr.arpa.'
 		add_list unbound.auth_icann.zone_name='ip6.arpa.'
-		set unbound.auth_icann.enabled='1'
+		set unbound.auth_icann.enabled='0'
 		del unbound.fwd_isp
 		set unbound.fwd_isp=zone
 		set unbound.fwd_isp.enabled='0'
@@ -141,9 +163,32 @@ if [ -z "$(uci -q show unbound.auth_icann)" ]; then
 		add_list unbound.fwd_cloudflare.server='2606:4700:4700::1111'
 		add_list unbound.fwd_cloudflare.server='2606:4700:4700::1001'
 		set unbound.fwd_cloudflare.zone_name='.'
+		del unbound.fwd_chinadns
+		set unbound.fwd_chinadns=zone
+		set unbound.fwd_chinadns.enabled='1'
+		set unbound.fwd_chinadns.fallback='1'
+		set unbound.fwd_chinadns.zone_type='forward_zone'
+		add_list unbound.fwd_chinadns.server='223.5.5.5'
+		add_list unbound.fwd_chinadns.server='223.6.6.6'
+		add_list unbound.fwd_chinadns.server='119.29.29.29'
+		set unbound.fwd_chinadns.zone_name='.'
 	EOF
 fi
 
+# 预置的一套 公共 DNS 提供商菜单 ，供用户在 LuCI 中一键切换。全部默认 enabled='0' （关闭）， fallback='1' （递归失败时可用作回退）
+# fwd_adguard_standard 							AdGuard 					标准 DoT 							176.103.130.130 , .131 
+# fwd_adguard_family 							AdGuard Family 				过滤成人内容 + 安全 				  176.103.130.132 , .134 
+# fwd_cloudflare 								Cloudflare 					标准 DoT（已在上一段） 				  1.1.1.1 , 1.0.0.1 
+# fwd_cloudflare_family 						Cloudflare Family 			过滤恶意软件 + 成人内容 			  1.1.1.3 , 1.0.0.3 
+# fwd_cloudflare_malware 						Cloudflare Security 		仅过滤恶意软件 						 1.1.1.2 , 1.0.0.2 
+# fwd_google 									Google 						标准 DoT（已在上一段） 				  8.8.8.8 , 8.8.4.4 
+# fwd_quad9_recommended 						Quad9 						推荐（安全过滤） 					  9.9.9.9 , 149.112.112.112 
+# fwd_quad9_secured 							Quad9 Secured 				DNSSEC 强制验证 					9.9.9.9 , 149.112.112.9 
+# fwd_quad9_unsecured 							Quad9 Unsecured 			无安全过滤 							 9.9.9.10 , 149.112.112.10 
+# fwd_quad9_ecs 								Quad9 ECS 					支持 EDNS Client Subnet 			9.9.9.11 , 149.112.112.11 
+# fwd_odvr 										ODVR						(CZ.NIC) 捷克 NIC，DNSSEC 验证 1	 93.17.47.1 , 185.43.135.1 
+# fwd_libredns 									LibreDNS 					德国，无日志 116.202.176.26
+# fwd_chinadns 									ChinaDNS 					阿里+腾讯，低延迟 223.5.5.5 , 223.6.6.6 , 119.29.29.29
 if [ -z "$(uci -q get unbound.fwd_adguard_family)" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set unbound.fwd_adguard_family=zone
@@ -238,10 +283,13 @@ if [ -z "$(uci -q get unbound.fwd_adguard_family)" ]; then
 	EOF
 fi
 
+# 确保路由器本机的DNS 解析也能工作
+# noresolv=1 让 dnsmasq 不读这个文件，但路由器上其他进程（如 wget 、 curl 、ping 域名）仍然依赖它。指向 127.0.0.1 意味着本机进程的 DNS 查询走 unbound
 if [ -z "$(grep nameserver /etc/resolv.conf)" ]; then
 	echo "nameserver 127.0.0.1" > /etc/resolv.conf
 fi
 
+# 设置 unbound 的 未知服务器超时时间为 2500ms （默认 376ms）
 if [ -z "$(grep unknown-server-time-limit /etc/unbound/unbound_srv.conf)" ]; then
 	echo "unknown-server-time-limit: 2500" > /etc/unbound/unbound_srv.conf
 fi
