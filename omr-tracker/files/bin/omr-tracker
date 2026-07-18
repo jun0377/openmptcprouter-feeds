@@ -7,6 +7,7 @@
 . /lib/functions.sh
 . /usr/lib/unbound/iptools.sh
 . /lib/functions/network.sh
+. /usr/share/libubox/jshn.sh
 
 # retrieve args
 OMR_TRACKER_INTERFACE="$1"
@@ -439,6 +440,35 @@ logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE}> proto:${OMR_TRACKER_INTE
 # 初始化 上一次状态（空，后面用于决定重试次数/状态变化）
 OMR_TRACKER_PREV_STATUS=""
 
+# 保存omrvpn探测状态到 /tmp/tracker-ovpn/tracker-ovpn.json
+_save_ovpn() {
+	local latency_val="${OMR_TRACKER_LATENCY:-0}"
+	[[ "$latency_val" =~ ^[0-9]+$ ]] || latency_val=0
+	local loss_val="${OMR_TRACKER_LOSS:-0}"
+	[[ "$loss_val" =~ ^[0-9]+$ ]] || loss_val=0
+
+	[ "$OMR_TRACKER_STATUS" = "OK" ] && [ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="network ready!"
+
+	json_init
+	json_add_string status "${OMR_TRACKER_STATUS:-ERROR}"
+	json_add_string msg "${OMR_TRACKER_STATUS_MSG:-}"
+
+	[ "$OMR_TRACKER_STATUS" = "OK" ] && {
+		json_add_int latency "$latency_val"
+		json_add_int loss "$loss_val"
+	}
+
+	json_add_string interface "${OMR_TRACKER_INTERFACE}"
+	json_add_int ts "$(date +%s)"
+	json_add_string timestamp "$(date +"%H:%M:%S")"
+
+	[ ! -d /tmp/tracker-ovpn ] && mkdir -p /tmp/tracker-ovpn
+
+	local outfile="/tmp/tracker-ovpn/tracker-ovpn.json"
+	local tmpfile="/tmp/tracker-ovpn/.tracker-ovpn.json.$$"
+	json_dump > "$tmpfile" && mv "$tmpfile" "$outfile" || rm -f "$tmpfile"
+}
+
 # main loop
 # 通过层层递进的方式(本地网关 -> 互联网目标 -> VPS 服务器 -> VPS API)来验证 IPv4 链路的可用性
 # 它不仅检查'能不能上网', 还检查'能不能连上 MPTCP 聚合服务器', 从而确保只有真正可用的链路才会被加入MPTCP资源池
@@ -454,6 +484,18 @@ while true; do
 	OMR_TRACKER_DEVICE_GATEWAY=		# 清空 IPv4 网关
 	OMR_TRACKER_DEVICE_GATEWAY6=	# 清空 IPv6 网关
 	serverip_ping=false				# VPS服务器可达性标志,默认不可达
+
+	# omrvpn: 每轮检查OpenVPN进程是否存活, 进程不存在则直接标记ERROR并跳过后续探测
+	if [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
+		if ! pidof openvpn > /dev/null 2>&1; then
+			OMR_TRACKER_STATUS="ERROR"
+			OMR_TRACKER_STATUS_MSG="openvpn progress not running!"
+			_save_ovpn
+			_post_tracking
+			sleep "${OMR_TRACKER_FAILURE_INTERVAL:-10}"
+			continue
+		fi
+	fi
 
 	# 如果设备变量为空, 或设备在 sysfs 中仍然存在，则尝试重新获取设备名
 	# 注意：若设备已从系统中消失（如拔网卡），则跳过此块，保留上次的设备名
@@ -596,6 +638,7 @@ while true; do
 							config_load openmptcprouter
 							config_foreach _httping_server server $OMR_TRACKER_DEVICE
 						fi
+						logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> [attempt ${__attempt}/${__attempts_max}] server_ping=${serverip_ping} latency_raw=${OMR_TRACKER_LATENCY:-unset}"
 						# 如果预检未通过，探测目标主机（OMR_TRACKER_HOST）
 						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST" ]; then
 							# 解析目标主机 IP
@@ -659,6 +702,7 @@ while true; do
 						else
 							# 如果没有定义 HOST，默认认为 OK
 							OMR_TRACKER_STATUS="OK"
+							logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> [attempt ${__attempt}/${__attempts_max}] VPS_OK_no_host: status=OK latency=${OMR_TRACKER_LATENCY:-unset}"
 						fi
 
 						# 前面的ping都检测成功了, 进行更严格的检测
@@ -770,6 +814,25 @@ while true; do
 	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> status:${OMR_TRACKER_STATUS} msg:${OMR_TRACKER_STATUS_MSG}"
 	[ "$OMR_TRACKER_STATUS" = "ERROR" ] || logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> status:${OMR_TRACKER_STATUS} rtt:${OMR_TRACKER_LATENCY}ms loss:${OMR_TRACKER_LOSS}%"
 
+	# omrvpn: 如果状态OK但延迟未记录(通常是由于VPS ping失败且没有配置互联网探测目标)，
+	# 回退用服务器IP ping 记录延迟，确保 tracker-ovpn.json 中有有效的时延值
+	if [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ -z "$OMR_TRACKER_LATENCY" ]; then
+		_fallback_serverip=""
+		_get_first_serverip() {
+			local disabled
+			config_get disabled "$1" disabled
+			[ "$disabled" = "1" ] && return
+			[ -n "$_fallback_serverip" ] && return
+			config_get _fallback_serverip "$1" ip
+		}
+		config_load openmptcprouter
+		config_foreach _get_first_serverip server
+		if [ -n "$_fallback_serverip" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+			_ping "$_fallback_serverip" "$OMR_TRACKER_DEVICE" "yes" > /dev/null 2>&1
+			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> fallback server_ping ${_fallback_serverip} rtt:${OMR_TRACKER_LATENCY}ms loss:${OMR_TRACKER_LOSS}%"
+		fi
+	fi
+
 	# 执行钩子脚本，通知系统状态变化
 	_post_tracking
 
@@ -781,6 +844,9 @@ while true; do
 
 	# 轮换探测目标，为下一轮循环准备好 HOST 和 HOST6
 	_restart
+
+	# omrvpn: 每轮保存探测状态到 JSON 文件
+	[ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && _save_ovpn
 
 	# 本轮循环结束，按状态决定休眠时长：
 	# ERROR 状态使用专用的故障间隔（OMR_TRACKER_FAILURE_INTERVAL），未设置则不休眠
