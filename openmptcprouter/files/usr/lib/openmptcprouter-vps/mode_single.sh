@@ -15,9 +15,6 @@ stop_all_vpn() {
 	/etc/init.d/xray stop >/dev/null 2>&1
 	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/xray stop"
 
-	/etc/init.d/shadowsocks-libev stop >/dev/null 2>&1
-	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/shadowsocks-libev stop"
-
 	/etc/init.d/openvpn stop >/dev/null 2>&1
 	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/openvpn stop"
 	uci -q set openvpn.omr.enabled=0 && uci commit openvpn
@@ -126,12 +123,19 @@ nft_snat() {
 	uci -q set network.omr_single_lan.priority="50"
 	uci -q set network.omr_single_lan.src="$lan_subnet"
 	uci -q set network.omr_single_lan.lookup="$ip4table"
-	uci -q set network.omr_single_lan.in='lan'
+	# 不设置 in='lan'，避免 iif br-lan 限制导致路由器本地发出的流量无法命中此规则
+	# 显式删除旧的 in 选项，因为 uci set 不会自动清除之前已设置的选项
+	uci -q delete network.omr_single_lan.in
 	uci -q commit network
 	/etc/init.d/network reload >/dev/null 2>&1
 
 	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/network reload"
 	logger -t "OMR-VPS" "<$FUNCNAME> from ${lan_subnet} lookup table ${ip4table} priority=$(uci -q get network.omr_single_lan.priority)"
+
+	# network reload 后 netifd 会重建路由表，手动补路由必须放在 reload 之后
+	# 否则路由器回复 LAN 客户端的回包 (src=lan_ip, dst=lan_client) 会因 table 中无 LAN 路由而被丢弃
+	ip route replace "$lan_subnet" dev "$lan_dev" table "$ip4table" 2>/dev/null
+	logger -t "OMR-VPS" "<$FUNCNAME> ip route replace ${lan_subnet} dev ${lan_dev} table ${ip4table}"
 
 	[ "$(uci -q get firewall.zone_wan)" = "zone" ] || {
 		logger -t "OMR-VPS" "<$FUNCNAME> firewall.zone_wan not found! return now..."

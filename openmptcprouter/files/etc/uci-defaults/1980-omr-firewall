@@ -36,6 +36,12 @@ if [ "$(uci -q show firewall.zone_wan | grep wan)" != "" ] && [ "$(uci -q get ne
 		commit firewall
 	EOF
 fi
+uci -q batch <<-EOF >/dev/null
+	set firewall.zone_wan.input='ACCEPT'
+	set firewall.zone_wan.output='ACCEPT'
+	set firewall.zone_wan.forward='ACCEPT'
+	commit firewall
+EOF
 if [ "$(uci -q get firewall.@zone[0].name)" = "lan" ]; then
 	uci -q batch <<-EOF >/dev/null
 		rename firewall.@zone[0]="zone_lan"
