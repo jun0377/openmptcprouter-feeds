@@ -35,9 +35,7 @@ stop_all_vpn() {
 	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/glorytun-udp stop"
 	uci -q set glorytun-udp.vpn.enable=0 && uci commit glorytun-udp
 
-	# 负载均衡mwan3
-	/etc/init.d/mwan3 stop >/dev/null 2>&1
-	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/mwan3 stop"
+
 
 	# omr-tracker
 	/etc/init.d/omr-tracker restart >/dev/null 2>&1
@@ -209,6 +207,10 @@ mode_single_handler() {
 
 	# 停止所有VPN和代理进程
 	stop_all_vpn
+
+	# 负载均衡mwan3
+	/etc/init.d/mwan3 stop >/dev/null 2>&1
+	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/mwan3 stop"
 
 	# 更新nft snat规则
 	nft_snat

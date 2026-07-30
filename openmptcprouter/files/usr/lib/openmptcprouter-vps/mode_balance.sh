@@ -12,31 +12,42 @@ mwan3_balance_log() {
 
 # 首次进入负载均衡模式时备份原始 mwan3 配置，退出模式后用于完整恢复。
 mwan3_balance_backup_config() {
-	[ -f "$MWAN3_CONFIG_BACKUP" ] && return 0
-	[ -f "$MWAN3_CONFIG_FILE" ] || return 0
+	[ -f "$MWAN3_CONFIG_BACKUP" ] && {
+		mwan3_balance_log "backup already exists, skip"
+		return 0
+	}
+	[ -f "$MWAN3_CONFIG_FILE" ] || {
+		mwan3_balance_log "mwan3 config file not found, skip backup"
+		return 0
+	}
 
 	cp "$MWAN3_CONFIG_FILE" "$MWAN3_CONFIG_BACKUP"
 	mwan3_balance_log "backup mwan3 config to $MWAN3_CONFIG_BACKUP"
 }
 
-# 将此前备份的原始 mwan3 配置恢复回来，避免覆盖用户已有自定义配置。
+# 将此前备份的原始mwan3配置恢复回来,避免覆盖用户已有自定义配置
 mwan3_balance_restore_config() {
 	[ -f "$MWAN3_CONFIG_BACKUP" ] || return 0
 
 	cp "$MWAN3_CONFIG_BACKUP" "$MWAN3_CONFIG_FILE"
 	rm -f "$MWAN3_CONFIG_BACKUP"
+	uci -q commit mwan3
 	mwan3_balance_log "restore mwan3 config from backup"
 }
 
-# 清空当前 mwan3 中的 interface/member/policy/rule 节，为重新生成负载均衡配置做准备。
+# 清空当前mwan3中的interface/member/policy/rule节,为重新生成负载均衡配置做准备
+# 使用计数器防止uci delete静默失败时的无限循环
 mwan3_balance_clear_runtime_config() {
-	local section
+	local section max_iter=128 i=0
 
-	while true; do
+	while [ $i -lt $max_iter ]; do
+		i=$((i + 1))
 		section="$(uci -q show mwan3 | awk -F'[.=]' '$3 == "interface" || $3 == "member" || $3 == "policy" || $3 == "rule" {print $2; exit}')"
 		[ -n "$section" ] || break
 		uci -q delete "mwan3.${section}"
 	done
+
+	[ $i -ge $max_iter ] && mwan3_balance_log "WARNING: clear_runtime_config hit max_iter=$max_iter, may be incomplete"
 }
 
 # 为指定接口写入默认探测目标，使用国内常见公共 DNS 作为链路可达性检测地址。
@@ -136,6 +147,13 @@ mwan3_balance_generate_config() {
 
 	# 清空当前 mwan3 中的 interface/member/policy/rule 节,准备重新生成配置
 	mwan3_balance_clear_runtime_config
+
+	# 确保globals节存在（mwan3_init需要从中读取mmx_mask）
+	[ "$(uci -q get mwan3.globals)" = "globals" ] || {
+		uci -q set mwan3.globals=globals
+		uci -q set mwan3.globals.mmx_mask=0x3F00
+	}
+
 	# 从 global.balance 收集有效链路，并为每条权重大于 0 的接口生成 interface/member。
 	members="$(mwan3_balance_collect_members)"
 
@@ -154,9 +172,70 @@ mwan3_balance_generate_config() {
 	return 0
 }
 
+# 收集参与负载均衡的原始接口名列表（如 sim1 wan1），供 masquerade 使用。
+mwan3_balance_get_ifaces() {
+	local option iface weight
+
+	for option in $(uci -q show global.balance | sed -n "s/^global\\.balance\\.\\([^=]*\\)_weight='\\([^']*\\)'$/\\1:\\2/p"); do
+		iface="${option%%:*}"
+		weight="${option##*:}"
+
+		case "$weight" in ''|*[!0-9]*) continue ;; esac
+		[ "$weight" -gt 0 ] || continue
+		[ "$(uci -q get "network.${iface}")" = "interface" ] || continue
+		echo "$iface"
+	done | xargs
+}
+
+# 将参与负载均衡的接口加入 firewall zone_wan 并启用 MASQUERADE，
+# 确保路由器自身发出的流量使用正确的源 IP，避免源地址与出口不匹配导致丢包。
+# 该函数备份原始 firewall.zone_wan 配置，退出负载均衡模式时恢复。
+mwan3_balance_setup_masquerade() {
+	[ "$(uci -q get firewall.zone_wan)" = "zone" ] || {
+		mwan3_balance_log "firewall.zone_wan not found, skip masquerade setup"
+		return
+	}
+
+	local current_networks="$(uci -q get firewall.zone_wan.network)"
+	[ -n "$current_networks" ] && [ -z "$(uci -q get openmptcprouter.settings.balance_wan_networks_backup)" ] && {
+		uci -q set openmptcprouter.settings.balance_wan_networks_backup="$current_networks"
+		uci -q commit openmptcprouter
+		mwan3_balance_log "backup firewall.zone_wan.network"
+	}
+
+	uci -q del firewall.zone_wan.network
+	for iface in $1; do
+		uci -q add_list firewall.zone_wan.network="$iface"
+	done
+	[ "$(uci -q get firewall.zone_wan.masq)" = "1" ] || uci -q set firewall.zone_wan.masq=1
+	uci -q commit firewall
+	/etc/init.d/firewall reload >/dev/null 2>&1
+	mwan3_balance_log "enable MASQUERADE for balance interfaces: $1"
+}
+
+# 恢复进入负载均衡模式前的 firewall.zone_wan 配置。
+mwan3_balance_cleanup_masquerade() {
+	[ "$(uci -q get firewall.zone_wan)" = "zone" ] || return
+	local backup_networks="$(uci -q get openmptcprouter.settings.balance_wan_networks_backup)"
+	[ -z "$backup_networks" ] && return
+
+	uci -q del firewall.zone_wan.network
+	for net in $backup_networks; do
+		uci -q add_list firewall.zone_wan.network="$net"
+	done
+	uci -q commit firewall
+	/etc/init.d/firewall reload >/dev/null 2>&1
+
+	uci -q delete openmptcprouter.settings.balance_wan_networks_backup
+	uci -q commit openmptcprouter
+	mwan3_balance_log "restore firewall.zone_wan from backup"
+}
+
 # 停止负载均衡模式，停掉 mwan3 并恢复进入该模式前的原始配置。
 stop_mode_balance() {
 	mwan3_balance_log "stop balance mode"
+
+# 	mwan3_balance_cleanup_masquerade
 
 	/etc/init.d/mwan3 stop >/dev/null 2>&1
 	mwan3_balance_restore_config
@@ -189,6 +268,20 @@ mode_balance_handler() {
 		mwan3_balance_restore_config
 		return 1
 	fi
+
+	# 收集参与负载均衡的原始接口名列表(如 sim1 wan1), 供masquerade使用
+	# 解决的是路由器自身出站流量的源IP与出口不匹配问题
+	# 具体场景如下:
+	## 1. 路由器自己发起请求(如 DNS 查询、NTP 同步、ping 检测), Linux 内核根据路由表选择源 IP, 比如选的是 sim1 的 IP
+	## 2. mwan3 的fwmark策略路由把这个包实际从wan1发出去了
+	## 3. 包到达对方服务器时,源IP还是sim1的地址
+	## 4. 对方回复时把包发给sim1的IP,但sim1此时可能不通,或者回复路径与发出路径不一致
+	## 5. 结果是conntrack中出现大量[UNREPLIED] —— 包发出去了但没收到回复
+	## 6. 启用MASQUERADE后,iptables会把源IP改写为实际出口接口的IP,确保回包能正确返回
+	## 7. 注意: 这只影响路由器自身的流量。来自LAN的转发流量不受影响,因为mwan3在PREROUTING阶段就已经决定了出口,且LAN设备的IP是私有地址,本来就会被MASQUERADE
+	local balance_ifaces
+	balance_ifaces="$(mwan3_balance_get_ifaces)"
+	[ -n "$balance_ifaces" ] && mwan3_balance_setup_masquerade "$balance_ifaces"
 
 	/etc/init.d/mwan3 restart >/dev/null 2>&1
 	mwan3_balance_log "restart mwan3 for balance mode"
