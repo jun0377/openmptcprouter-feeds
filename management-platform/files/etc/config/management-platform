@@ -1,0 +1,5 @@
+config main
+	option enable '1'
+	option server_ip '192.168.1.100'
+	option server_port '8080'
+	option report_interval '60'

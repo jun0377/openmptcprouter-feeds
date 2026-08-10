@@ -1,0 +1,23 @@
+#!/bin/sh /etc/rc.common
+# 管理平台状态上报服务
+# 开机启动 /etc/lib/statusReport.sh
+
+START=99
+STOP=10
+SERVICE_DAEMONIZE=1
+SERVICE_USE_PID=1
+
+start() {
+	# 未启用时跳过
+	[ "$(uci -q get management-platform.@main[0].enable)" = "1" ] || return 1
+	service_start /etc/lib/statusReport.sh
+}
+
+stop() {
+	service_stop /etc/lib/statusReport.sh
+}
+
+reload() {
+	stop
+	start
+}
