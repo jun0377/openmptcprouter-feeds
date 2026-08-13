@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MP-Router LCD 设计稿 · 480x320</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #1e1e2e;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  /* ---- 缩放控制条 ---- */
+  .toolbar {
+    color: #cdd6f4;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .toolbar button {
+    background: #313244;
+    color: #cdd6f4;
+    border: 1px solid #45475a;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .toolbar button:hover { background: #45475a; }
+
+  /* ---- 尺寸标注调试模式（悬停查看） ---- */
+  .show-ruler .screen { overflow: visible; }
+  .ruler-hl { outline: 1px dashed #f9e2af !important; outline-offset: -1px; }
+  .ruler-tip {
+    position: absolute;
+    font-size: 10px;
+    font-family: monospace;
+    color: #11111b;
+    background: #f9e2af;
+    border-radius: 3px;
+    padding: 2px 6px;
+    line-height: 13px;
+    z-index: 99;
+    pointer-events: none;
+    white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  }
+
+  /* ---- 屏幕本体 480x320 ---- */
+  .screen {
+    width: 480px;
+    height: 320px;
+    background: #11111b;
+    border: 3px solid #45475a;
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+    transform-origin: top center;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  }
+
+  .canvas {
+    width: 480px;
+    height: 320px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ---- 顶部状态栏 ---- */
+  .status-bar {
+    height: 26px;
+    flex: 0 0 26px;
+    background: #181825;
+    border-bottom: 1px solid #313244;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 10px;
+    color: #6c7086;
+    font-size: 11px;
+  }
+  .status-bar .brand { color: #89b4fa; font-weight: 600; letter-spacing: 1px; }
+  .status-bar .clock { font-family: monospace; }
+
+  /* ---- 模式 + 服务器信息栏 ---- */
+  .header {
+    height: 38px;
+    flex: 0 0 38px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 10px;
+    border-bottom: 1px solid #1e1e2e;
+  }
+  .mode { display: flex; align-items: center; gap: 6px; }
+  .mode .label { font-size: 11px; color: #6c7086; }
+  .mode .badge {
+    font-size: 12px;
+    font-weight: 600;
+    color: #11111b;
+    background: #89b4fa;
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .mode .badge.agg  { background: #a6e3a1; }
+  .mode .badge.single { background: #f9e2af; }
+  .mode .badge.balance { background: #89b4fa; }
+
+  .header-left { display: flex; align-items: center; gap: 12px; }
+
+  /* 网络状态 */
+  .net-state { display: flex; align-items: center; gap: 6px; }
+  .net-state .label { font-size: 11px; color: #6c7086; }
+  .net-state .net-badge {
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .net-state .net-badge.ok   { color: #a6e3a1; background: rgba(166,227,161,.15); }
+  .net-state .net-badge.fail { color: #f38ba8; background: rgba(243,139,168,.15); }
+  .server {
+    font-size: 12px;
+    color: #cdd6f4;
+    font-family: monospace;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .server .label { color: #6c7086; font-family: "PingFang SC", sans-serif; }
+
+  /* ---- 链路列表行 ---- */
+  .link-grid {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .card {
+    flex: 1;
+    background: #181825;
+    border: 1px solid #313244;
+    border-radius: 6px;
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    overflow: hidden;
+  }
+  .card.online  { border-color: #3a4a3f; }
+  .card.dialing { border-color: #4a4438; }
+  .card.offline { border-color: #4a3a3c; }
+
+  /* 左：网口名 + 拨号状态 */
+  .row-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
+  .port-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: #cdd6f4;
+    font-family: monospace;
+    letter-spacing: 0.5px;
+    width: 42px;
+  }
+  .conn-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .conn-badge.ok      { color: #a6e3a1; background: rgba(166,227,161,.12); }
+  .conn-badge.dialing { color: #fab387; background: rgba(250,179,135,.12); }
+  .conn-badge.fail    { color: #f38ba8; background: rgba(243,139,168,.12); }
+
+  /* 中：入网方式 + 信号强度 */
+  .row-mid {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+  .card-method {
+    font-size: 11px;
+    color: #6c7086;
+    white-space: nowrap;
+  }
+  .signal { display: flex; align-items: center; gap: 5px; }
+  .signal-val {
+    font-size: 11px;
+    font-family: monospace;
+    color: #a6e3a1;
+    min-width: 46px;
+  }
+  .signal-val.wired { color: #6c7086; }
+  .bars { display: flex; align-items: flex-end; gap: 2px; height: 12px; }
+  .bars i {
+    width: 3px;
+    border-radius: 1px;
+    background: #45475a;
+  }
+  .bars i:nth-child(1) { height: 4px; }
+  .bars i:nth-child(2) { height: 6px; }
+  .bars i:nth-child(3) { height: 8px; }
+  .bars i:nth-child(4) { height: 10px; }
+  .bars i:nth-child(5) { height: 12px; }
+  .bars i.on { background: #a6e3a1; }
+
+  /* 右：上下行码率 */
+  .rates { display: flex; gap: 10px; font-family: monospace; font-size: 11px; white-space: nowrap; }
+  .rates .up   { color: #89b4fa; }
+  .rates .down { color: #f9e2af; }
+  .rates .idle { color: #45475a; }
+</style>
+</head>
+<body>
+
+  <div class="toolbar">
+    <span>MP-Router LCD · 480x320 横向</span>
+    <button id="zoomOut">-</button>
+    <span id="zoomLabel">100%</span>
+    <button id="zoomIn">+</button>
+    <button id="reset">复位</button>
+    <button id="toggleRuler">显示尺寸</button>
+    <span style="color:#6c7086">(点击徽章可切换模式 / 网络状态)</span>
+  </div>
+
+  <div class="screen" id="screen">
+    <div class="canvas">
+
+      <!-- 顶部状态栏 -->
+      <div class="status-bar">
+        <span class="brand">MP-Router</span>
+        <span class="clock">2026-08-13 12:00</span>
+      </div>
+
+      <!-- 工作模式 + 网络状态 + 服务器地址 -->
+      <div class="header">
+        <div class="header-left">
+          <div class="mode">
+            <span class="label">工作模式</span>
+            <span class="badge agg" id="modeBadge">聚合模式</span>
+          </div>
+          <div class="net-state">
+            <span class="label">网络状态</span>
+            <span class="net-badge ok" id="netBadge">正常</span>
+          </div>
+        </div>
+        <div class="server">
+          <span class="label">服务器</span>
+          <span id="serverAddr">45.76.13.24:51820</span>
+        </div>
+      </div>
+
+      <!-- 链路状态网格 -->
+      <div class="link-grid" id="linkGrid"></div>
+
+      <!-- 尺寸浮层（悬停查看时显示） -->
+      <div id="rulerTip" class="ruler-tip" hidden></div>
+
+    </div>
+  </div>
+
+  <script>
+    /* ============ 链路数据（设计稿样例数据） ============ */
+    const links = [
+      { name: 'WAN0', method: 'DHCP',        status: '已连接', signal: null,  up: '2.4M',  down: '8.9M'  },
+      { name: 'SIM1', method: '5G',          status: '已连接', signal: -62,     up: '5.2M',  down: '12.1M' },
+      { name: 'SIM2', method: '4G',          status: '拨号中', signal: -78,     up: '--',    down: '--'   },
+      { name: 'SIM3', method: '4G',          status: '已连接', signal: -85,     up: '1.1M',  down: '3.2M'  },
+      { name: 'SIM4', method: '4G',          status: '未连接', signal: -96,     up: '--',    down: '--'   },
+      { name: 'SIM5', method: '4G',          status: '已连接', signal: -71,     up: '2.0M',  down: '6.4M'  },
+    ];
+
+    const STATUS_CLS = { '已连接': 'ok', '拨号中': 'dialing', '未连接': 'fail' };
+
+    /* dBm -> 信号格数 (0~5) */
+    function barsOf(dbm) {
+      if (dbm == null) return -1;
+      if (dbm >= -60) return 5;
+      if (dbm >= -70) return 4;
+      if (dbm >= -80) return 3;
+      if (dbm >= -90) return 2;
+      if (dbm >= -100) return 1;
+      return 0;
+    }
+
+    function renderLinks() {
+      const grid = document.getElementById('linkGrid');
+      grid.innerHTML = '';
+      for (const link of links) {
+        const card = document.createElement('div');
+        const st = STATUS_CLS[link.status];
+        card.className = 'card ' + (st === 'ok' ? 'online' : st === 'dialing' ? 'dialing' : 'offline');
+
+        // 左：网口名 + 拨号状态
+        const left = document.createElement('div');
+        left.className = 'row-left';
+        left.innerHTML = '<span class="port-name">' + link.name + '</span>' +
+          '<span class="conn-badge ' + st + '">' + link.status + '</span>';
+
+        // 中：入网方式 + 信号强度
+        const mid = document.createElement('div');
+        mid.className = 'row-mid';
+        const method = document.createElement('span');
+        method.className = 'card-method';
+        method.textContent = link.method;
+
+        const signal = document.createElement('span');
+        signal.className = 'signal';
+        const n = barsOf(link.signal);
+        if (n < 0) {
+          signal.innerHTML = '<span class="signal-val wired">有线</span>';
+        } else {
+          let barsHtml = '<span class="bars">';
+          for (let i = 1; i <= 5; i++) {
+            barsHtml += '<i class="' + (i <= n ? 'on' : '') + '"></i>';
+          }
+          barsHtml += '</span>';
+          signal.innerHTML = barsHtml + '<span class="signal-val">' + link.signal + 'dBm</span>';
+        }
+        mid.appendChild(method);
+        mid.appendChild(signal);
+
+        // 右：上下行码率
+        const rates = document.createElement('div');
+        rates.className = 'rates';
+        const idle = link.up === '--';
+        rates.innerHTML = '<span class="' + (idle ? 'idle' : 'up') + '">↑ ' + link.up + '</span>' +
+                          '<span class="' + (idle ? 'idle' : 'down') + '">↓ ' + link.down + '</span>';
+
+        card.appendChild(left);
+        card.appendChild(mid);
+        card.appendChild(rates);
+        grid.appendChild(card);
+      }
+    }
+
+    /* ============ 工作模式切换（点击徽章轮换，便于评审三种模式配色） ============ */
+    const modes = [
+      { cls: 'agg',     text: '聚合模式' },
+      { cls: 'balance', text: '负载均衡模式' },
+      { cls: 'single',  text: '单卡模式' },
+    ];
+    let modeIdx = 0;
+    const modeBadge = document.getElementById('modeBadge');
+    modeBadge.onclick = () => {
+      modeIdx = (modeIdx + 1) % modes.length;
+      modeBadge.className = 'badge ' + modes[modeIdx].cls;
+      modeBadge.textContent = modes[modeIdx].text;
+    };
+
+    /* ============ 网络状态切换（点击徽章轮换：正常 / 无网络） ============ */
+    const netStates = [
+      { cls: 'ok',   text: '正常' },
+      { cls: 'fail', text: '无网络' },
+    ];
+    let netIdx = 0;
+    const netBadge = document.getElementById('netBadge');
+    netBadge.onclick = () => {
+      netIdx = (netIdx + 1) % netStates.length;
+      netBadge.className = 'net-badge ' + netStates[netIdx].cls;
+      netBadge.textContent = netStates[netIdx].text;
+    };
+
+    /* ============ 缩放控制 ============ */
+    let zoom = 1;
+    const screenEl = document.getElementById('screen');
+    const zoomLabel = document.getElementById('zoomLabel');
+    function applyZoom() {
+      screenEl.style.transform = 'scale(' + zoom + ')';
+      screenEl.style.marginBottom = (320 * (zoom - 1)) + 'px';
+      zoomLabel.textContent = Math.round(zoom * 100) + '%';
+    }
+    document.getElementById('zoomIn').onclick = () => { zoom = Math.min(zoom + 0.25, 3); applyZoom(); };
+    document.getElementById('zoomOut').onclick = () => { zoom = Math.max(zoom - 0.25, 0.5); applyZoom(); };
+    document.getElementById('reset').onclick = () => { zoom = 1; applyZoom(); };
+
+    /* ============ 尺寸标注（悬停查看模式） ============ */
+    const RULER_SEL = [
+      '.status-bar', '.header', '.mode', '.net-state', '.server', '.link-grid', '.card',
+      '.row-left', '.row-mid', '.rates',
+      '.port-name', '.conn-badge', '.card-method', '.signal-val',
+      '.brand', '.clock', '.mode .label', '.mode .badge',
+      '.net-state .label', '.net-state .net-badge',
+      '.server .label', '#serverAddr', '.rates span'
+    ].join(', ');
+    const RULER_NAMES = {
+      'status-bar': '状态栏', 'header': '信息栏', 'mode': '模式组', 'net-state': '网络状态',
+      'server': '服务器组', 'link-grid': '链路列表', 'card': '链路行', 'row-left': '左分区',
+      'row-mid': '中分区', 'rates': '码率', 'port-name': '网口名', 'conn-badge': '状态徽章',
+      'card-method': '入网方式', 'signal-val': '信号值', 'brand': '品牌', 'clock': '时钟',
+      'label': '标签', 'badge': '模式徽章', 'net-badge': '网络状态徽章',
+      'serverAddr': '服务器地址', 'up': '上行', 'down': '下行'
+    };
+    function rulerName(el) {
+      const cls = el.className.split(' ')[0];
+      if (RULER_NAMES[cls]) return RULER_NAMES[cls];
+      return RULER_NAMES[el.id] || el.id || cls;
+    }
+
+    const rulerTip = document.getElementById('rulerTip');
+
+    // 悬停：高亮元素并在其上方显示 名称 + 尺寸 + 字号 浮层
+    screenEl.addEventListener('mouseover', (e) => {
+      if (!document.body.classList.contains('show-ruler')) return;
+      const t = e.target.closest(RULER_SEL);
+      if (!t) return;
+      document.querySelectorAll('.ruler-hl').forEach(x => x.classList.remove('ruler-hl'));
+      t.classList.add('ruler-hl');
+
+      let txt = rulerName(t) + ' ' + t.offsetWidth + '×' + t.offsetHeight;
+      if (t.children.length === 0) txt += ' · ' + getComputedStyle(t).fontSize;
+      rulerTip.textContent = txt;
+      rulerTip.hidden = false;
+
+      // 相对屏幕的布局坐标
+      let x = 0, y = 0, p = t;
+      while (p && p !== screenEl) {
+        x += p.offsetLeft;
+        y += p.offsetTop;
+        p = p.offsetParent;
+      }
+      const tw = rulerTip.offsetWidth, th = rulerTip.offsetHeight;
+      let tipX = x + t.offsetWidth / 2 - tw / 2;
+      let tipY = y - th - 4;                    // 优先显示在元素上方
+      if (tipY < 2) tipY = y + t.offsetHeight + 4; // 上方空间不足则显示在下方
+      tipX = Math.max(2, Math.min(tipX, screenEl.offsetWidth - tw - 2));
+      tipY = Math.max(2, tipY);
+      rulerTip.style.left = tipX + 'px';
+      rulerTip.style.top = tipY + 'px';
+    });
+
+    screenEl.addEventListener('mouseleave', () => {
+      document.querySelectorAll('.ruler-hl').forEach(x => x.classList.remove('ruler-hl'));
+      rulerTip.hidden = true;
+    });
+
+    document.getElementById('toggleRuler').onclick = () => {
+      document.body.classList.toggle('show-ruler');
+      document.getElementById('toggleRuler').textContent =
+        document.body.classList.contains('show-ruler') ? '隐藏尺寸' : '显示尺寸';
+      document.querySelectorAll('.ruler-hl').forEach(x => x.classList.remove('ruler-hl'));
+      rulerTip.hidden = true;
+    };
+
+    renderLinks();
+    applyZoom();
+  </script>
+
+</body>
+</html>
