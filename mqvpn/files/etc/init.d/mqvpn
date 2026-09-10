@@ -13,8 +13,10 @@ USE_PROCD=1
 
 CONF=/var/run/mqvpn.conf
 
+# 将 UCI 的 0/1 开关值转换为 mqvpn 配置文件所需的 true/false 字符串。
 _bool() { [ "$1" = "1" ] && echo "true" || echo "false"; }
 
+# 根据uci配置文件, 生成 /var/run/mqvpn.conf
 generate_config() {
 	local enable address ip port server_address server_name insecure key user
 	local tun_name log_level mtu kill_switch reconnect reconnect_interval route_via_server no_routes
@@ -180,6 +182,7 @@ generate_config() {
 	return 0
 }
 
+# config_list_foreach 的回调: 把 interface.dns 列表逐项拼接成逗号分隔的 DNS 字符串。
 _append_dns_csv() {
 	local dns="$1"
 	[ -z "$dns" ] && return 0
@@ -190,6 +193,7 @@ _append_dns_csv() {
 	fi
 }
 
+# 自动模式(auto_wan=1)下遍历 network 接口, 将 multipath 为 on/master/backup 且 state=up 的接口输出为 Path/BackupPath 行。
 _write_iface_path() {
 	local config="$1"
 	local mode ifname
@@ -213,6 +217,7 @@ _write_iface_path() {
 	fi
 }
 
+# 手动模式下输出 multipath.path / backup_path 列表中的接口, 分别作为 Path 或 BackupPath 行。
 _write_explicit_path() {
 	local ifname="$1"
 	local is_backup="$2"
@@ -224,6 +229,7 @@ _write_explicit_path() {
 	fi
 }
 
+# 遍历每个 reorder_rule 段, 输出一个 [ReorderRule] 块(Proto/Port/Profile), 用于细化重排序策略。
 _write_reorder_rule() {
 	local config="$1"
 	local proto port profile
@@ -238,6 +244,7 @@ _write_reorder_rule() {
 	[ -n "$profile" ] && echo "Profile = $profile"
 }
 
+# procd 启动入口: 先生成配置, 再以 /usr/sbin/mqvpn --config 拉起实例并设置异常退出自动重启。
 start_service() {
 	config_load mqvpn
 
@@ -251,10 +258,12 @@ start_service() {
 	procd_close_instance
 }
 
+# 停止服务时清理运行时生成的 /var/run/mqvpn.conf。
 stop_service() {
 	rm -f "$CONF"
 }
 
+# 注册 procd 重载触发器, 使 /etc/config/mqvpn 变更提交后自动重载服务。
 service_triggers() {
 	procd_add_reload_trigger mqvpn
 }

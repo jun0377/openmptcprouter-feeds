@@ -15,22 +15,26 @@
 # up to six raw control-API connections (the control API allows at most 8
 # concurrent connections total -- see CTRL_MAX_CONNS in control-api.md).
 
+# 读取控制 API 监听地址: 取 UCI mqvpn.control.control_addr, 未配置时回落到 127.0.0.1。
 _addr() {
 	local addr
 	addr=$(uci -q get mqvpn.control.control_addr 2>/dev/null)
 	echo "${addr:-127.0.0.1}"
 }
 
+# 读取控制 API 监听端口; 未配置时输出为空, 调用方据此判断控制接口是否开启。
 _port() {
 	uci -q get mqvpn.control.control_port 2>/dev/null
 }
 
+# 向控制 API 发送一条 JSON 请求并输出其原始响应(超时或连接失败时输出为空)。
 # Send one JSON request to the control API and print its raw JSON response
 # (or nothing on timeout/connection failure). $1 = JSON payload.
 _ctrl() {
 	echo "$1" | nc -w 2 "$(_addr)" "$(_port)" 2>/dev/null
 }
 
+# 响应为合法 JSON 对象时原样输出, 否则输出 JSON 字面量 null, 便于调用方无条件拼装大 JSON。
 # Print $1 unchanged if it looks like a JSON object, otherwise print the
 # JSON literal null -- so the caller can always embed the result of _ctrl
 # directly into a larger JSON object without checking for empty/garbage
@@ -42,30 +46,38 @@ _json_or_null() {
 	esac
 }
 
+# rpcd 入口: $1 为操作类型(list 声明方法 / call 执行方法), $2 为方法名。
 case "$1" in
+	# 向 rpcd 声明本插件提供的方法列表。
 	list)
 		echo '{ "metrics": {} }'
 		;;
+	# 执行具体方法, 目前仅提供 metrics。
 	call)
 		case "$2" in
 			metrics)
+				# metrics 不接受任何参数, 读取并丢弃入参以避免 rpcd 管道阻塞。
 				# Input is read but unused -- "metrics" takes no arguments.
 				cat >/dev/null
 
+				# 读取服务开关与控制 API 地址/端口, 供后续分支判断与回包使用。
 				enabled=$(uci -q get mqvpn.settings.enable 2>/dev/null)
 				addr=$(_addr)
 				port=$(_port)
 
+				# 服务未启用: 直接返回 enabled=false。
 				if [ "$enabled" != "1" ]; then
 					printf '{"enabled":false,"reachable":false,"error":"mqvpn is disabled"}\n'
 					exit 0
 				fi
 
+				# 控制 API 未配置端口: 返回 reachable=false, 提示需在设置页填写。
 				if [ -z "$port" ]; then
 					printf '{"enabled":true,"reachable":false,"error":"control API is disabled (set a Control API port on the MQVPN settings page)","control":{"addr":"%s"}}\n' "$addr"
 					exit 0
 				fi
 
+				# 先用 get_build_info 探测连通性; 无响应说明 mqvpn 未在运行。
 				build_info=$(_ctrl '{"cmd":"get_build_info"}')
 				if [ -z "$build_info" ]; then
 					printf '{"enabled":true,"reachable":false,"error":"no response from mqvpn control API (%s:%s) -- is mqvpn running?","control":{"addr":"%s","port":%s}}\n' \
@@ -73,11 +85,13 @@ case "$1" in
 					exit 0
 				fi
 
+				# 依次采集统计/状态/重排序/路径四类数据(list_paths 仅客户端模式有效)。
 				stats=$(_ctrl '{"cmd":"get_stats"}')
 				status=$(_ctrl '{"cmd":"get_status"}')
 				reorder=$(_ctrl '{"cmd":"get_reorder_stats"}')
 				paths=$(_ctrl '{"cmd":"list_paths"}')
 
+				# FEC 统计仅在 build_info 报告 fec_enabled=1 时才请求, 避免无谓连接。
 				fec_enabled=$(printf '%s' "$build_info" | jsonfilter -q -e '@.fec_enabled' 2>/dev/null)
 				if [ "$fec_enabled" = "1" ]; then
 					fec=$(_ctrl '{"cmd":"get_all_fec_stats"}')
@@ -85,6 +99,7 @@ case "$1" in
 					fec=""
 				fi
 
+				# 汇总为单个 JSON 对象一次性返回, 调用方只需一次 ubus 往返。
 				printf '{'
 				printf '"enabled":true,'
 				printf '"reachable":true,'
@@ -97,6 +112,7 @@ case "$1" in
 				printf '"fec":%s' "$(_json_or_null "$fec")"
 				printf '}\n'
 				;;
+			# 未知方法名。
 			*)
 				echo '{"error": "unknown method"}'
 				exit 1

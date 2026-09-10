@@ -13,13 +13,16 @@
 #   mqvpn-path weight <iface> <value>
 #   mqvpn-path dscp <iface> <mask>
 
+# 控制接口地址与端口: 优先读取 UCI mqvpn.control.*, 读取不到时回落到 127.0.0.1:9091。
 MQVPN_API_HOST="$(uci -q get mqvpn.control.control_addr 2>/dev/null || echo '127.0.0.1')"
 MQVPN_API_PORT="$(uci -q get mqvpn.control.control_port 2>/dev/null || echo '9091')"
 
+# 向 mqvpn 控制端口发送一行 JSON 命令并回显响应(超时 2 秒; 无响应时输出为空)。
 _api() {
 	echo "$1" | nc -w 2 "$MQVPN_API_HOST" "$MQVPN_API_PORT" 2>/dev/null
 }
 
+# 打印子命令用法并以退出码 1 结束。
 _usage() {
 	echo "Usage: $0 list"
 	echo "       $0 add <iface> [backup]"
@@ -29,12 +32,15 @@ _usage() {
 	exit 1
 }
 
+# 位置参数解析: $1 为子命令, $2 为接口名, $3 依子命令不同表示 weight 值或 DSCP 掩码。
 cmd="$1"
 iface="$2"
 weight_value="$3"
 dscp_mask="$3"
 
+# 按子命令分发到对应的 mqvpn 控制 API 调用。
 case "$cmd" in
+	# 查询当前所有多路径路径及其状态, 原样输出 API 响应。
 	list)
 		result=$(_api '{"cmd":"list_paths"}')
 		if [ -z "$result" ]; then
@@ -43,6 +49,7 @@ case "$cmd" in
 		fi
 		echo "$result"
 		;;
+	# 新增一条路径; 第 3 个参数为 backup 时作为备份路径加入。
 	add)
 		[ -z "$iface" ] && _usage
 		if [ "$3" = "backup" ]; then
@@ -52,11 +59,13 @@ case "$cmd" in
 		fi
 		echo "Added path: $iface${3:+ (backup)}"
 		;;
+	# 按接口名移除一条路径。
 	remove)
 		[ -z "$iface" ] && _usage
 		_api "{\"cmd\":\"remove_path\",\"iface\":\"$iface\"}" >/dev/null
 		echo "Removed path: $iface"
 		;;
+	# 设置路径权重, 并校验 API 响应中是否包含 "ok":true。
 	weight)
 		if [ -z "$iface" ] || [ -z "$weight_value" ]; then
 			_usage
@@ -72,6 +81,7 @@ case "$cmd" in
 				;;
 		esac
 		;;
+	# 设置路径的 DSCP 掩码, 并校验 API 响应中是否包含 "ok":true。
 	dscp)
 		if [ -z "$iface" ] || [ -z "$dscp_mask" ]; then
 			_usage
@@ -87,6 +97,7 @@ case "$cmd" in
 				;;
 		esac
 		;;
+	# 未知子命令或参数缺失时打印用法。
 	*)
 		_usage
 		;;
