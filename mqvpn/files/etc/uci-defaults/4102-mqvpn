@@ -1,0 +1,11 @@
+#!/bin/sh
+
+if [ "$(uci -q get mqvpn.interface.tun_name)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set mqvpn.interface=interface
+		set mqvpn.interface.tun_name=tun0
+		commit mqvpn
+	EOF
+fi
+
+exit 0

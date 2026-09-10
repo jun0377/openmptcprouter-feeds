@@ -1,0 +1,260 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+
+START=90
+STOP=10
+
+USE_PROCD=1
+
+CONF=/var/run/mqvpn.conf
+
+_bool() { [ "$1" = "1" ] && echo "true" || echo "false"; }
+
+generate_config() {
+	local enable address ip port server_address server_name insecure key user
+	local tun_name log_level mtu kill_switch reconnect reconnect_interval route_via_server no_routes
+	local cipher
+	local control_port control_addr
+	local scheduler cc auto_wan reinjection_control reinjection_mode fec_enable fec_scheme sync_path_labels init_max_path_id
+	local reorder_enabled reorder_max_wait_ms reorder_cap_packets
+	local recv_rate_limit
+	local dns_csv
+
+	config_get_bool enable settings enable 0
+	[ "$enable" = "0" ] && { logger -t mqvpn "mqvpn is disabled"; return 1; }
+
+	config_get ip server ip
+	config_get port server port
+	config_get address server address
+	config_get server_name server server_name ''
+	config_get_bool insecure server insecure 1
+
+	# Backward compatibility: support old single address option while migrating.
+	if [ -z "$ip" ] && [ -n "$address" ]; then
+		case "$address" in
+			\[*\]:*)
+				ip="${address%\]:*}"
+				ip="${ip#[}"
+				[ -z "$port" ] && port="${address##*\]:}"
+				;;
+			*:* )
+				if echo "${address##*:}" | grep -Eq '^[0-9]+$'; then
+					ip="${address%:*}"
+					[ -z "$port" ] && port="${address##*:}"
+				else
+					ip="$address"
+				fi
+				;;
+			*)
+				ip="$address"
+				;;
+		esac
+	fi
+
+	[ -n "$ip" ] && ip="${ip#[}"
+	[ -n "$ip" ] && ip="${ip%]}"
+	[ -z "$port" ] && port='443'
+
+	server_address="$ip:$port"
+	case "$ip" in
+		*:* ) server_address="[$ip]:$port" ;;
+	esac
+
+	config_get cipher tls cipher ''
+
+	config_get key auth key
+	config_get user auth user
+
+	config_get tun_name interface tun_name 'mqvpn0'
+	config_get log_level interface log_level 'info'
+	config_get mtu interface mtu ''
+	config_get_bool kill_switch interface kill_switch 0
+	config_get_bool reconnect interface reconnect 1
+	config_get reconnect_interval interface reconnect_interval 5
+	config_get_bool route_via_server interface route_via_server 0
+	config_get_bool no_routes interface no_routes 0
+
+	config_get control_port control control_port ''
+	config_get control_addr control control_addr '127.0.0.1'
+
+	config_get scheduler multipath scheduler 'wlb'
+	config_get cc multipath cc ''
+	config_get_bool auto_wan multipath auto_wan 1
+	config_get_bool reinjection_control multipath reinjection_control 0
+	config_get reinjection_mode multipath reinjection_mode ''
+	config_get_bool fec_enable multipath fec_enable 0
+	config_get fec_scheme multipath fec_scheme ''
+	config_get_bool sync_path_labels multipath sync_path_labels 1
+	config_get init_max_path_id multipath init_max_path_id ''
+
+	config_get_bool reorder_enabled reorder enabled 0
+	config_get reorder_max_wait_ms reorder max_wait_ms ''
+	config_get reorder_cap_packets reorder cap_packets ''
+
+	config_get recv_rate_limit advanced recv_rate_limit ''
+
+	dns_csv=''
+	config_list_foreach interface dns _append_dns_csv
+
+	[ -z "$ip" ] && { logger -t mqvpn "No server address configured"; return 1; }
+	[ "$ip" = "203.0.113.1" ] && { logger -t mqvpn "Server IP is not configured (placeholder 203.0.113.1)"; return 1; }
+	[ -z "$key" ]     && { logger -t mqvpn "No auth key configured"; return 1; }
+
+	mkdir -p /var/run
+
+	{
+		echo '[Server]'
+		echo "Address = $server_address"
+		[ -n "$server_name" ] && echo "ServerName = $server_name"
+		[ "$insecure" = "1" ] && echo "Insecure = true"
+		if [ -n "$cipher" ]; then
+			echo ''
+			echo '[TLS]'
+			echo "Cipher = $cipher"
+		fi
+		echo ''
+		echo '[Auth]'
+		echo "Key = $key"
+		[ -n "$user" ] && echo "Username = $user"
+		echo ''
+		echo '[Interface]'
+		echo "TunName = $tun_name"
+		echo "LogLevel = $log_level"
+		[ -n "$dns_csv" ] && echo "DNS = $dns_csv"
+		[ -n "$mtu" ] && echo "MTU = $mtu"
+		echo "KillSwitch = $(_bool "$kill_switch")"
+		echo "Reconnect = $(_bool "$reconnect")"
+		echo "ReconnectInterval = $reconnect_interval"
+		echo "RouteViaServer = $(_bool "$route_via_server")"
+		echo "NoRoutes = $(_bool "$no_routes")"
+
+		if [ -n "$control_port" ]; then
+			echo ''
+			echo '[Control]'
+			echo "Port = $control_port"
+			echo "Addr = $control_addr"
+		fi
+
+		echo ''
+		echo '[Multipath]'
+		echo "Scheduler = $scheduler"
+		[ -n "$cc" ] && echo "CC = $cc"
+		[ "$reinjection_control" = "1" ] && echo "ReinjectionControl = true"
+		[ -n "$reinjection_mode" ] && echo "ReinjectionMode = $reinjection_mode"
+		[ "$fec_enable" = "1" ] && echo "FecEnable = true"
+		[ -n "$fec_scheme" ] && echo "FecScheme = $fec_scheme"
+		echo "SyncPathLabels = $(_bool "$sync_path_labels")"
+		[ -n "$init_max_path_id" ] && echo "InitMaxPathId = $init_max_path_id"
+
+		if [ "$auto_wan" = "1" ]; then
+			config_load network
+			config_foreach _write_iface_path interface
+		else
+			config_list_foreach multipath path _write_explicit_path ""
+			config_list_foreach multipath backup_path _write_explicit_path "backup"
+		fi
+
+		if [ "$reorder_enabled" = "1" ]; then
+			echo ''
+			echo '[Reorder]'
+			echo 'Enabled = on'
+			[ -n "$reorder_max_wait_ms" ] && echo "MaxWaitMs = $reorder_max_wait_ms"
+			[ -n "$reorder_cap_packets" ] && echo "CapPackets = $reorder_cap_packets"
+		fi
+
+		config_load mqvpn
+		config_foreach _write_reorder_rule reorder_rule
+
+		if [ -n "$recv_rate_limit" ] && [ "$recv_rate_limit" != "0" ]; then
+			echo ''
+			echo '[Advanced]'
+			echo "RecvRateLimit = $recv_rate_limit"
+		fi
+	} > "$CONF"
+
+	return 0
+}
+
+_append_dns_csv() {
+	local dns="$1"
+	[ -z "$dns" ] && return 0
+	if [ -n "$dns_csv" ]; then
+		dns_csv="$dns_csv, $dns"
+	else
+		dns_csv="$dns"
+	fi
+}
+
+_write_iface_path() {
+	local config="$1"
+	local mode ifname
+
+	config_get mode "$config" multipath ""
+	[ "$mode" = "" ] && mode="$(uci -q get openmptcprouter."$config".multipath)"
+	[ "$mode" = "on" ] || [ "$mode" = "master" ] || [ "$mode" = "backup" ] || return 0
+
+	local state
+	state="$(uci -q get openmptcprouter."$config".state)"
+	[ "$state" = "up" ] || return 0
+
+	ifname=$(ifstatus "$config" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -n "$(echo "$ifname" | grep '@')" ] && ifname=$(ifstatus "$config" 2>/dev/null | jsonfilter -q -e '@["device"]')
+	[ -z "$ifname" ] && return 0
+
+	if [ "$mode" = "backup" ]; then
+		echo "BackupPath = $ifname"
+	else
+		echo "Path = $ifname"
+	fi
+}
+
+_write_explicit_path() {
+	local ifname="$1"
+	local is_backup="$2"
+	[ -z "$ifname" ] && return 0
+	if [ "$is_backup" = "backup" ]; then
+		echo "BackupPath = $ifname"
+	else
+		echo "Path = $ifname"
+	fi
+}
+
+_write_reorder_rule() {
+	local config="$1"
+	local proto port profile
+	config_get proto "$config" proto ''
+	config_get port "$config" port ''
+	config_get profile "$config" profile ''
+	[ -z "$proto" ] && return 0
+	echo ''
+	echo '[ReorderRule]'
+	echo "Proto = $proto"
+	[ -n "$port" ] && echo "Port = $port"
+	[ -n "$profile" ] && echo "Profile = $profile"
+}
+
+start_service() {
+	config_load mqvpn
+
+	generate_config || return 1
+
+	procd_open_instance
+	procd_set_param command /usr/sbin/mqvpn --config "$CONF"
+	procd_set_param respawn "${respawn_threshold:-3600}" "${respawn_timeout:-5}" "${respawn_retry:-5}"
+	procd_set_param stderr 1
+	procd_set_param stdout 1
+	procd_close_instance
+}
+
+stop_service() {
+	rm -f "$CONF"
+}
+
+service_triggers() {
+	procd_add_reload_trigger mqvpn
+}

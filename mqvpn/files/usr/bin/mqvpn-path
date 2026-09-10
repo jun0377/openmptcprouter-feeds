@@ -1,0 +1,93 @@
+#!/bin/sh
+#
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# Manage mqvpn multipath paths via the local API
+# Usage:
+#   mqvpn-path list
+#   mqvpn-path add <iface> [backup]
+#   mqvpn-path remove <iface>
+#   mqvpn-path weight <iface> <value>
+#   mqvpn-path dscp <iface> <mask>
+
+MQVPN_API_HOST="$(uci -q get mqvpn.control.control_addr 2>/dev/null || echo '127.0.0.1')"
+MQVPN_API_PORT="$(uci -q get mqvpn.control.control_port 2>/dev/null || echo '9091')"
+
+_api() {
+	echo "$1" | nc -w 2 "$MQVPN_API_HOST" "$MQVPN_API_PORT" 2>/dev/null
+}
+
+_usage() {
+	echo "Usage: $0 list"
+	echo "       $0 add <iface> [backup]"
+	echo "       $0 remove <iface>"
+	echo "       $0 weight <iface> <value>"
+	echo "       $0 dscp <iface> <mask>"
+	exit 1
+}
+
+cmd="$1"
+iface="$2"
+weight_value="$3"
+dscp_mask="$3"
+
+case "$cmd" in
+	list)
+		result=$(_api '{"cmd":"list_paths"}')
+		if [ -z "$result" ]; then
+			echo "No response from mqvpn API (is mqvpn running?)" >&2
+			exit 1
+		fi
+		echo "$result"
+		;;
+	add)
+		[ -z "$iface" ] && _usage
+		if [ "$3" = "backup" ]; then
+			_api "{\"cmd\":\"add_path\",\"iface\":\"$iface\",\"backup\":true}" >/dev/null
+		else
+			_api "{\"cmd\":\"add_path\",\"iface\":\"$iface\"}" >/dev/null
+		fi
+		echo "Added path: $iface${3:+ (backup)}"
+		;;
+	remove)
+		[ -z "$iface" ] && _usage
+		_api "{\"cmd\":\"remove_path\",\"iface\":\"$iface\"}" >/dev/null
+		echo "Removed path: $iface"
+		;;
+	weight)
+		if [ -z "$iface" ] || [ -z "$weight_value" ]; then
+			_usage
+		fi
+		result=$(_api "{\"cmd\":\"set_path_weight\",\"iface\":\"$iface\",\"weight\":$weight_value}")
+		case "$result" in
+			*'"ok":true'*)
+				echo "Set weight: $iface -> $weight_value"
+				;;
+			*)
+				echo "Failed to set weight: $iface -> $weight_value (${result:-no response from mqvpn API})" >&2
+				exit 1
+				;;
+		esac
+		;;
+	dscp)
+		if [ -z "$iface" ] || [ -z "$dscp_mask" ]; then
+			_usage
+		fi
+		result=$(_api "{\"cmd\":\"set_path_dscp_mask\",\"iface\":\"$iface\",\"mask\":$dscp_mask}")
+		case "$result" in
+			*'"ok":true'*)
+				echo "Set DSCP mask: $iface -> $dscp_mask"
+				;;
+			*)
+				echo "Failed to set DSCP mask: $iface -> $dscp_mask (${result:-no response from mqvpn API})" >&2
+				exit 1
+				;;
+		esac
+		;;
+	*)
+		_usage
+		;;
+esac

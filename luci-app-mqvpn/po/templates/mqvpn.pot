@@ -1,0 +1,419 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-mqvpn\n"
+"POT-Creation-Date: 2026-07-28 00:00+0000\n"
+"PO-Revision-Date: 2026-07-28 00:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "MQVPN"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "QUIC-based VPN tunnel"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "General"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Enabled"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Server"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Server address"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "IP address or hostname of the MQVPN server"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Server port"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Insecure TLS"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Skip TLS certificate verification"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "TLS"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Cipher suites"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Colon-separated list of TLS cipher suites (leave empty for defaults)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Authentication"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "User"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Optional: identifies this client on the server (shown in status/logs)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Key"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Interface"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Tunnel name"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Log level"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Debug"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Info"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Warning"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Error"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "MTU"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "TUN MTU cap in bytes (1280–9000, leave empty for auto)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Kill switch"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Block all traffic if the VPN tunnel goes down"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Reconnect"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Automatically reconnect on failure"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Reconnect interval"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Seconds between reconnection attempts"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Route via server"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Add a host route to the server IP before setting the default route"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "No automatic routes"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Skip all automatic route setup and manage routes manually"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "DNS servers"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Control API"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Port"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "TCP port for the JSON control API (leave empty to disable)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Bind address"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Address to bind the control API (default: 127.0.0.1)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Multipath"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Scheduler"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Weighted Load Balancing"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "WLB with UDP pinning"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Minimum RTT"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Weighted RTT"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Weighted Round Robin"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Backup"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Backup with FEC"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "RAP"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "With \"Weighted RTT\" or \"Weighted Round Robin\", each path's weight is taken from its interface's \"Weight\" setting (Network page, same value used by the MPTCP weight schedulers and settable via the API) and pushed to mqvpn automatically. \"Weighted RTT\" favors the highest-weight path until it's congestion-window-limited, while \"Weighted Round Robin\" interleaves traffic across paths in proportion to their weight."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Congestion control"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "BBR2"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "BBR"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "CUBIC"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "New Reno"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Copa"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Unlimited"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Auto WAN"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Automatically add WAN interfaces as multipath paths. If disabled, use the paths defined below."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Reinjection control"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Enable reinjection control"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Reinjection mode"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Default"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Deadline"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Datagram"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "FEC"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Enable Forward Error Correction"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "FEC scheme"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Galois Calculation"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Packet Mask"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Reed-Solomon"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "XOR"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Sync path labels to server"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Announce this path's weight and DSCP mask (set via the control API's set_path_weight/set_path_dscp_mask) to the server, so it adopts the same labels for downlink scheduling. Disable to stop announcing entirely -- the server then cannot adopt this client's labels regardless of its own setting."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Initial max path ID"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "draft-21 initial_max_path_id transport parameter. Lower it (e.g. 2) to force PATHS_BLOCKED for testing; leave empty for the default"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Paths"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Network interfaces to use as multipath paths"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Backup paths"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Network interfaces to use as backup multipath paths"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Reorder"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Enable reorder buffer"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Enable reorder buffer for inner UDP (off by default)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Max wait (ms)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Max hold time before releasing a gap (ms)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Cap packets"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Max buffered datagrams per flow (power of two)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Reorder rules"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Protocol"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "UDP"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "TCP"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Profile"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Cellular Bond"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Fiber + LTE"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "QUIC Bulk"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Default UDP (pass-through)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Advanced"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Receive rate limit"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/services/mqvpn.js
+msgid "Client-only: cap QUIC receive window to N bytes/sec (0 = no cap)"
+msgstr ""
