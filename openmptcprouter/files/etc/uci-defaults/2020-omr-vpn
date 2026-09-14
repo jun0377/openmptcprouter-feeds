@@ -1,11 +1,18 @@
 #!/bin/sh
 
+# 隧道设备名随 VPN 类型: mqvpn 由 mqvpn.interface.tun_name 决定(默认 mqvpn0), 其余(openvpn)为 tun0
+omrvpn_device="tun0"
+if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ]; then
+	omrvpn_device="$(uci -q get mqvpn.interface.tun_name)"
+	[ -z "$omrvpn_device" ] && omrvpn_device="mqvpn0"
+fi
+
 if [ "$(uci -q get network.omrvpn)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		delete network.glorytun
 		delete network.omrvpn
 		set network.omrvpn=interface
-		set network.omrvpn.device=tun0
+		set network.omrvpn.device=${omrvpn_device}
 		set network.omrvpn.proto=none
 		set network.omrvpn.ip4table=vpn
 		set network.omrvpn.multipath=off

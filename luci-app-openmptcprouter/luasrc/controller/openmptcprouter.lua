@@ -669,6 +669,10 @@ function wizard_add()
 	elseif default_vpn == "openvpn_bonding" then
 		vpn_intf = "bonding-omrvpn"
 		ucic:set("network","omrvpn","proto","bonding")
+	elseif default_vpn == "mqvpn" then
+		vpn_port = 65443
+		vpn_intf = ucic:get("mqvpn","interface","tun_name") or "mqvpn0"
+		ucic:set("network","omrvpn","proto","none")
 	end
 	--if downloadmax ~= 0 and uploadmax ~= 0 then
 	--	ucic:set("sqm","omrvpn","enabled","1")
@@ -1550,7 +1554,10 @@ function wizard_add()
 	if gostatus == true then
 		--luci.sys.call("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
 		luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
-		luci.sys.call("ip addr flush dev tun0 >/dev/null 2>/dev/null")
+		-- 清掉隧道设备上的地址, 设备名随 VPN 类型(mqvpn 为 mqvpn0, 其余为 tun0)
+		if vpn_intf ~= "" then
+			luci.sys.call("ip addr flush dev " .. vpn_intf .. " >/dev/null 2>/dev/null")
+		end
 		luci.sys.call("/etc/init.d/omr-tracker stop >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
 		--if openmptcprouter_vps_key ~= "" then
@@ -1567,6 +1574,7 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/openvpnbonding restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/mqvpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-tracker start >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")

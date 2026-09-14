@@ -260,7 +260,7 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 end
 
 -- 配置默认VPN
--- @param default_vpn VPN类型(glorytun_tcp/glorytun_udp/dsvpn/mlvpn/openvpn/none)
+-- @param default_vpn VPN类型(glorytun_tcp/glorytun_udp/dsvpn/mlvpn/openvpn/mqvpn/none)
 function default_vpn(default_vpn)
 	-- Get VPN set by default
 	local vpn_port = ""
@@ -300,6 +300,10 @@ function default_vpn(default_vpn)
 		vpn_port = 65301
 		vpn_intf = "tun0"
 		ucic:set("network","omrvpn","proto","dhcp")
+	elseif default_vpn == "mqvpn" then
+		vpn_port = 65443
+		vpn_intf = ucic:get("mqvpn","interface","tun_name") or "mqvpn0"
+		ucic:set("network","omrvpn","proto","none")
 	end
 	if vpn_intf ~= "" then
 		ucic:set("network","omrvpn","device",vpn_intf)
@@ -331,6 +335,12 @@ function default_vpn(default_vpn)
 	else
 		ucic:set("openvpn","omr","enabled",0)
 	end
+	-- Set mqvpn settings
+	if default_vpn == "mqvpn" then
+		ucic:set("mqvpn","settings","enable",1)
+	else
+		ucic:set("mqvpn","settings","enable",0)
+	end
 	ucic:set("openmptcprouter","settings","vpn",default_vpn)
 	ucic:save("glorytun")
 	ucic:commit("glorytun")
@@ -340,6 +350,8 @@ function default_vpn(default_vpn)
 	ucic:commit("dsvpn")
 	ucic:save("openvpn")
 	ucic:commit("openvpn")
+	ucic:save("mqvpn")
+	ucic:commit("mqvpn")
 	ucic:save("openmptcprouter")
 	ucic:commit("openmptcprouter")
 	ucic:save("network")

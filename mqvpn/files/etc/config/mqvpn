@@ -14,7 +14,7 @@ config auth 'auth'
 	option key 'mPyVpoQWcp/5gr404xvS19aRC03o0XS2mrb2tZJ1Ii4='
 
 config interface 'interface'
-	option tun_name 'tun0'
+	option tun_name 'mqvpn0'
 	option log_level 'error'
 #	option mtu '1280'
 	option manage_routes '1'

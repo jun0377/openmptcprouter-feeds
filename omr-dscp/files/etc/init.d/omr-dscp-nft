@@ -18,6 +18,21 @@ config_get lan_device lan ifname
 
 #config_load dscp
 
+# 取隧道(VPN)对应的设备名: mqvpn 由 mqvpn.interface.tun_name 决定(默认 mqvpn0),
+# 其余 VPN(openvpn/glorytun 等)沿用 network.omrvpn.device(默认 tun0)
+_vpn_device() {
+	local dev
+	if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ]; then
+		dev="$(uci -q get mqvpn.interface.tun_name)"
+		[ -z "$dev" ] && dev="mqvpn0"
+		echo "$dev"
+		return
+	fi
+	dev="$(uci -q get network.omrvpn.device)"
+	[ -z "$dev" ] && dev="tun0"
+	echo "$dev"
+}
+
 _add_dscp_domain() {
 	domain=""; config_get domain "$1" name ""
 	class=""; config_get class "$1" class ""
@@ -192,9 +207,10 @@ _setup_tunnel() {
 	_add_fwmark_chain
 	# tun0: cs0 (default)
 	# xtun0: cs6
-	_ipt4 -A dscp_output -o "tun0" -j DSCP --set-dscp-class cs6
+	vpn_device="$(_vpn_device)"
+	_ipt4 -A dscp_output -o "$vpn_device" -j DSCP --set-dscp-class cs6
 	if [ "$disableipv6" = "0" ]; then
-		_ipt6 -A dscp_output -o "tun0" -j DSCP --set-dscp-class cs6
+		_ipt6 -A dscp_output -o "$vpn_device" -j DSCP --set-dscp-class cs6
 	fi
 }
 

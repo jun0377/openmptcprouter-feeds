@@ -1,4 +1,12 @@
 #!/bin/sh
+# 隧道(VPN)设备名: mqvpn 由 mqvpn.interface.tun_name 决定(默认 mqvpn0), 其余沿用 network.omrvpn.device(默认 tun0)
+vpn_device="$(uci -q get network.omrvpn.device)"
+[ -z "$vpn_device" ] && vpn_device="tun0"
+if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ]; then
+	vpn_device="$(uci -q get mqvpn.interface.tun_name)"
+	[ -z "$vpn_device" ] && vpn_device="mqvpn0"
+fi
+
 if [ "$(uci -q get openmptcprouter.settings.version)" = "" ]; then
 	if [ "$(uci -q get sqm.wan1)" = "" ]; then
 		wan1="$(uci -q get network.wan1.device)"
@@ -86,7 +94,7 @@ if [ "$(uci -q get sqm.omrvpn)" = "" ] || [ -z "$(uci -q get sqm.omrvpn.delay_th
 		set sqm.omrvpn.qdisc_advanced='0'
 		set sqm.omrvpn.linklayer='none'
 		set sqm.omrvpn.enabled='0'
-		set sqm.omrvpn.interface=tun0
+		set sqm.omrvpn.interface=${vpn_device}
 		set sqm.omrvpn.download='0'
 		set sqm.omrvpn.upload='0'
 		set sqm.omrvpn.debug_logging='0'
@@ -99,6 +107,12 @@ if [ "$(uci -q get sqm.omrvpn)" = "" ] || [ -z "$(uci -q get sqm.omrvpn.delay_th
 		set sqm.omrvpn.autorate='0'
 		commit sqm
 	EOF
+fi
+
+# 老设备迁移: VPN 已是 mqvpn, 但 interface 仍是 openvpn 时代写死的 tun0
+if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ] && [ "$(uci -q get sqm.omrvpn.interface)" = "tun0" ]; then
+	uci -q set sqm.omrvpn.interface="$vpn_device"
+	uci -q commit sqm
 fi
 
 sed -i 's/SQM_SYSLOG=1/SQM_SYSLOG=0/g' /etc/sqm/sqm.conf

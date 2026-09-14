@@ -1,4 +1,12 @@
 #!/bin/sh
+# 隧道(VPN)设备名: mqvpn 由 mqvpn.interface.tun_name 决定(默认 mqvpn0), 其余沿用 network.omrvpn.device(默认 tun0)
+vpn_device="$(uci -q get network.omrvpn.device)"
+[ -z "$vpn_device" ] && vpn_device="tun0"
+if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ]; then
+	vpn_device="$(uci -q get mqvpn.interface.tun_name)"
+	[ -z "$vpn_device" ] && vpn_device="mqvpn0"
+fi
+
 if [ -z "$(uci -q get qos.omrvpn)" ]; then
 	uci -q batch <<-EOF >/dev/null
 		delete qos.wan
@@ -15,7 +23,7 @@ if [ -z "$(uci -q get qos.omrvpn)" ]; then
 		set qos.omrvpn=interface
 		set qos.omrvpn.classgroup="Default"
 		set qos.omrvpn.enabled="0"
-		set qos.omrvpn.interface="tun0"
+		set qos.omrvpn.interface="${vpn_device}"
 		set qos.omrvpn.upload="0"
 		set qos.omrvpn.download="0"
 		set qos.omrvpn.qdisc="cake"
@@ -52,6 +60,12 @@ if [ -z "$(uci -q get qos.omrvpn)" ]; then
 			commit qos
 		EOF
 	fi
+fi
+
+# 老设备迁移: VPN 已是 mqvpn, 但 interface 仍是 openvpn 时代写死的 tun0
+if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ] && [ "$(uci -q get qos.omrvpn.interface)" = "tun0" ]; then
+	uci -q set qos.omrvpn.interface="$vpn_device"
+	uci -q commit qos
 fi
 rm -f /tmp/luci-indexcache
 

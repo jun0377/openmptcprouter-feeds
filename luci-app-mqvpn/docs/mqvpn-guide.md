@@ -25,7 +25,7 @@ A single long form, one UCI section per group:
 | **Server** | **Server address** / **Server port** — the VPS endpoint. **Server name (SNI)** — only needed if it differs from the address. **Insecure TLS** — skip certificate verification. |
 | **TLS** | **Cipher suites** — optional colon-separated override list; empty uses mqvpn's defaults. |
 | **Authentication** | **User** — optional, just an identifying label shown in the server's status/logs (it's what the **Clients** table on the Metrics page groups by). **Key** — the shared auth key, masked. |
-| **Interface** | **Tunnel name** (TUN device, default `mqvpn0` — this bench uses `tun0`). **Log level**. **MTU** (1280–9000, blank = auto). **Kill switch** — block all traffic if the tunnel drops. **Reconnect** / **Reconnect interval**. **Route via server** — host-route the server IP before installing the default route (avoids routing the tunnel's own traffic through itself). **No automatic routes** — hand routing off entirely. **DNS servers** — pushed resolvers. |
+| **Interface** | **Tunnel name** (TUN device, default `mqvpn0`; the screenshot below was taken with the older `tun0`). **Log level**. **MTU** (1280–9000, blank = auto). **Kill switch** — block all traffic if the tunnel drops. **Reconnect** / **Reconnect interval**. **Route via server** — host-route the server IP before installing the default route (avoids routing the tunnel's own traffic through itself). **No automatic routes** — hand routing off entirely. **DNS servers** — pushed resolvers. |
 | **Control API** | **Port** / **Bind address** — the local JSON control API the Metrics page (and external tools) read from; leave the port empty to disable it entirely, which also makes the Metrics tab show "unreachable". |
 
 ### Multipath

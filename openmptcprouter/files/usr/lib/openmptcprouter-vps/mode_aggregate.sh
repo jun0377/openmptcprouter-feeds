@@ -26,7 +26,7 @@ _set_vpn_ip() {
 	[ -z "$vps_config" ] && logger -t "OMR-VPS" "<$FUNCNAME> No config..." && return
 	# 未启用任何VPN，return
 	[ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ] && logger -t "OMR-VPS" "openmptcprouter.settings.vpn=none, return now..." && return
-	# 从UCI配置文件获取VPN虚拟网口名称，uci get network.omrvpn.device == tun0
+	# 从UCI配置文件获取VPN虚拟网口名称(network.omrvpn.device)
 	vpnifname="$(uci -q get network.omrvpn.device)"
 	# mqvpn 的隧道设备由 mqvpn.interface.tun_name 决定(默认 mqvpn0), network.omrvpn.device 可能仍是遗留的 tun0
 	if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ]; then
@@ -84,53 +84,81 @@ _stop_vpn() {
 	logger -t "OMR-VPS" "<$FUNCNAME> stop ${name}"
 }
 
-# mqvpn: 端口不一致时, 把路由器侧的 mqvpn 参数推送到 VPS 并由 VPS 重建 QUIC 监听
+# mqvpn
 _set_mqvpn_vps() {
-	local enabled port key scheduler cc fec_enable fec_scheme reinjection_control reinjection_mode
-	local current_port settings result
-	enabled="$(uci -q get mqvpn.settings.enable)"
+
+	local enabled="$(uci -q get mqvpn.settings.enable)"
 	logger -t "OMR-VPS" "<$FUNCNAME> enable:${enabled}"
-	[ "$enabled" != "1" ] && logger -t "OMR-VPS" "<$FUNCNAME> MQVPN disabled, return now..." && echo "MQVPN disabled" && return
-	# mqvpn.server.port 是用户意图: 与 VPS 上的端口不一致时推过去
-	port="$(uci -q get mqvpn.server.port)"
+	# 能走到这里说明聚合模式就是要用 mqvpn, enable 不为 1 时直接修正并回写, 而不是退出
+	[ "$enabled" = "1" ] || {
+		logger -t "OMR-VPS" "<$FUNCNAME> MQVPN disabled(enable:${enabled}), set enable=1 now..."
+		enabled="1"
+		uci -q set mqvpn.settings.enable="1"
+	}
+
+	# 服务器IP
+	local server_ip="$(uci -q get openmptcprouter.vps.ip | awk '{print $1}')"
+	local current_server_ip="$(uci -q get mqvpn.server.ip)"
+	if [ -z "$server_ip" ]; then
+		logger -t "OMR-VPS" "<$FUNCNAME> openmptcprouter.vps.ip is empty, keep mqvpn.server.ip:${current_server_ip}"
+	elif [ "$current_server_ip" != "$server_ip" ]; then
+		logger -t "OMR-VPS" "<$FUNCNAME> mqvpn.server.ip changed:${current_server_ip} -> ${server_ip}, set mqvpn now..."
+		uci -q set mqvpn.server.ip="$server_ip"
+	fi
+
+	# 统一提交上面 enable 与 server.ip 的修改
+	[ -n "$(uci -q changes mqvpn)" ] && uci -q commit mqvpn
+
+	# 检查端口号是否为空
+	local port="$(uci -q get mqvpn.server.port)"
 	[ -z "$port" ] && logger -t "OMR-VPS" "<$FUNCNAME> mqvpn.server.port is empty, wait for next time..." && echo 1 && return
+
+	# 从服务器检索配置
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && logger -t "OMR-VPS" "<$FUNCNAME> vps_config is empty! return now..." && return
-	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.port')"
+	
+	# 从服务器检索到的端口号
+	local current_port="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.port')"
 	logger -t "OMR-VPS" "<$FUNCNAME> local port:${port} vps port:${current_port}"
 	[ -z "$current_port" ] && logger -t "OMR-VPS" "<$FUNCNAME> vps mqvpn.port is empty, wait for next time..." && echo 1 && return
-	key="$(uci -q get mqvpn.auth.key)"
+	
+	# 本地key
+	local key="$(uci -q get mqvpn.auth.key)"
 	[ -z "$key" ] && logger -t "OMR-VPS" "<$FUNCNAME> MQVPN key not set, return now..." && echo "MQVPN key not set" && return
-	if [ "$current_port" != "$port" ]; then
-		logger -t "OMR-VPS" "<$FUNCNAME> port changed:${current_port} -> ${port}, set VPS mqvpn now..."
-		# 缺省值优先沿用 VPS 现有配置, 再回落硬编码默认
-		scheduler="$(uci -q get mqvpn.multipath.scheduler)"
-		[ -z "$scheduler" ] && scheduler="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.scheduler')"
-		[ -z "$scheduler" ] && scheduler="wlb"
-		cc="$(uci -q get mqvpn.multipath.cc)"
-		[ -z "$cc" ] && cc="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.cc')"
-		[ -z "$cc" ] && cc="bbr2"
-		fec_enable="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.fec_enable')"
-		[ -z "$fec_enable" ] && fec_enable="false"
-		fec_scheme="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.fec_scheme')"
-		[ -z "$fec_scheme" ] && fec_scheme="xor"
-		reinjection_control="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reinjection_control')"
-		[ -z "$reinjection_control" ] && reinjection_control="false"
-		reinjection_mode="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reinjection_mode')"
-		[ -z "$reinjection_mode" ] && reinjection_mode="default"
-		settings='{"key": "'$key'", "port": '$port', "scheduler": "'$scheduler'", "cc": "'$cc'", "fec_enable": '$fec_enable', "fec_scheme": "'$fec_scheme'", "reinjection_control": '$reinjection_control', "reinjection_mode": "'$reinjection_mode'"}'
-		logger -t "OMR-VPS" "<$FUNCNAME> set VPS mqvpn:${settings}"
-		result=$(_set_json "mqvpn" "$settings")
-		logger -t "OMR-VPS" "<$FUNCNAME> result:${result}"
-		# 推送成功: 打 get_config 标记, 让之后的 _config_service 重新拉取 VPS 配置
-		[ -n "$result" ] && uci -q set openmptcprouter.${servername}.get_config="1"
-		# VPS 已换 QUIC 监听端口: 重启客户端按新端口重连, 而不是继续重试旧会话
-		[ -n "$result" ] && /etc/init.d/mqvpn restart >/dev/null 2>&1
-		echo $result
-	else
-		logger -t "OMR-VPS" "<$FUNCNAME> port unchanged:${port}, no need to set VPS"
-		echo 1
-	fi
+	
+	# 调度策略
+	local scheduler="$(uci -q get mqvpn.multipath.scheduler)"
+	[ -z "$scheduler" ] && scheduler="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.scheduler')"
+	[ -z "$scheduler" ] && scheduler="wlb"
+
+	# 拥塞控制策略
+	local cc="$(uci -q get mqvpn.multipath.cc)"
+	[ -z "$cc" ] && cc="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.cc')"
+	[ -z "$cc" ] && cc="bbr2"
+
+	# FEC
+	local fec_enable="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.fec_enable')"
+	[ -z "$fec_enable" ] && fec_enable="false"
+	local fec_scheme="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.fec_scheme')"
+	[ -z "$fec_scheme" ] && fec_scheme="xor"
+
+	# 重注入策略
+	local reinjection_control="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reinjection_control')"
+	[ -z "$reinjection_control" ] && reinjection_control="false"
+	local reinjection_mode="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reinjection_mode')"
+	[ -z "$reinjection_mode" ] && reinjection_mode="default"
+
+	local settings='{"key": "'$key'", "port": '$port', "scheduler": "'$scheduler'", "cc": "'$cc'", "fec_enable": '$fec_enable', "fec_scheme": "'$fec_scheme'", "reinjection_control": '$reinjection_control', "reinjection_mode": "'$reinjection_mode'"}'
+	logger -t "OMR-VPS" "<$FUNCNAME> set VPS mqvpn:${settings}"
+
+	local result=$(_set_json "mqvpn" "$settings")
+	logger -t "OMR-VPS" "<$FUNCNAME> result:${result}"
+
+	[ -n "$result" ] && uci -q set openmptcprouter.${servername}.get_config="1"
+	
+	/etc/init.d/mqvpn restart >/dev/null 2>&1
+	
+	echo $result
 }
 
 _config_service() {
@@ -225,9 +253,15 @@ _config_service() {
 	[ -z "$kernel" ] && logger -t "OMR-VPS" "<$FUNCNAME> vps kernel unknown! return now..." && return
 	logger -t "OMR-VPS" "<$FUNCNAME> vps kernel: ${kernel}"
 
-	# openmptcprouter.settings.vpn 决定聚合模式使用哪种 VPN (与 _set_config_from_vps 的判断保持一致)
-	# 两种 VPN 互斥: 处理选中的那种之前, 先停掉另一种, 避免 openvpn 与 mqvpn 同时占用隧道
+	# openmptcprouter.settings.vpn 决定聚合模式使用哪种 VPN
 	local vpn_type="$(uci -q get openmptcprouter.settings.vpn)"
+	if [ -z "$vpn_type" ]; then
+		vpn_type="mqvpn"
+		logger -t "OMR-VPS" "<$FUNCNAME> settings.vpn is empty, set default to ${vpn_type}"
+		uci -q set openmptcprouter.settings.vpn="${vpn_type}"
+		uci -q commit openmptcprouter
+	fi
+
 	logger -t "OMR-VPS" "<$FUNCNAME> aggregate vpn:${vpn_type}"
 
 	case "$vpn_type" in

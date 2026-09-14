@@ -27,12 +27,11 @@ mqvpn_path_exists() {
 	mqvpn-path list 2>/dev/null | grep -q "\"$OMR_TRACKER_DEVICE\""
 }
 
-# 注: 这里的tun0是从openvpn时代沿用下来的设备名, mqvpn实际设备是mqvpn0(tun_name),
-# 所以该分支在mqvpn下实际不生效。保持原样移植: 激活它会把mqvpn自己安装的0.0.0.0/1
-# 覆盖路由删掉, 属于未经验证的行为, 需先确认语义再改。
 if [ "$(uci -q get mqvpn.interface.route_via_server)" = "1" ]; then
-	if ip route show 0.0.0.0/1 dev tun0 2>/dev/null | grep -q .; then
-		ip route del 0.0.0.0/1 dev tun0 2>/dev/null
+	mqvpn_dev="$(uci -q get mqvpn.interface.tun_name)"
+	[ -z "$mqvpn_dev" ] && mqvpn_dev="mqvpn0"
+	if ip route show 0.0.0.0/1 dev "$mqvpn_dev" 2>/dev/null | grep -q .; then
+		ip route del 0.0.0.0/1 dev "$mqvpn_dev" 2>/dev/null
 	fi
 fi
 

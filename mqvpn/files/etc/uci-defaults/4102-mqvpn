@@ -3,9 +3,21 @@
 if [ "$(uci -q get mqvpn.interface.tun_name)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set mqvpn.interface=interface
-		set mqvpn.interface.tun_name=tun0
+		set mqvpn.interface.tun_name=mqvpn0
 		commit mqvpn
 	EOF
+fi
+
+# 老设备迁移: mqvpn 用 mqvpn0, 而 openvpn 时代各处写死的设备名是 tun0
+if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ]; then
+	mqvpn_dev="$(uci -q get mqvpn.interface.tun_name)"
+	[ -z "$mqvpn_dev" ] && mqvpn_dev="mqvpn0"
+	[ "$(uci -q get network.omrvpn.device)" = "tun0" ] && uci -q set network.omrvpn.device="$mqvpn_dev"
+	[ "$(uci -q get qos.omrvpn.interface)" = "tun0" ] && uci -q set qos.omrvpn.interface="$mqvpn_dev"
+	[ "$(uci -q get sqm.omrvpn.interface)" = "tun0" ] && uci -q set sqm.omrvpn.interface="$mqvpn_dev"
+	for pkg in network qos sqm; do
+		[ -n "$(uci -q changes $pkg)" ] && uci -q commit $pkg
+	done
 fi
 
 exit 0
