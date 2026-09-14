@@ -111,11 +111,28 @@ _launch_tracker() {
 	_validate_section "interface" "$1"
 
 	local ifname ip4table
-	# 获取接口的设备名称(l3_device)
+
+	if [ "$1" = "omrvpn" ]; then
+		case "$(uci -q get openmptcprouter.settings.vpn)" in
+			openvpn)
+				# openvpn 的隧道设备, 默认 tun0
+				ifname="$(uci -q get openvpn.omr.dev)"
+				[ -z "$ifname" ] && ifname="tun0"
+				;;
+			mqvpn)
+				# mqvpn 的隧道设备, 默认 mqvpn0
+				ifname="$(uci -q get mqvpn.interface.tun_name)"
+				[ -z "$ifname" ] && ifname="mqvpn0"
+				;;
+		esac
+	fi
+
+	# 未解析到设备名时(非 omrvpn 接口, 或其它 VPN 类型), 回退到 netifd 报告的设备名(l3_device)
 	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$ifname" ] && ifname=$(ifstatus "$1_4" | jsonfilter -q -e '@["l3_device"]')
 	# 如果设备名包含@符号，取真实设备名
 	[ -n "$(echo $ifname | grep '@')" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
+	
 	# 仍然无法获取真实设备名, 直接退出
 	[ -z "$ifname" ] && {
 		# logger -t "OMR" "<omr-tracker> $1 unknown interface! exit now..."

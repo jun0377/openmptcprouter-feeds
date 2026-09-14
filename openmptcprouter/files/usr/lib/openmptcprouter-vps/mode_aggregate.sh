@@ -109,6 +109,15 @@ _set_mqvpn_vps() {
 	# 统一提交上面 enable 与 server.ip 的修改
 	[ -n "$(uci -q changes mqvpn)" ] && uci -q commit mqvpn
 
+	local mqvpn_dev="$(uci -q get mqvpn.interface.tun_name)"
+	[ -z "$mqvpn_dev" ] && mqvpn_dev="mqvpn0"
+	if [ "$(uci -q get network.omrvpn.device)" != "$mqvpn_dev" ]; then
+		logger -t "OMR-VPS" "<$FUNCNAME> set network.omrvpn.device=${mqvpn_dev}"
+		uci -q set network.omrvpn.device="$mqvpn_dev"
+		uci -q commit network
+		ifup omrvpn >/dev/null 2>&1
+	fi
+
 	# 检查端口号是否为空
 	local port="$(uci -q get mqvpn.server.port)"
 	[ -z "$port" ] && logger -t "OMR-VPS" "<$FUNCNAME> mqvpn.server.port is empty, wait for next time..." && echo 1 && return
