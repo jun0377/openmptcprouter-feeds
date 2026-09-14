@@ -225,6 +225,15 @@ _set_openvpn_vps() {
 	[ -n "$(uci -q get openvpn.omr4)" ] && uci delete openvpn.omr4
 	[ -n "$(uci -q changes openvpn)" ] && uci commit openvpn
 
+	local ovpn_dev="$(uci -q get openvpn.omr.dev)"
+	[ -z "$ovpn_dev" ] && ovpn_dev="tun0"
+	if [ "$(uci -q get network.omrvpn.device)" != "$ovpn_dev" ]; then
+		logger -t "OMR-VPS" "<$FUNCNAME> set network.omrvpn.device=${ovpn_dev}"
+		uci -q set network.omrvpn.device="$ovpn_dev"
+		uci -q commit network
+		ifup omrvpn >/dev/null 2>&1
+	fi
+
 	local port="$(uci -q get openvpn.omr.port)"						# 服务器端口 65301
 	local cipher="$(uci -q get openvpn.omr.cipher)"					# 加密算法
 	local key="$(base64 /etc/luci-uploads/client.key | tr -d "\n")"	# 客户端秘钥
