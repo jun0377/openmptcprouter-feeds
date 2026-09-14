@@ -52,30 +52,30 @@ done
 
 # export vars
 # 以下变量用于：把当前探测上下文传给 post-tracking 钩子脚本，以及某些工具调用时复用
-export OMR_TRACKER_INTERFACE			# 将接口名导出为环境变量，供子进程和钩子脚本使用
-export OMR_TRACKER_HOST					# 探测目标的 IPv4 主机地址
-export OMR_TRACKER_HOST6				# 探测目标的 IPv6 主机地址
-export OMR_TRACKER_TIMEOUT				# ping/httping命令总超时时间
-export OMR_TRACKER_SIZE					# ping命令包负载大小payload
-export OMR_TRACKER_MAX_TTL				# ping命令携带的TTL
-export OMR_TRACKER_LOSS					# ping命令探测到的丢包率
-export OMR_TRACKER_STATUS				# 当前探测状态（OK 或 ERROR）
-export OMR_TRACKER_STATUS_MSG			# 当前探测状态的详细描述信息
-export OMR_TRACKER_PREV_STATUS			# 上一次探测状态，用于判断状态是否发生变化
-export OMR_TRACKER_DEVICE				# 当前接口对应的物理设备名（如 eth0）
-export OMR_TRACKER_PREV_DEVICE			# 上一次记录的物理设备名
-export OMR_TRACKER_DEVICE_IP			# 当前接口的 IPv4 地址
-export OMR_TRACKER_DEVICE_IP6			# 当前接口的 IPv6 地址
-export OMR_TRACKER_PREV_DEVICE_IP		# 上一次记录的 IPv4 地址
-export OMR_TRACKER_PREV_DEVICE_IP6		# 上一次记录的 IPv6 地址
-export OMR_TRACKER_DEVICE_GATEWAY		# 当前接口的 IPv4 网关地址
-export OMR_TRACKER_DEVICE_GATEWAY6		# 当前接口的 IPv6 网关地址
-export OMR_TRACKER_IPV6					# 是否启用 IPv6 探测（0/1/auto）
-export OMR_TRACKER_PROTO				# 接口协议类型（dhcp/pppoe/qmi 等）
-export OMR_TRACKER_INTERVAL_TRIES		# 每次探测循环内的重试间隔次数
-export OMR_TRACKER_INTERVAL				# 两次探测循环之间的休眠间隔（秒）
-export OMR_TRACKER_NO_BIND				# 是否禁用接口绑定（1 表示不使用 -B 参数）
-export OMR_TRACKER_TYPE					# 探测类型（ping/httping/dns/none/glorytun-udp）
+export OMR_TRACKER_INTERFACE				# 将接口名导出为环境变量，供子进程和钩子脚本使用
+export OMR_TRACKER_HOST						# 探测目标的 IPv4 主机地址
+export OMR_TRACKER_HOST6					# 探测目标的 IPv6 主机地址
+export OMR_TRACKER_TIMEOUT					# ping/httping命令总超时时间
+export OMR_TRACKER_SIZE						# ping命令包负载大小payload
+export OMR_TRACKER_MAX_TTL					# ping命令携带的TTL
+export OMR_TRACKER_LOSS						# ping命令探测到的丢包率
+export OMR_TRACKER_STATUS					# 当前探测状态（OK 或 ERROR）
+export OMR_TRACKER_STATUS_MSG				# 当前探测状态的详细描述信息
+export OMR_TRACKER_PREV_STATUS				# 上一次探测状态，用于判断状态是否发生变化
+export OMR_TRACKER_DEVICE					# 当前接口对应的物理设备名（如 eth0）
+export OMR_TRACKER_PREV_DEVICE				# 上一次记录的物理设备名
+export OMR_TRACKER_DEVICE_IP				# 当前接口的 IPv4 地址
+export OMR_TRACKER_DEVICE_IP6				# 当前接口的 IPv6 地址
+export OMR_TRACKER_PREV_DEVICE_IP			# 上一次记录的 IPv4 地址
+export OMR_TRACKER_PREV_DEVICE_IP6			# 上一次记录的 IPv6 地址
+export OMR_TRACKER_DEVICE_GATEWAY			# 当前接口的 IPv4 网关地址
+export OMR_TRACKER_DEVICE_GATEWAY6			# 当前接口的 IPv6 网关地址
+export OMR_TRACKER_IPV6						# 是否启用 IPv6 探测（0/1/auto）
+export OMR_TRACKER_PROTO					# 接口协议类型（dhcp/pppoe/qmi 等）
+export OMR_TRACKER_INTERVAL_TRIES			# 每次探测循环内的重试间隔次数
+export OMR_TRACKER_INTERVAL					# 两次探测循环之间的休眠间隔（秒）
+export OMR_TRACKER_NO_BIND					# 是否禁用接口绑定（1 表示不使用 -B 参数）
+export OMR_TRACKER_TYPE						# 探测类型（ping/httping/dns/none/glorytun-udp）
 
 initial_timeout="$OMR_TRACKER_TIMEOUT"		# 保存初始超时时间，供 RTO 初始化使用(单位秒)
 wait_test=${OMR_TRACKER_WAIT_TEST:-0}		# 如果未设置 OMR_TRACKER_WAIT_TEST，则默认 0(错误时额外等待时间)
@@ -485,11 +485,16 @@ while true; do
 	OMR_TRACKER_DEVICE_GATEWAY6=	# 清空 IPv6 网关
 	serverip_ping=false				# VPS服务器可达性标志,默认不可达
 
-	# omrvpn: 每轮检查OpenVPN进程是否存活, 进程不存在则直接标记ERROR并跳过后续探测
+	# omrvpn: 每轮检查当前启用的VPN进程是否存活, 进程不存在则直接标记ERROR并跳过后续探测
 	if [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
-		if ! pidof openvpn > /dev/null 2>&1; then
+		vpn_gate=""
+		# 决定聚合模式用哪种VPN
+		case "$(uci -q get openmptcprouter.settings.vpn)" in
+			openvpn|mqvpn) vpn_gate="$(uci -q get openmptcprouter.settings.vpn)" ;;
+		esac
+		if [ -n "$vpn_gate" ] && ! pidof "$vpn_gate" > /dev/null 2>&1; then
 			OMR_TRACKER_STATUS="ERROR"
-			OMR_TRACKER_STATUS_MSG="openvpn progress not running!"
+			OMR_TRACKER_STATUS_MSG="${vpn_gate} progress not running!"
 			_save_ovpn
 			_post_tracking
 			sleep "${OMR_TRACKER_FAILURE_INTERVAL:-10}"

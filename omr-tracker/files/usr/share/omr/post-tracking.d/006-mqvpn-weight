@@ -1,0 +1,54 @@
+#!/bin/sh
+
+# 把 network.<iface>.multipath_weight 推给mqvpn的wrtt(加权RTT)/wrr(加权轮询)调度器
+#
+# 两个调度器读取的是同一个per-path权重(mqvpn_path_desc_t.weight),
+# multipath_weight 与MPTCP权重调度器用的是同一份UCI字段, 这里只负责让mqvpn跟上它。
+
+if [ "$(uci -q get mqvpn.settings.enable)" != "1" ]; then
+	exit 0
+fi
+
+if [ -z "$OMR_TRACKER_DEVICE" ] || [ -z "$OMR_TRACKER_INTERFACE" ]; then
+	exit 0
+fi
+
+mqvpn_scheduler="$(uci -q get mqvpn.multipath.scheduler)"
+if [ "$mqvpn_scheduler" != "wrtt" ] && [ "$mqvpn_scheduler" != "wrr" ]; then
+	exit 0
+fi
+
+# 不管理VPN接口自身
+if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ]; then
+	exit 0
+fi
+
+if [ "$(pgrep -f mqvpn)" = "" ]; then
+	exit 0
+fi
+
+multipath_config=$(uci -q get "openmptcprouter.$OMR_TRACKER_INTERFACE.multipath")
+[ -z "$multipath_config" ] && multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath" || echo "off")
+
+if [ "$multipath_config" != "on" ] && [ "$multipath_config" != "master" ] && [ "$multipath_config" != "backup" ]; then
+	exit 0
+fi
+
+weight="$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath_weight")"
+[ -z "$weight" ] && exit 0
+
+# network.<iface>.weight 缓存的是上次已下发的权重, 005摘除path时会清掉它,
+# 因此重新加入的path即使multipath_weight没变也会被重放一次
+current_weight="$(uci -q get "network.$OMR_TRACKER_INTERFACE.weight")"
+
+if [ "$weight" != "$current_weight" ]; then
+	_log "mqvpn: set weight $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $weight"
+	if mqvpn-path weight "$OMR_TRACKER_DEVICE" "$weight" >/dev/null 2>&1; then
+		uci -q set "network.$OMR_TRACKER_INTERFACE.weight=$weight"
+		[ -n "$(uci -q changes network)" ] && uci -q commit network
+	else
+		_log "mqvpn: failed to set weight $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $weight"
+	fi
+fi
+
+exit 0

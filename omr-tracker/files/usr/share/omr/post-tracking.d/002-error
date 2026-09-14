@@ -186,6 +186,22 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			/etc/init.d/mlvpn restart >/dev/null 2>&1
 		fi
 
+		# MQVPN 重启
+		# 加60秒冷却: 隧道未起来时跟踪器会反复进入 ERROR, 每次都重启会连环掐断已建立的连接
+		if [ "$(uci -q get mqvpn.settings.enable)" = "1" ]; then
+			mqvpn_last_restart="$(cat /tmp/omr-mqvpn-last-restart 2>/dev/null)"
+			[ -z "$mqvpn_last_restart" ] && mqvpn_last_restart=0
+			mqvpn_now="$(date +%s)"
+			if [ "$((mqvpn_now - mqvpn_last_restart))" -ge 60 ]; then
+				_log "MQVPN down, restart it"
+				logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> MQVPN down, restart it"
+				echo "$mqvpn_now" > /tmp/omr-mqvpn-last-restart
+				/etc/init.d/mqvpn restart >/dev/null 2>&1
+			else
+				_log "MQVPN down, restart skipped (already restarted less than 60s ago)"
+			fi
+		fi
+
 		if [ "$(uci -q get openvpn.omr.enabled)" = "1" ]; then
 			_log "OpenVPN down, restart it"
 			logger -t "OMR" "<omr-tracker ${OMR_TRACKER_INTERFACE} ${OMR_TRACKER_DEVICE}> OpenVPN down, restart it"

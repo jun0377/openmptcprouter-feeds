@@ -13,7 +13,7 @@ USE_PROCD=1
 
 CONF=/var/run/mqvpn.conf
 
-# 将 UCI 的 0/1 开关值转换为 mqvpn 配置文件所需的 true/false 字符串。
+# 将 UCI 的 0/1 开关值转换为 mqvpn 配置文件所需的 true/false 字符串
 _bool() { [ "$1" = "1" ] && echo "true" || echo "false"; }
 
 # 根据uci配置文件, 生成 /var/run/mqvpn.conf
@@ -67,45 +67,51 @@ generate_config() {
 		*:* ) server_address="[$ip]:$port" ;;
 	esac
 
-	config_get cipher tls cipher ''
+	config_get cipher tls cipher ''  										# TLS 加密套件覆盖列表(冒号分隔), 空则用内置默认
 
-	config_get key auth key
-	config_get user auth user
+	config_get key auth key  												# 共享认证密钥, 必填, 为空则拒绝生成配置
+	config_get user auth user  												# 客户端标识, 可选, 仅用于服务端状态/日志区分客户端
 
-	config_get tun_name interface tun_name 'mqvpn0'
-	config_get log_level interface log_level 'info'
-	config_get mtu interface mtu ''
-	config_get_bool kill_switch interface kill_switch 0
-	config_get_bool reconnect interface reconnect 1
-	config_get reconnect_interval interface reconnect_interval 5
-	config_get_bool route_via_server interface route_via_server 0
-	config_get_bool no_routes interface no_routes 0
+	config_get tun_name interface tun_name 'mqvpn0'  						# TUN 设备名, 默认 mqvpn0
+	config_get log_level interface log_level 'info'  						# 日志级别: debug/info/warn/error, 默认 info
+	config_get mtu interface mtu ''  										# TUN MTU 上限(1280-9000), 空=自动
+	config_get_bool kill_switch interface kill_switch 0  					# 隧道断开时阻断全部流量, 默认关
+	config_get_bool reconnect interface reconnect 1  						# 断线自动重连, 默认开
+	config_get reconnect_interval interface reconnect_interval 5  			# 重连间隔(秒), 默认 5
+	config_get_bool route_via_server interface route_via_server 0  			# 先给服务器 IP 装主机路由再装默认路由, 避免隧道自身流量绕回隧道, 默认关
+	config_get_bool no_routes interface no_routes 0  						# 完全跳过自动装路由, 改由人工接管, 默认关
 
-	config_get control_port control control_port ''
-	config_get control_addr control control_addr '127.0.0.1'
+	config_get control_port control control_port ''  						# 控制 API 端口, 空则整段不写 → 控制 API 关闭
+	config_get control_addr control control_addr '127.0.0.1'  				# 控制 API 绑定地址, 默认 127.0.0.1
 
-	config_get scheduler multipath scheduler 'wlb'
-	config_get cc multipath cc ''
-	config_get_bool auto_wan multipath auto_wan 1
-	config_get_bool reinjection_control multipath reinjection_control 0
-	config_get reinjection_mode multipath reinjection_mode ''
-	config_get_bool fec_enable multipath fec_enable 0
-	config_get fec_scheme multipath fec_scheme ''
-	config_get_bool sync_path_labels multipath sync_path_labels 1
-	config_get init_max_path_id multipath init_max_path_id ''
+	config_get scheduler multipath scheduler 'wlb'  						# 多路径调度算法, 默认 wlb(加权负载均衡)
+	config_get cc multipath cc ''  											# 拥塞控制算法, 空则用 mqvpn 内置默认
+	config_get_bool auto_wan multipath auto_wan 1  							# 1=自动取 WAN 接口作为路径(默认), 0=改用显式 path/backup_path 列表
+	config_get_bool reinjection_control multipath reinjection_control 0  	# 开启换路重传, 默认关
+	config_get reinjection_mode multipath reinjection_mode ''  				# 换路重传模式: default/deadline/dgram, 空则用内置默认
+	config_get_bool fec_enable multipath fec_enable 0  						# 开启前向纠错(需编译时支持 FEC), 默认关
+	config_get fec_scheme multipath fec_scheme ''  							# FEC 方案: galois_calculation/packet_mask/reed_solomon/xor
+	config_get_bool sync_path_labels multipath sync_path_labels 1  			# 把本路径权重/DSCP 掩码同步给服务端用于下行调度, 默认开
+	config_get init_max_path_id multipath init_max_path_id ''  				# draft-21 initial_max_path_id, 调小(如 2)可故意触发 PATHS_BLOCKED 做测试
 
-	config_get_bool reorder_enabled reorder enabled 0
-	config_get reorder_max_wait_ms reorder max_wait_ms ''
-	config_get reorder_cap_packets reorder cap_packets ''
+	config_get_bool reorder_enabled reorder enabled 0  						# 内层 UDP 重排序缓冲总开关, 默认关(会增加延迟)
+	config_get reorder_max_wait_ms reorder max_wait_ms ''  					# 释放缺口前的最长等待时间(ms)
+	config_get reorder_cap_packets reorder cap_packets ''  					# 每流最多缓冲的报文数(取 2 的幂)
 
-	config_get recv_rate_limit advanced recv_rate_limit ''
+	config_get recv_rate_limit advanced recv_rate_limit ''  				# 仅客户端: QUIC 接收窗口上限(字节/秒), 0 或空=不限
 
 	dns_csv=''
 	config_list_foreach interface dns _append_dns_csv
 
 	[ -z "$ip" ] && { logger -t mqvpn "No server address configured"; return 1; }
-	[ "$ip" = "203.0.113.1" ] && { logger -t mqvpn "Server IP is not configured (placeholder 203.0.113.1)"; return 1; }
+	[ "$ip" = "127.0.0.1" ] && { logger -t mqvpn "Server IP is not configured (placeholder 127.0.0.1)"; return 1; }
 	[ -z "$key" ]     && { logger -t mqvpn "No auth key configured"; return 1; }
+
+	# netifd 的 omrvpn 接口要绑到实际的隧道设备, 否则 firewall zone_vpn / VXLAN tunlink 会跟错设备
+	if [ "$(uci -q get network.omrvpn)" != "" ] && [ "$(uci -q get network.omrvpn.device)" != "$tun_name" ]; then
+		uci -q set network.omrvpn.device="$tun_name"
+		uci -q commit network
+	fi
 
 	mkdir -p /var/run
 
@@ -145,44 +151,47 @@ generate_config() {
 		echo ''
 		echo '[Multipath]'
 		echo "Scheduler = $scheduler"
-		[ -n "$cc" ] && echo "CC = $cc"
-		[ "$reinjection_control" = "1" ] && echo "ReinjectionControl = true"
-		[ -n "$reinjection_mode" ] && echo "ReinjectionMode = $reinjection_mode"
-		[ "$fec_enable" = "1" ] && echo "FecEnable = true"
-		[ -n "$fec_scheme" ] && echo "FecScheme = $fec_scheme"
-		echo "SyncPathLabels = $(_bool "$sync_path_labels")"
-		[ -n "$init_max_path_id" ] && echo "InitMaxPathId = $init_max_path_id"
+		[ -n "$cc" ] && echo "CC = $cc"  												# 拥塞控制算法, 为空则不写该行, 交由二进制用内置默认
+		[ "$reinjection_control" = "1" ] && echo "ReinjectionControl = true"  			# 换路重传开关, 关闭时不写该行(而不是写 false)
+		[ -n "$reinjection_mode" ] && echo "ReinjectionMode = $reinjection_mode"  		# 换路重传模式, 为空则不写该行
+		[ "$fec_enable" = "1" ] && echo "FecEnable = true"  							# FEC 开关, 关闭时不写该行
+		[ -n "$fec_scheme" ] && echo "FecScheme = $fec_scheme"  						# FEC 方案, 为空则不写该行
+		echo "SyncPathLabels = $(_bool "$sync_path_labels")"  							# 本段唯一始终输出的布尔项, 固定写 true/false
+		[ -n "$init_max_path_id" ] && echo "InitMaxPathId = $init_max_path_id"  		# draft-21 参数, 为空则不写该行
 
-		if [ "$auto_wan" = "1" ]; then
+		# 多路径策略
+		if [ "$auto_wan" = "1" ]; then													# 自动模式(默认): 由 UCI 里各 network 接口的 multipath 标记推导
 			config_load network
 			config_foreach _write_iface_path interface
-		else
+		else																			# 手动模式: 用用户在 multipath 段里显式列出的接口名
 			config_list_foreach multipath path _write_explicit_path ""
 			config_list_foreach multipath backup_path _write_explicit_path "backup"
 		fi
 
-		if [ "$reorder_enabled" = "1" ]; then
-			echo ''
-			echo '[Reorder]'
-			echo 'Enabled = on'
-			[ -n "$reorder_max_wait_ms" ] && echo "MaxWaitMs = $reorder_max_wait_ms"
-			[ -n "$reorder_cap_packets" ] && echo "CapPackets = $reorder_cap_packets"
+		if [ "$reorder_enabled" = "1" ]; then											# 重排序缓冲总开关, 默认关; 关闭时连 [Reorder] 段头都不输出
+			echo ''																		# 段前空行, 与上一段(路径行)分隔
+			echo '[Reorder]'															# 输出段名
+			echo 'Enabled = on'															# 写死 on, 非 _bool 的 true/false(因为只有开关为 1 时才会进此分支)
+			[ -n "$reorder_max_wait_ms" ] && echo "MaxWaitMs = $reorder_max_wait_ms"	# 释放缺口前的最长等待时间(ms), 空则不写该行
+			[ -n "$reorder_cap_packets" ] && echo "CapPackets = $reorder_cap_packets"	# 每流最多缓冲的报文数, 空则不写该行
 		fi
 
-		config_load mqvpn
-		config_foreach _write_reorder_rule reorder_rule
+		config_load mqvpn																# 把 UCI 上下文切回 mqvpn(自动路径分支可能已把上下文切到 network)
+		config_foreach _write_reorder_rule reorder_rule									# 遍历所有 type=reorder_rule 的段, 每段输出一个 [ReorderRule] 块
 
-		if [ -n "$recv_rate_limit" ] && [ "$recv_rate_limit" != "0" ]; then
-			echo ''
-			echo '[Advanced]'
-			echo "RecvRateLimit = $recv_rate_limit"
+		# 限制 QUIC 的 接收窗口 （receive window），因而实际限制的是 下行吞吐
+		# 单位: 字节/秒；`0` 或留空 = 不限速
+		if [ -n "$recv_rate_limit" ] && [ "$recv_rate_limit" != "0" ]; then				# 双条件: 非空且非 0 才写 [Advanced]; 空/0 均表示不限速, 整段不输出
+			echo ''																		# 段前空行, 与上一段分隔
+			echo '[Advanced]'															# 输出段名
+			echo "RecvRateLimit = $recv_rate_limit"										# 仅客户端生效: QUIC 接收窗口上限(字节/秒)
 		fi
 	} > "$CONF"
 
 	return 0
 }
 
-# config_list_foreach 的回调: 把 interface.dns 列表逐项拼接成逗号分隔的 DNS 字符串。
+# config_list_foreach 的回调: 把 interface.dns 列表逐项拼接成逗号分隔的 DNS 字符串
 _append_dns_csv() {
 	local dns="$1"
 	[ -z "$dns" ] && return 0
@@ -193,7 +202,7 @@ _append_dns_csv() {
 	fi
 }
 
-# 自动模式(auto_wan=1)下遍历 network 接口, 将 multipath 为 on/master/backup 且 state=up 的接口输出为 Path/BackupPath 行。
+# 自动模式(auto_wan=1)下遍历 network 接口, 将 multipath 为 on/master/backup 且 state=up 的接口输出为 Path/BackupPath 行
 _write_iface_path() {
 	local config="$1"
 	local mode ifname
@@ -217,7 +226,7 @@ _write_iface_path() {
 	fi
 }
 
-# 手动模式下输出 multipath.path / backup_path 列表中的接口, 分别作为 Path 或 BackupPath 行。
+# 手动模式下输出 multipath.path / backup_path 列表中的接口, 分别作为 Path 或 BackupPath 行
 _write_explicit_path() {
 	local ifname="$1"
 	local is_backup="$2"
@@ -229,7 +238,7 @@ _write_explicit_path() {
 	fi
 }
 
-# 遍历每个 reorder_rule 段, 输出一个 [ReorderRule] 块(Proto/Port/Profile), 用于细化重排序策略。
+# 遍历每个 reorder_rule 段, 输出一个 [ReorderRule] 块(Proto/Port/Profile), 用于细化重排序策略
 _write_reorder_rule() {
 	local config="$1"
 	local proto port profile
@@ -244,7 +253,7 @@ _write_reorder_rule() {
 	[ -n "$profile" ] && echo "Profile = $profile"
 }
 
-# procd 启动入口: 先生成配置, 再以 /usr/sbin/mqvpn --config 拉起实例并设置异常退出自动重启。
+# procd 启动入口: 先生成配置, 再以 /usr/sbin/mqvpn --config 拉起实例并设置异常退出自动重启
 start_service() {
 	config_load mqvpn
 
@@ -258,12 +267,12 @@ start_service() {
 	procd_close_instance
 }
 
-# 停止服务时清理运行时生成的 /var/run/mqvpn.conf。
+# 停止服务时清理运行时生成的 /var/run/mqvpn.conf
 stop_service() {
 	rm -f "$CONF"
 }
 
-# 注册 procd 重载触发器, 使 /etc/config/mqvpn 变更提交后自动重载服务。
+# 注册 procd 重载触发器, 使 /etc/config/mqvpn 变更提交后自动重载服务
 service_triggers() {
 	procd_add_reload_trigger mqvpn
 }

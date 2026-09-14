@@ -9,6 +9,25 @@ SETROUTE=false
 
 . /usr/share/omr/lib/common-post-tracking.sh
 
+# 取隧道(VPN)接口实际对应的设备名: openvpn 是 tun0, mqvpn 由 mqvpn.interface.tun_name 决定(默认 mqvpn0)
+_omrvpn_device() {
+	local dev
+	
+	# mqvpn
+	if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ]; then
+		dev="$(uci -q get mqvpn.interface.tun_name)"
+		[ -z "$dev" ] && dev="mqvpn0"
+		echo "$dev"
+		return
+	fi
+
+	# openvpn
+	dev="$(uci -q get network.omrvpn.device)"
+	[ -z "$dev" ] && dev="$(uci -q get network.omrvpn.ifname)"
+	[ -z "$dev" ] && dev="tun0"
+	echo "$dev"
+}
+
 
 # 获取当前多路径状态，默认为 off
 multipath_status="off"
@@ -86,8 +105,12 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 	fi
 
 	# Set VPN MTU
-	# 如果延迟数据可用，接口信息完整，且距离上次检查超过 3600 秒
-	if [ -n "$OMR_TRACKER_LATENCY" ] && [ -n "$OMR_TRACKER_INTERFACE" ] && { [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]; }; then
+	# mqvpn 例外: 它自己会根据实际QUIC/MASQUE数据报预算协商并动态重设tun MTU,
+	# 这里写死UCI的mtu或omr-mtu探到的路径MTU都不知道mqvpn的分片开销, 可能设成错误值;
+	# 更糟的是外部 ip link set mtu 会让mqvpn的 last_notified_mtu 与接口真实状态脱节,
+	# 之后它自己的MTU修正会被静默跳过(表现为大UDP包被丢且不回信号), 直到下次重连
+	# 如果延迟数据可用，接口信息完整，非mqvpn，且距离上次检查超过 3600 秒
+	if [ -n "$OMR_TRACKER_LATENCY" ] && [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mqvpn" ] && { [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]; }; then
 		_log "Set VPN MTU"
 		# 获取 Shadowsocks 或 V2Ray 服务器地址
 		serverip=$(uci -q get shadowsocks-libev.sss0.server)
@@ -192,10 +215,9 @@ if [ "$multipath_config" = "master" ]; then
 	if [ "$(uci -q get openmptcprouter.settings.master)" != "balancing" ]; then
 		# 替换 IPv4 默认路由
 		if { [ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; } && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ]; then
-			# 获取 VPN 接口名称
-			omrvpn_intf=$(uci -q get "network.omrvpn.device" || echo "tun0")
-			[ -z "$omrvpn_intf" ] && omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun0")
-			# 设置默认网关为openvpn对应的网口
+			# 获取隧道接口的实际设备名
+			omrvpn_intf="$(_omrvpn_device)"
+			# 设置默认网关为隧道网关对应的网口
 			if [ -n "$omrvpn_intf" ] && [ "$(ip route show default metric 0 | grep $omrvpn_intf)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 				_log "Master up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
 				ip route replace default scope global metric 1 via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE $initcwrwnd >/dev/null 2>&1
@@ -210,8 +232,7 @@ if [ "$multipath_config" = "master" ]; then
 		fi
 		# 替换 IPv6 默认路由
 		if { [ "$default_gw6" != "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$default_gw6" = "" ]; } && [ "$OMR_TRACKER_DEVICE_GATEWAY6" != "" ]; then
-			omrvpn_intf=$(uci -q get "network.omrvpn.device" || echo "tun0")
-			[ -z "$omrvpn_intf" ] && omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun0")
+			omrvpn_intf="$(_omrvpn_device)"
 			# 如果 VPN 接口未拥有默认 IPv6 路由且允许设置默认网关
 			if [ -n "$omrvpn_intf" ] && [ "$(ip route show default | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 				_log "Master up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE"
@@ -230,8 +251,7 @@ if [ "$multipath_config" = "master" ]; then
 	if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
 		# 检查是否需要更新负载均衡路由
 		if { { [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ "$(ip route show default | grep weight)" = "" ]; } || { [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ "$(ip -6 route show default | grep weight)" = "" ]; }; } && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
-			omrvpn_intf=$(uci -q get "network.omrvpn.device" || echo "tun0")
-			[ -z "$omrvpn_intf" ] && omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun0")
+			omrvpn_intf="$(_omrvpn_device)"
 			# 处理 IPv4 负载均衡路由
 			if [ -n "$omrvpn_intf" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ "$(ip route show default metric 0 | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
 				routesbalancing=""

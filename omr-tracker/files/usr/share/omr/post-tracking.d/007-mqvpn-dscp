@@ -1,0 +1,92 @@
+#!/bin/sh
+
+# 把本WAN上传方向的DSCP绑定(network里匿名的 config dscp_pin 段, upload_interface字段,
+# 见 mptcp-dscp-manager 的 041-multipath-dscp 钩子和 luci-app-mptcp 的DSCP/权重路由页)
+# 折算成64位掩码, 通过控制API的 set_path_dscp_mask 下发给mqvpn, 与006下发权重的方式一致。
+#
+# mqvpn没有MPTCP那种独立的 dscp_remote_id 映射: dscp_pin 的 download_interface
+# 在这里完全不适用, 只处理 upload_interface。mqvpn控制API的 sync_path_labels 打开后
+# 会把本path的掩码通告给服务端, 服务端据此做下行调度 —— 也就是说mqvpn的下行永远
+# *跟随*某个类别在上行所走的WAN, 不能像MPTCP的bpf_dscp调度器那样把下行钉到另一条WAN。
+
+if [ "$(uci -q get mqvpn.settings.enable)" != "1" ]; then
+	exit 0
+fi
+
+if [ -z "$OMR_TRACKER_DEVICE" ] || [ -z "$OMR_TRACKER_INTERFACE" ]; then
+	exit 0
+fi
+
+# 不管理VPN接口自身
+if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ]; then
+	exit 0
+fi
+
+if [ "$(pgrep -f mqvpn)" = "" ]; then
+	exit 0
+fi
+
+multipath_config=$(uci -q get "openmptcprouter.$OMR_TRACKER_INTERFACE.multipath")
+[ -z "$multipath_config" ] && multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath" || echo "off")
+
+if [ "$multipath_config" != "on" ] && [ "$multipath_config" != "master" ] && [ "$multipath_config" != "backup" ]; then
+	exit 0
+fi
+
+# 与 mptcp-scheduler-dscp.sh 的 dscp_to_val 保持一致的映射, 刻意在此重复实现,
+# 避免依赖 mptcp-dscp-manager 是否安装(mqvpn的DSCP掩码与MPTCP的bpf_dscp调度器无关)
+_dscp_to_val() {
+	case "$1" in
+		cs0) echo 0 ;;
+		cs1) echo 8 ;;
+		cs2) echo 16 ;;
+		cs3) echo 24 ;;
+		cs4) echo 32 ;;
+		cs5) echo 40 ;;
+		cs6) echo 48 ;;
+		cs7) echo 56 ;;
+		le) echo 1 ;;
+		af11) echo 10 ;;
+		af12) echo 12 ;;
+		af13) echo 14 ;;
+		af21) echo 18 ;;
+		af22) echo 20 ;;
+		af23) echo 22 ;;
+		af31) echo 26 ;;
+		af32) echo 28 ;;
+		af33) echo 30 ;;
+		af41) echo 34 ;;
+		af42) echo 36 ;;
+		af43) echo 38 ;;
+		ef) echo 46 ;;
+		''|*[!0-9]*) echo "" ;;
+		*) [ "$1" -ge 0 ] 2>/dev/null && [ "$1" -le 63 ] 2>/dev/null && echo "$1" || echo "" ;;
+	esac
+}
+
+# 64个DSCP码点的位掩码(第N位置位 = 本path在上行承载N类流量):
+# 遍历network里所有 dscp_pin 段, 取 upload_interface 指向本接口的行
+mask=0
+for section in $(uci -q show network 2>/dev/null | sed -n "s/^network\.\([^.=]*\)=dscp_pin\$/\1/p"); do
+	[ "$(uci -q get network.${section}.upload_interface)" = "$OMR_TRACKER_INTERFACE" ] || continue
+	dscp="$(uci -q get network.${section}.dscp)"
+	val="$(_dscp_to_val "$dscp")"
+	[ -z "$val" ] && continue
+	mask=$((mask | (1 << val)))
+done
+
+# network.<iface>.mqvpn_dscp_mask 缓存上次已下发的掩码, 理由同006的weight缓存
+current_mask="$(uci -q get "network.$OMR_TRACKER_INTERFACE.mqvpn_dscp_mask")"
+[ -z "$current_mask" ] && current_mask=0
+
+if [ "$mask" != "$current_mask" ]; then
+	_log "mqvpn: set DSCP mask $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $mask"
+	if mqvpn-path dscp "$OMR_TRACKER_DEVICE" "$mask" >/dev/null 2>&1; then
+		uci -q set "network.$OMR_TRACKER_INTERFACE.mqvpn_dscp_mask=$mask"
+		[ -n "$(uci -q changes network)" ] && uci -q commit network
+	else
+		_log "mqvpn: failed to set DSCP mask $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $mask"
+	fi
+fi
+
+exit 0
