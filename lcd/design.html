@@ -22,6 +22,9 @@
        页面外壳：页眉 / 页签栏 / 内容区 / 底栏 …… 全部 9 屏
        屏幕 01、02 专用：链路状态列表（.sim-*）+ 基站状态卡片（.bs-card）+ 功能页脚（.foot-bar / .foot-btn）
                      屏幕 01、02 用功能页脚替代底栏，其余 7 屏仍为提示底栏
+       弹窗（.modal / .modal-mask）…… 屏幕 01、02，由页脚按钮触发：
+                      「版本信息」→ 版本号 / 构建时间 / commit id / 发布说明
+                      「屏幕亮度」→ .modal.sm 内一个水平滑块 + 百分比读数
        通用控件：
          环形仪表 .gauge-wrap …… 屏幕 03、04~07
          大数值 .kpi …… 屏幕 02、03、08、09，以及 04~07 的速率面板
@@ -449,9 +452,102 @@
     background: var(--panel2);
     color: var(--muted);                 /* 与 pics/button 下按钮素材的文字色一致，不随正文提亮 */
     font-size: 12px;
+    cursor: pointer;                     /* 「版本信息」可点击弹出弹窗 */
   }
   .foot-btn svg { width: 14px; height: 14px; flex: none; }
   .foot-btn.danger { color: var(--red); border-color: rgba(243, 139, 168, .45); }
+
+  /* ---- 弹窗（.modal / .modal-mask） → 屏幕 01、02 ---- */
+  /*      版本信息：点击页脚「版本信息」弹出（宽度 410）
+          屏幕亮度：点击页脚「屏幕亮度」弹出（.modal.sm 宽度 300，内含水平滑块） */
+  .modal-mask {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(17, 17, 27, .68);
+  }
+  .modal-mask.on { display: flex; }
+  .modal {
+    width: 410px;
+    background: var(--panel);
+    border: 1px solid var(--line2);
+    border-radius: 10px;
+    box-shadow: 0 18px 46px rgba(0, 0, 0, .6);
+    overflow: hidden;
+  }
+  .modal-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    background: var(--panel2);
+    border-bottom: 1px solid var(--line);
+  }
+  .modal-head svg { width: 14px; height: 14px; flex: none; color: var(--blue); }
+  .modal-title { font-size: 13px; font-weight: 600; color: var(--txt); letter-spacing: .4px; }
+  .modal-close {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    background: rgba(243, 139, 168, .22);          /* 半透明红底：把「关闭」从常规控件里区分出来 */
+    color: var(--red);
+    cursor: pointer;
+  }
+  .modal-close:hover { background: rgba(243, 139, 168, .38); }
+  .modal-close svg { width: 12px; height: 12px; color: currentColor; }
+  .modal-body { padding: 6px 12px 12px; display: flex; flex-direction: column; }
+  .ver-list { display: flex; flex-direction: column; }
+  .ver-notes { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 5px; }
+  .ver-notes > .k { font-size: 11px; color: var(--muted); }
+  .ver-notes ul { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+  .ver-notes li { position: relative; padding-left: 11px; font-size: 11px; line-height: 15px; color: var(--txt2); }
+  .ver-notes li::before { content: ''; position: absolute; left: 2px; top: 6px; width: 4px; height: 4px; border-radius: 1px; background: var(--blue); }
+
+  /* 屏幕亮度弹窗：一个水平滑块 + 百分比读数 → 屏幕 01、02 */
+  .modal.sm { width: 300px; }
+  .bright-body { display: flex; align-items: center; gap: 10px; padding: 15px 12px 16px; }
+  .slider {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 14px;
+    background: transparent;
+    cursor: pointer;
+  }
+  /* 轨道：已选段（--p 由拖动时的 JS 同步）用蓝色填充，未选段为分隔线色 */
+  .slider::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--blue) 0 var(--p), var(--line) var(--p) 100%);
+  }
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    margin-top: -4px;                       /* (4 - 12) / 2：把滑块压回轨道中线 */
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 0 2px var(--blue), 0 1px 3px rgba(0, 0, 0, .55);
+  }
+  .slider::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line); }
+  .slider::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--blue); }
+  .slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border: 0;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 0 2px var(--blue), 0 1px 3px rgba(0, 0, 0, .55);
+  }
+  .bright-val { flex: none; width: 36px; text-align: right; font-size: 13px; color: var(--txt); }
 
   /* ---- 文本 / 颜色工具类 → 全部 9 屏通用 ---- */
   .mono { font-family: monospace; }
@@ -591,6 +687,19 @@ const BTS5 = {
   ]
 };
 
+/* 版本信息弹窗 → 屏幕 01、02 页脚「版本信息」按钮的弹窗内容 */
+const VERSION = {
+  ver:    'v1.4.2',
+  build:  '2026-09-16 14:32:08',
+  commit: '9f3c1d7',
+  notes: [
+    '新增聚合链路实时速率总览与在线链路计数',
+    '优化小屏文字对比度，提升户外光照下可视性',
+    '修复卫星传输模式下时延统计偏大的问题',
+    '调整基站卡片间距，物理小区 ID 改为等宽字体'
+  ]
+};
+
 /* ============================================================
    二、工具函数
    ============================================================ */
@@ -693,21 +802,70 @@ const ICO_INFO     = ico('<circle cx="12" cy="12" r="9"/><path d="M12 16.5v-5"/>
 const ICO_SUN      = ico('<circle cx="12" cy="12" r="4.2"/>' +
   '<path d="M12 1.8v2.2M12 20v2.2M2.6 12H4.8M19.2 12h2.2M5.6 5.6 7.2 7.2M16.8 16.8l1.6 1.6M5.6 18.4l1.6-1.6M16.8 7.2l1.6-1.6"/>');
 const ICO_POWER    = ico('<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><path d="M12 2.5v9"/>');
+const ICO_CLOSE    = ico('<path d="M6 6l12 12M18 6L6 18"/>');
+
+/* 版本信息弹窗：版本号 / 构建时间 / commit id / 发布说明
+   数据见「一、样例数据 → VERSION」；默认隐藏，由 .foot-btn[data-modal="ver"] 触发 */
+function verModal() {
+  const kv = (k, v, color) =>
+    '<div class="kv"><span class="k">' + k + '</span>' +
+      '<span class="v"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</span></div>';
+  return '<div class="modal-mask" data-modal="ver">' +
+      '<div class="modal">' +
+        '<div class="modal-head">' + ICO_INFO +
+          '<span class="modal-title">版本信息</span>' +
+          '<span class="tag teal">' + VERSION.ver + '</span>' +
+          '<span class="modal-close">' + ICO_CLOSE + '</span>' +
+        '</div>' +
+        '<div class="modal-body">' +
+          '<div class="ver-list">' +
+            kv('版本号',    VERSION.ver, 'var(--blue)') +
+            kv('构建时间',  VERSION.build) +
+            kv('commit id', VERSION.commit, 'var(--mauve)') +
+          '</div>' +
+          '<div class="ver-notes"><span class="k">发布说明</span>' +
+            '<ul>' + VERSION.notes.map(n => '<li>' + n + '</li>').join('') + '</ul>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+/* 屏幕亮度弹窗：一个水平滑块调节，读数实时同步
+   默认值见 BRIGHT；由 .foot-btn[data-modal="bright"] 触发 */
+const BRIGHT = 68;
+
+function brightModal() {
+  return '<div class="modal-mask" data-modal="bright">' +
+      '<div class="modal sm">' +
+        '<div class="modal-head">' + ICO_SUN +
+          '<span class="modal-title">屏幕亮度</span>' +
+          '<span class="modal-close">' + ICO_CLOSE + '</span>' +
+        '</div>' +
+        '<div class="bright-body">' +
+          '<input class="slider" type="range" min="10" max="100" step="1" value="' + BRIGHT +
+            '" style="--p:' + BRIGHT + '%" aria-label="屏幕亮度">' +
+          '<span class="bright-val mono">' + BRIGHT + '%</span>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
 
 /* 底部功能页脚：左「系统设置 / 版本信息」，右「屏幕亮度 / 重启设备」 → 屏幕 01 使用 */
 function footBar() {
-  const btn = (label, icon, danger) =>
-    '<span class="foot-btn' + (danger ? ' danger' : '') + '">' + icon + '<span>' + label + '</span></span>';
+  const btn = (label, icon, danger, modal) =>
+    '<span class="foot-btn' + (danger ? ' danger' : '') + '"' +
+      (modal ? ' data-modal="' + modal + '"' : '') + '>' + icon + '<span>' + label + '</span></span>';
   return '<div class="foot-bar">' +
       '<div class="foot-group">' +
         btn('系统设置', ICO_SETTINGS) +
-        btn('版本信息', ICO_INFO) +
+        btn('版本信息', ICO_INFO, false, 'ver') +
       '</div>' +
       '<div class="foot-group">' +
-        btn('屏幕亮度', ICO_SUN) +
+        btn('屏幕亮度', ICO_SUN, false, 'bright') +
         btn('重启设备', ICO_POWER, true) +
       '</div>' +
-    '</div>';
+    '</div>' + verModal() + brightModal();
 }
 
 /* 屏幕外壳：页眉 + 页签栏 + 内容区 + 底部（传入 footer 用功能页脚，否则用提示底栏） */
@@ -1044,7 +1202,35 @@ document.getElementById('tabs').addEventListener('click', e => {
 });
 
 /* ============================================================
-   六、缩放：默认按视口宽度自适应，单列下尽量接近 1:1
+   六、弹窗交互：点击页脚「版本信息 / 屏幕亮度」弹出，点遮罩 / 关闭按钮 / Esc 关闭
+   ============================================================ */
+document.getElementById('grid').addEventListener('click', e => {
+  const btn = e.target.closest('.foot-btn[data-modal]');
+  if (btn) {                                          /* 打开弹窗（再次点击则收起） */
+    const mask = btn.closest('.screen')
+      .querySelector('.modal-mask[data-modal="' + btn.dataset.modal + '"]');
+    if (mask) mask.classList.toggle('on');
+    return;
+  }
+  const mask = e.target.closest('.modal-mask');
+  if (!mask) return;
+  if (e.target.closest('.modal-close') || e.target === mask) mask.classList.remove('on');
+});
+
+/* 亮度滑块：拖动时同步已选段填充（--p）与百分比读数 */
+document.getElementById('grid').addEventListener('input', e => {
+  if (!e.target.classList.contains('slider')) return;
+  const s = e.target;
+  s.style.setProperty('--p', s.value + '%');
+  s.parentElement.querySelector('.bright-val').textContent = s.value + '%';
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('.modal-mask.on').forEach(m => m.classList.remove('on'));
+});
+
+/* ============================================================
+   七、缩放：默认按视口宽度自适应，单列下尽量接近 1:1
    ============================================================ */
 const STAGE_PAD = 44;   /* 舞台左右内边距 */
 let manual = false, scale = 1;
@@ -1064,7 +1250,7 @@ document.getElementById('reset').onclick   = () => { manual = false; scale = fit
 window.addEventListener('resize', () => { if (!manual) { scale = fitScale(); applyZoom(); } });
 
 /* ============================================================
-   七、尺寸标注（悬停查看真实设计像素）
+   八、尺寸标注（悬停查看真实设计像素）
    ============================================================ */
 const RULER_SEL = [
   '.bar-top', '.mode-btn', '.bar-nav', '.tab', '.body', '.row', '.col', '.panel', '.panel-title',
@@ -1074,6 +1260,8 @@ const RULER_SEL = [
   '.sim-dbm', '.sim-rate', '.sim-ping',
   '.bs-card', '.bs-head', '.bs-name', '.bs-meta', '.bs-id', '.bs-state',
   '.foot-bar', '.foot-group', '.foot-btn',
+  '.modal-mask', '.modal', '.modal-head', '.modal-title', '.modal-close', '.modal-body', '.ver-notes',
+  '.bright-body', '.slider', '.bright-val',
   '.big-id', '.field', '.half', '.metric', '.big-hint', '.cell-hint', '.empty',
   '.agg-bar', '.lock', '.tag'
 ].join(', ');
@@ -1092,7 +1280,10 @@ const RULER_NAMES = {
   'sim-state': '在线状态', 'sim-sig': '信号强度', 'sim-dbm': '信号值', 'sim-rate': '实时带宽',
   'sim-ping': '时延', 'bs-card': '基站卡', 'bs-head': '基站卡头', 'bs-name': '基站名',
   'bs-id': '物理小区 ID', 'bs-num': '连接用户数', 'bs-meta': '基站指标行', 'bs-kv': '基站指标', 'bs-state': '基站状态',
-  'foot-bar': '功能页脚', 'foot-group': '页脚按钮组', 'foot-btn': '页脚按钮'
+  'foot-bar': '功能页脚', 'foot-group': '页脚按钮组', 'foot-btn': '页脚按钮',
+  'modal-mask': '弹窗遮罩', 'modal': '弹窗', 'modal-head': '弹窗标题栏',
+  'modal-title': '弹窗标题', 'modal-close': '关闭按钮', 'modal-body': '弹窗内容', 'ver-notes': '发布说明',
+  'bright-body': '亮度调节区', 'slider': '亮度滑块', 'bright-val': '亮度读数'
 };
 
 const tip = document.getElementById('rulerTip');
