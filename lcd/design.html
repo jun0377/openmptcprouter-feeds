@@ -44,9 +44,9 @@
     --panel2: #1e1e2e;
     --line:   #313244;
     --line2:  #45475a;
-    --txt:    #cdd6f4;
-    --txt2:   #a6adc8;
-    --muted:  #6c7086;
+    --txt:    #ffffff;
+    --txt2:   #cdd6f4;
+    --muted:  #a6adc8;               /* 三级文字亮度整体上提一档，提升小屏可视性 */
 
     --blue:   #89b4fa;
     --green:  #a6e3a1;
@@ -447,7 +447,7 @@
     border: 1px solid var(--line2);
     border-radius: 5px;
     background: var(--panel2);
-    color: var(--txt2);
+    color: var(--muted);                 /* 与 pics/button 下按钮素材的文字色一致，不随正文提亮 */
     font-size: 12px;
   }
   .foot-btn svg { width: 14px; height: 14px; flex: none; }
