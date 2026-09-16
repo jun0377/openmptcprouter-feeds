@@ -6,7 +6,7 @@
 <title>中油测井显控看板 · 854x480 设计稿</title>
 <style>
   /* ============================================================
-     源码导航 · 屏幕序号速查（共 9 屏，单列纵向展示）
+     源码导航 · 屏幕序号速查（共 14 屏 = 9 屏设计稿 + 5 屏预留空白，单列纵向展示）
        屏幕 01  工程模式 · 直连模式（首页默认）
        屏幕 02  工程模式 · 聚合模式
        屏幕 03  工程模式 · 卫星传输
@@ -16,6 +16,7 @@
        屏幕 07  运维模式 · 中国联通（离线）
        屏幕 08  运维模式 · 4G基站
        屏幕 09  运维模式 · 5G基站
+       屏幕 10~14  预留空白区域（无标题、无内容，由 build() 生成）
 
      CSS 分段与屏幕的对应（下面每段注释末尾也标了「→ 屏幕 xx」）：
        页面外壳：页眉 / 页签栏 / 内容区 / 底栏 …… 全部 9 屏
@@ -519,12 +520,14 @@
        屏幕 07  renderOperator(OPS[3])        传入 OPS[3]（中国联通）时自动变为离线态
        屏幕 08  renderBase(BTS4)          …… 共用模板 renderBase()，屏幕 08、09
        屏幕 09  renderBase(BTS5)              数据源见「一、样例数据 → BTS4 / BTS5」
+       屏幕 10~14  预留空白区域            …… 「五、页面清单」的 PLACEHOLDERS，空画面无内容
 
      修改某一屏时怎么找：
        · 想改某一屏的排版/字段 → 直接跳到「四、九个页面」里对应的 renderXxx()
        · 想改某一屏显示的数据   → 跳到「一、样例数据」改 OPS / SAT / BTS4 / BTS5
        · 想改某一屏的样式       → 见 <style> 顶部的 CSS 源码导航（每段都标了 → 屏幕 xx）
        · 想调整屏幕顺序/标题     → 「五、页面清单」的 SCREENS 数组，第 N 项就是第 N 屏
+       · 想增减预留空白页       → 「五、页面清单」的 PLACEHOLDERS
    ============================================================ */
 /* ============================================================
    一、样例数据（设计稿用）
@@ -962,7 +965,8 @@ function renderBase(b) {
 
 /* ============================================================
    五、页面清单（9 屏）
-   数组第 N 项 = 页面第 N 屏，渲染顺序即界面上的纵向排列顺序
+   数组第 N 项 = 页面第 N 屏，渲染顺序即界面上的纵向排列顺序。
+   末尾再追加 PLACEHOLDERS 个空白页面（屏幕 10~14）作为预留区域。
    ============================================================ */
 const SCREENS = [
   /* 屏幕 01 */ { g: '工程模式', n: '直连模式（首页默认）', h: renderDirect },
@@ -976,18 +980,33 @@ const SCREENS = [
   /* 屏幕 09 */ { g: '运维模式', n: '5G基站',               h: () => renderBase(BTS5) }
 ];
 
+/* 预留空白区域数量（追加在 09 屏之后，只有空白画面，不含任何内容） */
+const PLACEHOLDERS = 5;
+
+/* 画布上的单屏外壳：头部信息 + 854×480 视口 */
+const frameHtml = (i, o) =>
+  '<section class="frame" id="frame-' + i + '">' +
+    '<header class="frame-head">' +
+      '<span class="idx">' + String(i + 1).padStart(2, '0') + '</span>' +
+      '<span class="fgroup' + (o.gcls || '') + '">' + o.group + '</span>' +
+      '<span class="fname">' + o.name + '</span>' +
+      '<span class="fsize">854×480</span>' +
+    '</header>' +
+    '<div class="viewport"><div class="screen">' + o.body + '</div></div>' +
+  '</section>';
+
 /* 渲染画布 + 页签（画布上的 01~09 编号即页面序号，与 SCREENS 下标 +1 一致） */
 function build() {
-  document.getElementById('grid').innerHTML = SCREENS.map((s, i) =>
-    '<section class="frame" id="frame-' + i + '">' +
-      '<header class="frame-head">' +
-        '<span class="idx">' + String(i + 1).padStart(2, '0') + '</span>' +
-        '<span class="fgroup' + (s.g === '运维模式' ? ' ops' : '') + '">' + s.g + '</span>' +
-        '<span class="fname">' + s.n + '</span>' +
-        '<span class="fsize">854×480</span>' +
-      '</header>' +
-      '<div class="viewport"><div class="screen">' + s.h() + '</div></div>' +
-    '</section>').join('');
+  const frames = SCREENS.map((s, i) => frameHtml(i, {
+    group: s.g, gcls: s.g === '运维模式' ? ' ops' : '', name: s.n, body: s.h()
+  }));
+  /* 末尾追加预留空白区域：无标题、无内容的空画面 */
+  for (let k = 0; k < PLACEHOLDERS; k++) {
+    frames.push('<section class="frame" id="frame-' + (SCREENS.length + k) + '">' +
+        '<div class="viewport"><div class="screen"></div></div>' +
+      '</section>');
+  }
+  document.getElementById('grid').innerHTML = frames.join('');
 
   document.getElementById('tabs').innerHTML = SCREENS.map((s, i) =>
     '<button class="ttab' + (s.g === '运维模式' ? ' ops' : '') + '" data-go="' + i + '">' +
