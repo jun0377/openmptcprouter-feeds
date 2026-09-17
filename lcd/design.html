@@ -20,7 +20,7 @@
 
      CSS 分段与屏幕的对应（下面每段注释末尾也标了「→ 屏幕 xx」）：
        页面外壳：页眉 / 页签栏 / 内容区 / 底栏 …… 全部 9 屏
-       屏幕 01、02 专用：链路状态列表（.sim-*）+ 基站状态卡片（.bs-card）+ 功能页脚（.foot-bar / .foot-btn）
+       屏幕 01、02 专用：链路状态列表（.sim-*）+ 基站状态卡片（.bs-card，底色随在线状态淡绿 / 淡红）+ 功能页脚（.foot-bar / .foot-btn）
                      屏幕 01、02 用功能页脚替代底栏，其余 7 屏仍为提示底栏
        弹窗（.modal / .modal-mask）…… 屏幕 01、02，由页脚按钮触发：
                       「版本信息」→ 版本号 / 构建时间 / commit id / 发布说明
@@ -33,7 +33,7 @@
          信号格 .bars …… 屏幕 01、02、04~07
          条形仪表 .meter …… 屏幕 04~09
          分段选择器 .seg …… 屏幕 03、04~09
-         在线状态点 .dot / .bs-state、.sim-state …… 屏幕 01、02
+         在线状态点 .dot / .bs-state、.sim-state（在线 / 拨号中 / 离线 / 未插卡 / 已禁用）…… 屏幕 01、02
        速率面板（.row-panel / .half）…… 屏幕 02、04~07
        聚合链路状态条（.agg-bar，五列：首列连接状态 + 4 个 KPI）…… 屏幕 02
        指标 + 邻区信息表（.metric / .thead / .trow / .lock / .empty）…… 屏幕 04~07
@@ -269,7 +269,7 @@
   .big-hint { font-size: 13px; font-weight: 600; color: var(--teal); }
 
   /* ---- 信号格 → 屏幕 01、02、04~07 ---- */
-  .bars { display: flex; align-items: flex-end; gap: 3px; height: 22px; }
+  .bars { display: flex; align-items: flex-end; gap: 2px; height: 22px; position: relative; }
   .bars i { display: block; width: 5px; border-radius: 1px; background: var(--line); }
   .bars i:nth-child(1) { height: 6px; }
   .bars i:nth-child(2) { height: 9px; }
@@ -279,6 +279,8 @@
   .bars i.on { background: var(--green); }
   .bars.warn i.on { background: var(--yellow); }
   .bars.bad  i.on { background: var(--red); }
+  /* 无信号（0 格）：灰格表示强度归零，左上角再叠一个红色 ✕ 表示链路不可用 */
+  .bars .bars-x { position: absolute; left: -2px; top: 6px; width: 9px; height: 9px; color: var(--red); }
 
   /* ---- 大数值 → 屏幕 02、03、08、09，以及 04~07 的速率面板 ---- */
   .kpi { display: flex; align-items: baseline; gap: 6px; }
@@ -369,29 +371,60 @@
   /* ---- 链路状态列表（5 条 SIM 链路） → 屏幕 01、02 ---- */
   .sim-head, .sim-row {
     display: grid;
-    grid-template-columns: 56px 66px 58px 100px 1fr 50px;
+    grid-template-columns: 56px 72px 58px 100px 1fr 50px;
     gap: 8px;
     align-items: center;
   }
   .sim-head { font-size: 11px; color: var(--txt2); padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  /* 表头与值行同用一套栅格，故纵向天然对齐；「信号强度」「实时带宽」两列的内容
+     都是由多个元素拼成的组合（信号格 + 信号值、↑ + ↓），故标题居中于该列，
+     下方内容整体居中，标题正落在组合内容的正中 */
+  .sim-head > span:nth-child(4),
+  .sim-head > span:nth-child(5) { text-align: center; }
   .sim-head > span:last-child { text-align: right; }
   .sim-list { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .sim-row { flex: 1; font-size: 12px; border-bottom: 1px solid rgba(49, 50, 68, .55); }
   .sim-row:last-child { border-bottom: none; }
   .sim-name { font-family: monospace; font-size: 13px; font-weight: 700; color: var(--txt); }
-  .sim-op { color: var(--txt2); }
+  /* 运营商列 = 官方 logo + 运营商名称
+     图形一律放进 14×14 的方框内等比缩放（contain）：中国移动 / 中国电信的图形接近正方形、
+     中国联通的「中国结」本身更扁宽（约 4:3），若统一按高 14px 放会把联通的图标撑得比另两家
+     大一圈、名称也被推后 5px。改用统一的方框后，三家图形的视觉份量与名称的起始位置都对齐了 */
+  .sim-op { display: flex; align-items: center; gap: 5px; color: var(--txt2); }
+  .sim-op .op-logo { display: block; flex: none; width: 14px; height: 14px; object-fit: contain; }
+  /* 在线状态五种：在线（绿）/ 拨号中（黄，链路正在建立）/ 离线（红）/ 未插卡（灰，卡槽为空）/
+     已禁用（橙，链路被停用，非故障，不加呼吸辉光） */
   .sim-state { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
-  .sim-state .dot { width: 6px; height: 6px; background: var(--line2); box-shadow: none; }
+  .sim-state .dot { width: 6px; height: 6px; background: var(--red); box-shadow: none; }   /* 离线：红点 */
   .sim-state.on { color: var(--green); }
   .sim-state.on .dot { background: var(--green); box-shadow: 0 0 6px rgba(166, 227, 161, .85); }
-  .sim-sig { display: flex; align-items: center; gap: 7px; }
+  .sim-state.dial { color: var(--yellow); }
+  .sim-state.dial .dot { background: var(--yellow); box-shadow: 0 0 6px rgba(249, 226, 175, .85); }
+  .sim-state.nosim .dot { background: var(--line2); }
+  .sim-state.disabled { color: var(--peach); }
+  .sim-state.disabled .dot { background: var(--peach); }
+  .sim-sig { display: flex; justify-content: center; align-items: center; gap: 7px; }
   .sim-dbm { font-family: monospace; font-size: 11px; color: var(--txt2); }
-  .sim-rate { display: flex; gap: 10px; font-family: monospace; font-size: 12px; font-weight: 600; }
+  .sim-rate { display: flex; justify-content: center; gap: 10px; font-family: monospace; font-size: 12px; font-weight: 600; }
   .sim-rate .up   { color: var(--blue); }
   .sim-rate .down { color: var(--yellow); }
   .sim-rate .idle { color: var(--line2); }
   .sim-ping { font-family: monospace; font-size: 12px; color: var(--mauve); text-align: right; }
   .sim-ping.idle { color: var(--line2); }
+
+  /* 屏幕 02 专属：数值位宽固定 —— 「实时带宽 / 时延」的单位已提到表头（/Mbps、/ms），
+     数值列只留数字，小数点与个位在 5 行之间落在同一条竖线上，不再随位数左右跳动。
+     位宽固定的代价是带宽列比屏幕 01 宽，因此把横向空间重新分配：
+     链路 / 运营商 / 在线状态 / 信号强度四列放宽，带宽列收窄到刚好容下 ↑/↓ 两个数值 */
+  .sim-agg .sim-head, .sim-agg .sim-row {
+    grid-template-columns: 48px 72px 60px 94px 1fr 50px;
+    gap: 8px;
+  }
+  /* 前导空格 + 右对齐，位宽不足处留白；单位已一律提到表头，故右侧不再留后缀间隙 */
+  .fix-fw { display: inline-block; font-style: normal; text-align: right; }
+  .fix-fw.f3 { min-width: 3ch; }
+  .fix-fw.f4 { min-width: 4ch; }
+  .fix-fw.f6 { min-width: 6ch; }
 
   /* ---- 基站状态卡片（上下两张） → 屏幕 01、02 ---- */
   .bs-card {
@@ -406,6 +439,9 @@
     justify-content: center;
     gap: 10px;
   }
+  /* 卡片底色随基站在线状态整体切换：在线淡绿、离线淡红，边框同步偏色 */
+  .bs-card.on  { background: rgba(166, 227, 161, .10); border-color: rgba(166, 227, 161, .40); }
+  .bs-card.off { background: rgba(243, 139, 168, .10); border-color: rgba(243, 139, 168, .40); }
   .bs-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
   .bs-name { font-size: 13px; font-weight: 700; color: var(--txt); }
   .bs-meta { display: flex; align-items: baseline; gap: 16px; }
@@ -675,19 +711,43 @@ const OPS = [
     neighbors: [] }
 ];
 
-/* 工程模式：5 条 SIM 链路 → 屏幕 01 / 02「链路状态」列表专用 */
+/* 工程模式：5 条 SIM 链路 → 屏幕 01 / 02「链路状态」列表专用
+   state 即「在线状态」列的文案，共五种：在线 / 拨号中 / 离线 / 未插卡 / 已禁用
+   设计稿让 5 行各占一种状态，便于一次性看全配色 */
 const SIMS = [
-  { name: 'SIM1', op: '中国移动', online: true,  signal: -62, up: 5.2,  down: 12.1, ping: 23 },
-  { name: 'SIM2', op: '中国联通', online: true,  signal: -74, up: 3.1,  down: 7.8,  ping: 38 },
-  { name: 'SIM3', op: '中国电信', online: true,  signal: -85, up: 1.1,  down: 3.2,  ping: 48 },
-  { name: 'SIM4', op: '中国移动', online: false, signal: -96, up: null, down: null, ping: null },
-  { name: 'SIM5', op: '中国联通', online: true,  signal: -71, up: 2.0,  down: 6.4,  ping: 31 }
+  { name: 'SIM1', op: '中国移动', state: '在线',   signal: -62,  up: 5.2,  down: 12.1, ping: 23 },
+  { name: 'SIM2', op: '中国联通', state: '拨号中', signal: -74,  up: null, down: null, ping: null },
+  { name: 'SIM3', op: '中国电信', state: '离线',   signal: -85,  up: null, down: null, ping: null },
+  { name: 'SIM4', op: '--',       state: '未插卡', signal: null, up: null, down: null, ping: null },
+  { name: 'SIM5', op: '中国联通', state: '已禁用', signal: null, up: null, down: null, ping: null }
 ];
+
+/* 运营商官方 logo → 屏幕 01 / 02「链路状态」列表的「运营商」列专用
+   图形取自维基百科上的官方矢量 logo，按显示尺寸（高 14px）的 2 倍压成 PNG 内联，
+   使设计稿保持单文件、不依赖外部图片；与 pics/misc/运营商-*.png 用的是同一份图形 */
+const OP_LOGO = {
+  '中国移动': 'data:image/png;base64,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',
+  '中国联通': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACYAAAAcCAYAAAAN3M1lAAAIgUlEQVR42qWYe4xdVRXGf3uffe69M3Nnph3aTqet2Mr0nDvTKhQIVbFOG4ggphVJCk1NBKMkBtAYHoZHQSMvbSLE1GgANYHQIJSiUoG2CQ4FIaQBrNLUzlCgr3m08+h05t4797H3Xv5x7y1jlKGx56+dvdc535e99/rWt47iNB4BrcB/SJRpQN0JdFloNqhDgjy5i56HrgYH8BZt9Qtpvs0jV5dhQQI1omDnSUoPnMMHh2vf+iRMdbqk+li8IkWwNUTNzuERwKBoQJFHdpzAfj1FoqEOv60e/cUsHoeggEY0Bfxhh1/Tynv/OB1y6hNIKYAjdM4MsXvrCdqyeJ9Ga4uggRy+PBsTDmO7Faq+hWD5CLacJggtgkGRxdlmAjOO6xEmzp/HwGQVXD4OW09H7BW6AgVicGubCNpyeBtCIYe7IQcr88j2mQThcaxtIFiVQi0fwdomgjCHe6yA/1IWd38CrU/iyk0EsaL58gqhtdNim+kWV57aOVnmQNJoM4F7cj69v6ku7Rogfq6J4BtZXBmgkSCcwD0wj967qjGv9xN/uQ69woMIfhnwHBxX/zexKeddVEAZQaEWAPTSnqwjPDvALyojUrsWFhGN/uz7LGo9QcuooZzQFOaUQUIUIPnTwdTTL8+R6l37qwaVx5fS6Ev7iTZGHCgG+JdmYM4r4G2awNQTmDy+3IpZnSLx62287eZReqqeILaItYjyBN0AW9glp0VMIBDWBoASUN10mS1sQUDPo+2FMdwrZ2ESE/hiC+a2AaL7PP5749jSHEyYw92Twz02n0RiGHtQwYM3kXm6Cb16AleYjQnzyDOfYv+bUsXtpssIaAFdG/9HVk6XvkKXUeyygyxtVZRfShMsG8dNthDUjWJvt8i7BvWFNnrvBhgl/sU4bK1D3TgDvX4YO9mCqTuJe9XgVm/iQHYlXXoVu+x08qRqgwHiVQZ9nUM6BO8MencO+8hCDuzbS2diKftKO2htOJ+ZOxrQF5/AFmZhUiPYB+bRe1cv7cmIA0WAY8QvNhN8dRg7ORtTN4Z7qZWerwFS+1Y/8YUGvm3hcxqxGrV7AvW7c9jfe2rnjhJvGKdDJuiQYTIyQkZydMoo8UQf8fpKTMelWTr+vJ9o0RDxC5N0Sh/xZIFO6SfeVCHUmT5G/GplLcoX6ZTjZDb3sPi8CTqePUL7gsq3MjePkLE5OmSUjIySkTydMkbHyT6iKwHUANE1aYI/TOC9At1QJTuO9wmUdggCDwrynTbCOaO4v0/ir0uhfp4muHwUV2whSI5gN2mIWjCXDVd3cxy/tYDemMZvnknQPoDd7ZGXmwjuyFbx6qt4WbxPobRF8h59keojejeBXiKIOGTQwz1Ao0H9TKOSJUSa0SqLxyN2DqEZpLzuDXqfXUm8o5HgkqqoGouQx9vZGDOG39bK/jX9xHe1Ed7XT6mURCeSKE7iXCNBkMf1O9TdGmkOUPc6JJUmCHL4x42CjiIiTWg9gb1pPu/9sXpPdiv4SwDN4zirUDqJln6K3zybA09302WOM3SFxz2VJrgqiysBKk0QjmI3v8a51woNoeLt+48SmXr0jwt4WwRJoU0B/y+Hu2wB7x8B6CdqaiL4SRYvAsu1VLNRAYJK1LKjhKQApUCkIiFVfVFhpSrMkcOUVDXdqcVU4pSezXEF6eprKju1LFcmRXuSyY/kQU3RVFGqn/idJOo8C+KRUQ/3KWSGQW0AZSxCI5o8gsOX2wjDftz6R9m/5QainU2YVSNY20hgBMji7CyMmcC9+Ct6Vl9PfMt8zMY+yuUkOkxVjzJdOcpRQf0U/MwQ/SMHYQPa5HCb1QDx6iTq+RLgqyQEmMDZFNoUkSLIHcAP2wjPHsG9PoH/bhr1yzTBV0ZxhVkEqRHcb4HGswiuGalq1zjuTwX0w2nk8RkECwcp71Hol9OoWybwHtCNHyWbS6ACjxQFuUi30bMtj78hAbYZTRnBIbRgDDAoqDXz6H3Yo9fl8E/1Ydc1nCJlJ2cRpE7gnphHz/Vt9Kwfwz7fgqkbwU42E1yZxN84hluXw28rwVVt7L91HHtnCq2b0BQRiggzCAIDhTJy7Vx6/0lNzD6kfdkQ8cN9RN2DRNuH6dhwiHgewF46EwBP0NowRPxGvqpTJZac0jDhgvCZSkljgGhzqRpToFOGyGzvqhoG4YIQ4BCLVwwRPz5I/PYA0VtDZB45wuJzAZ6B4FQZ+Hiz2GUqxDvnDhHvyVUENV+iUwaI7v2QeNUgmXtq8UNk7v+AxcsHiTeVWCJ9RPk8nXKM+NVRPtNcq8PTOeb/mvhfRbU27iPqrqp9oUinDBA/dIjFK4bJjNvKzm3oJ9ooLJURMn2HiC8cIH60WK0QJTrlKNHWGtYU01DFXxvIJ7qdKcHVkrUmS4f0ERXH6ZBBok0AfcR7HEvkKFFpjA45QYccJSoKS+Uo0U6AQaLfj1fmS2NkpI/o4pqbOQM/VnOZcolUhDGRxb82l94fCO3JElw5jH2zDm3yuHIeZ+vR4RB2R4j5Vi/tyVZ6r8/h3kqhTYAShaoa4y51BsROeaNkrSsS5BggigPFRfQcFDhoUDUBFoNSFnpb2TcYcaCowDkYDaoxChKng2mmb0ZOqfKeANQYzhrUmn4yNyvkHUFubiRYPVoR2NAjjOPsDMz3+4laLPoxg18Zoi7JVTslj7wz1R2fUfvWR6ZF4/c2EMzN4l0aHdR6xo/aN/cySMNZmM8PV9s3N6V9m4ExY7h9JQoXLORQ8Yzat+qLagH7RwTWWmSwCR1M4ikilIGZBOE4fvsJgissySuy+L/NxIRFhBLCJJ5mAjOJP+hg3SIOFWo1+Iw68al29zCd7XW420GtKiEzAzgcwJPd9Dxc+0XQzadTS0jdKnCNg/khjCjYOYp7MOLA0dP9RfBvPtoiL1Jk6k8AAAAASUVORK5CYII=',
+  '中国电信': 'data:image/png;base64,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'
+};
+
+/* 链路在线状态的展示规则：
+   cls  = 状态点与文字的配色类名
+   sig  = 是否已有信号读数（未插卡无卡可测、已禁用已停用，信号格与信号值一并置空）
+   data = 是否已有速率与时延读数（只有「在线」链路测得到） */
+const SIM_STATE = {
+  '在线':   { cls: 'on',       sig: true,  data: true  },
+  '拨号中': { cls: 'dial',     sig: true,  data: false },
+  '离线':   { cls: 'off',      sig: true,  data: false },
+  '未插卡': { cls: 'nosim',    sig: false, data: false },
+  '已禁用': { cls: 'disabled', sig: false, data: false }
+};
 
 /* 工程模式：卫星链路 → 屏幕 03 */
 const SAT = { cn0: 42, up: 1.2, down: 4.5, ping: 620, jitter: 35 };
 
-/* 基站状态：BTS4 → 屏幕 08（兼作屏幕 01 的 4G 基站卡）；BTS5 → 屏幕 09（兼作屏幕 01 的 5G 基站卡） */
+/* 基站状态：BTS4 → 屏幕 08（兼作屏幕 01 / 02 的 4G 基站卡）；BTS5 → 屏幕 09（兼作 5G 基站卡）
+   online 决定卡片底色与状态文案（在线淡绿 / 离线淡红），设计稿按「4G 在线、5G 离线」举例 */
 const BTS4 = {
   label: '4G基站', idName: '4G基站标识', id: '4G-BTS-0231', status: '激活', online: true, ue: 128, ueMax: 256,
   cells: [
@@ -700,7 +760,7 @@ const BTS4 = {
   ]
 };
 const BTS5 = {
-  label: '5G基站', idName: '5G基站标识', id: '5G-BTS-0788', status: '激活', online: true, ue: 96, ueMax: 256,
+  label: '5G基站', idName: '5G基站标识', id: '5G-BTS-0788', status: '激活', online: false, ue: 96, ueMax: 256,
   cells: [
     ['物理小区识别码', '788',   ''],
     ['NR频点',        '627264', 'ARFCN'],
@@ -737,10 +797,12 @@ const signalBars = d => d >= -60 ? 5 : d >= -70 ? 4 : d >= -80 ? 3 : d >= -90 ? 
 const sigColor = d => d >= -70 ? 'var(--green)' : d >= -85 ? 'var(--yellow)' : 'var(--red)';
 const sigTone  = d => d >= -70 ? '' : d >= -85 ? 'warn' : 'bad';
 
-/* 信号格 → 屏幕 01、02、04~07 */
+/* 信号格 → 屏幕 01、02、04~07；0 格（无信号）时右上角叠一个红色 ✕ */
 function barsHtml(n, tone) {
   let h = '<span class="bars ' + (tone || '') + '">';
   for (let i = 1; i <= 5; i++) h += '<i class="' + (i <= n ? 'on' : '') + '"></i>';
+  if (!n) h += '<svg class="bars-x" viewBox="0 0 10 10" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.8" stroke-linecap="round"><path d="M1.7 1.7 8.3 8.3M8.3 1.7 1.7 8.3"/></svg>';
   return h + '</span>';
 }
 
@@ -936,11 +998,12 @@ function ratePanel(up, down, seed) {
     '</section>';
 }
 
-/* 基站状态卡片（4G / 5G 各一张，上下排列）→ 屏幕 01 右侧使用
-   只显示两项：物理小区 ID（cells[0]）与当前连接的用户个数 */
+/* 基站状态卡片（4G / 5G 各一张，上下排列）→ 屏幕 01、02 右侧使用
+   只显示两项：物理小区 ID（cells[0]）与当前连接的用户个数；
+   整卡底色随在线状态切换：在线淡绿（.on）/ 离线淡红（.off） */
 function btsCard(b) {
   const pci = b.cells[0][1], on = b.online;
-  return '<div class="bs-card">' +
+  return '<div class="bs-card ' + (on ? 'on' : 'off') + '">' +
       '<div class="bs-head"><span class="bs-name">' + b.label + '</span>' +
         '<span class="bs-state ' + (on ? 'on' : 'off') + '">' +
           '<i class="dot' + (on ? '' : ' bad') + '"></i>' + (on ? '在线' : '离线') +
@@ -952,27 +1015,36 @@ function btsCard(b) {
     '</div>';
 }
 
-/* 链路状态面板（5 条 SIM 链路）→ 屏幕 01、02 左侧共用 */
-function simPanel() {
-  const rows = SIMS.map(s =>
-    '<div class="sim-row">' +
+/* 链路状态面板（5 条 SIM 链路）→ 屏幕 01、02 左侧共用
+   单位一律提到表头（信号强度/dBm、实时带宽/Mbps、时延/ms），数值列只留数字，左右两屏口径一致；
+   fixed = true（屏幕 02）时数值走固定位宽：带宽 000.00 / 时延 000 / 信号 -000，
+   不足位宽处补白并右对齐，使小数点与个位在 5 行之间锁死 */
+function simPanel(fixed) {
+  const dec = fixed ? 2 : 1;                                  /* 屏幕 02 固定两位小数，屏幕 01 维持原样 */
+  const fw = (txt, n) => fixed ? '<em class="fix-fw f' + n + '">' + txt + '</em>' : txt;
+  const rows = SIMS.map(s => {
+    const st = SIM_STATE[s.state];
+    return '<div class="sim-row">' +
       '<span class="sim-name">' + s.name + '</span>' +
-      '<span class="sim-op">' + s.op + '</span>' +
-      '<span class="sim-state' + (s.online ? ' on' : '') + '"><i class="dot"></i>' + (s.online ? '在线' : '离线') + '</span>' +
-      '<span class="sim-sig">' + barsHtml(s.online ? signalBars(s.signal) : 0, sigTone(s.signal)) +
-        '<span class="sim-dbm">' + s.signal + 'dBm</span></span>' +
+      '<span class="sim-op">' +
+        (OP_LOGO[s.op] ? '<img class="op-logo" src="' + OP_LOGO[s.op] + '" alt="">' : '') +
+        s.op + '</span>' +
+      '<span class="sim-state ' + st.cls + '"><i class="dot"></i>' + s.state + '</span>' +
+      '<span class="sim-sig">' + barsHtml(st.sig ? signalBars(s.signal) : 0, st.sig ? sigTone(s.signal) : '') +
+        '<span class="sim-dbm">' + fw(st.sig ? s.signal : '--', 4) + '</span></span>' +
       '<span class="sim-rate">' +
-        '<span class="' + (s.online ? 'up' : 'idle') + '">↑ ' + (s.online ? fmt(s.up) + 'Mbps' : '--') + '</span>' +
-        '<span class="' + (s.online ? 'down' : 'idle') + '">↓ ' + (s.online ? fmt(s.down) + 'Mbps' : '--') + '</span>' +
+        '<span class="' + (st.data ? 'up' : 'idle') + '">↑ ' + fw(st.data ? fmt(s.up, dec) : '--', 6) + '</span>' +
+        '<span class="' + (st.data ? 'down' : 'idle') + '">↓ ' + fw(st.data ? fmt(s.down, dec) : '--', 6) + '</span>' +
       '</span>' +
-      '<span class="sim-ping' + (s.online ? '' : ' idle') + '">' + (s.online ? fmt(s.ping, 0) + 'ms' : '--') + '</span>' +
-    '</div>').join('');
+      '<span class="sim-ping' + (st.data ? '' : ' idle') + '">' + fw(st.data ? fmt(s.ping, 0) : '--', 3) + '</span>' +
+    '</div>';
+  }).join('');
 
-  return '<section class="panel" style="flex:1">' +
+  return '<section class="panel' + (fixed ? ' sim-agg' : '') + '" style="flex:1">' +
       '<div class="panel-title"><span>链路状态</span></div>' +
       '<div class="sim-head">' +
         '<span>链路</span><span>运营商</span><span>在线状态</span>' +
-        '<span>信号强度</span><span>实时带宽</span><span>时延</span>' +
+        '<span>信号强度/dBm</span><span>实时带宽/Mbps</span><span>时延/ms</span>' +
       '</div>' +
       '<div class="sim-list">' + rows + '</div>' +
     '</section>';
@@ -992,8 +1064,9 @@ function btsPanel() {
    ============================================================ */
 
 /* ========== 屏幕 01 · 工程模式 · 直连模式（首页默认） → renderDirect() ==========
-   左：链路状态——5 条 SIM 链路，每行显示 运营商 / 在线状态 / 信号强度 / 实时带宽(Mbps) / 时延
-   右：基站状态——上下两张卡片，分别为 4G 基站与 5G 基站
+   左：链路状态——5 条 SIM 链路，每行显示 运营商 / 在线状态 / 信号强度 / 实时带宽 / 时延
+       （带宽与时延的单位统一写在表头，数值列只留数字）
+   右：基站状态——上下两张卡片，分别为 4G 基站（在线·淡绿）与 5G 基站（离线·淡红）
    底：功能页脚——左「系统设置 / 版本信息」，右「屏幕亮度 / 重启设备」（替代提示底栏）
    ============================================================================== */
 function renderDirect() {
@@ -1010,11 +1083,15 @@ function renderDirect() {
    仅在其上方增加一条「聚合链路状态」卡片：连接状态 / 实时上下行速率 / 时延 / 聚合链路数量。
    ============================================================================== */
 function renderAgg() {
-  const on = SIMS.filter(s => s.online);
+  const on = SIMS.filter(s => s.state === '在线');
   const aggOn = on.length > 0;                 // 聚合链路：只要还有一条在线即为在线
   const sumUp = on.reduce((s, x) => s + x.up, 0);
   const sumDown = on.reduce((s, x) => s + x.down, 0);
   const avgPing = on.length ? on.reduce((s, x) => s + x.ping, 0) / on.length : 0;
+
+  /* 数值按固定位宽输出：速率 000.00、时延 000。
+     不足位宽处补白并右对齐，Mbps / ms 的起点便不随数字位数左右跳动，做法与链路状态表一致 */
+  const fw = (txt, n) => '<em class="fix-fw f' + n + '">' + txt + '</em>';
 
   const aggBar =
     '<div class="row" style="flex:0 0 96px">' +
@@ -1024,13 +1101,13 @@ function renderAgg() {
             '<span class="st ' + (aggOn ? 'on' : 'off') + '">' + (aggOn ? '在线' : '离线') + '</span>' +
           '</div></div>' +
         '<div class="half"><span class="k">实时上行速率</span>' +
-          '<div class="kpi"><span class="num" style="color:var(--blue)">' + sumUp.toFixed(1) +
+          '<div class="kpi"><span class="num" style="color:var(--blue)">' + fw(sumUp.toFixed(2), 6) +
             '</span><span class="u">Mbps</span></div></div>' +
         '<div class="half"><span class="k">实时下行速率</span>' +
-          '<div class="kpi"><span class="num" style="color:var(--yellow)">' + sumDown.toFixed(1) +
+          '<div class="kpi"><span class="num" style="color:var(--yellow)">' + fw(sumDown.toFixed(2), 6) +
             '</span><span class="u">Mbps</span></div></div>' +
         '<div class="half"><span class="k">时延</span>' +
-          '<div class="kpi"><span class="num" style="color:var(--mauve)">' + avgPing.toFixed(0) +
+          '<div class="kpi"><span class="num" style="color:var(--mauve)">' + fw(avgPing.toFixed(0), 3) +
             '</span><span class="u">ms</span></div></div>' +
         '<div class="half"><span class="k">聚合链路数量</span>' +
           '<div class="kpi"><span class="num" style="color:var(--green)">' + on.length +
@@ -1040,7 +1117,7 @@ function renderAgg() {
 
   const body = aggBar +
     '<div class="row" style="flex:1">' +
-      '<div class="col" style="flex:0 0 552px">' + simPanel() + '</div>' +
+      '<div class="col" style="flex:0 0 552px">' + simPanel(true) + '</div>' +
       '<div class="col" style="flex:1">' + btsPanel() + '</div>' +
     '</div>';
 
@@ -1303,7 +1380,7 @@ const RULER_SEL = [
   '.gauge-wrap', '.kpi', '.trend', '.kv', '.seg', '.meter', '.thead', '.trow', '.tbl',
   '.cell', '.bars', '.bar-bot',
   '.sim-head', '.sim-list', '.sim-row', '.sim-name', '.sim-op', '.sim-state', '.sim-sig',
-  '.sim-dbm', '.sim-rate', '.sim-ping',
+  '.sim-dbm', '.sim-rate', '.sim-ping', '.fix-fw',
   '.bs-card', '.bs-head', '.bs-name', '.bs-meta', '.bs-id', '.bs-state',
   '.foot-bar', '.foot-group', '.foot-btn',
   '.modal-mask', '.modal', '.modal-head', '.modal-title', '.modal-close', '.modal-body', '.ver-notes',
@@ -1325,7 +1402,7 @@ const RULER_NAMES = {
   'sd': '状态点', 'dot': '状态点',
   'sim-head': '链路表头', 'sim-list': '链路列表', 'sim-row': 'SIM 链路行', 'sim-name': 'SIM 名', 'sim-op': '运营商',
   'sim-state': '在线状态', 'sim-sig': '信号强度', 'sim-dbm': '信号值', 'sim-rate': '实时带宽',
-  'sim-ping': '时延', 'bs-card': '基站卡', 'bs-head': '基站卡头', 'bs-name': '基站名',
+  'sim-ping': '时延', 'fix-fw': '等宽数值域', 'bs-card': '基站卡', 'bs-head': '基站卡头', 'bs-name': '基站名',
   'bs-id': '物理小区 ID', 'bs-num': '连接用户数', 'bs-meta': '基站指标行', 'bs-kv': '基站指标', 'bs-state': '基站状态',
   'foot-bar': '功能页脚', 'foot-group': '页脚按钮组', 'foot-btn': '页脚按钮',
   'modal-mask': '弹窗遮罩', 'modal': '弹窗', 'modal-head': '弹窗标题栏',
