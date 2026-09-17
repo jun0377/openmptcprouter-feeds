@@ -25,6 +25,7 @@
        弹窗（.modal / .modal-mask）…… 屏幕 01、02，由页脚按钮触发：
                       「版本信息」→ 版本号 / 构建时间 / commit id / 发布说明
                       「屏幕亮度」→ .modal.sm 内一个水平滑块 + 百分比读数
+                      「重启设备」→ .modal.confirm 二级确认（取消 / 确认重启）
        通用控件：
          环形仪表 .gauge-wrap …… 屏幕 03、04~07
          大数值 .kpi …… 屏幕 02、03、08、09，以及 04~07 的速率面板
@@ -459,7 +460,8 @@
 
   /* ---- 弹窗（.modal / .modal-mask） → 屏幕 01、02 ---- */
   /*      版本信息：点击页脚「版本信息」弹出（宽度 410）
-          屏幕亮度：点击页脚「屏幕亮度」弹出（.modal.sm 宽度 300，内含水平滑块） */
+          屏幕亮度：点击页脚「屏幕亮度」弹出（.modal.sm 宽度 300，内含水平滑块）
+          重启确认：点击页脚「重启设备」弹出（.modal.confirm 宽度 340，二级确认） */
   .modal-mask {
     position: absolute;
     inset: 0;
@@ -548,6 +550,29 @@
     box-shadow: 0 0 0 2px var(--blue), 0 1px 3px rgba(0, 0, 0, .55);
   }
   .bright-val { flex: none; width: 36px; text-align: right; font-size: 13px; color: var(--txt); }
+
+  /* 重启设备二级确认弹窗 → 屏幕 01、02；由页脚「重启设备」按钮触发
+     只有一行按钮，无提示文案；左「确认重启」右「取消」，两个按钮在弹窗内水平居中，
+     「取消」比「确认重启」略大，提供一个更顺手的退出位 */
+  .modal.confirm { width: 340px; }
+  .modal.confirm .modal-head svg { color: var(--red); }      /* 危险操作：标题栏图标走红 */
+  .confirm-foot { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 16px 12px 14px; }
+  .cbtn {
+    display: flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 14px;
+    border: 1px solid var(--line2);
+    border-radius: 5px;
+    background: var(--panel2);
+    color: var(--txt2);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .cbtn:hover { border-color: var(--muted); color: var(--txt); }
+  .cbtn.cancel { height: 32px; padding: 0 30px; font-size: 13px; }   /* 比「确认重启」宽高都大一档 */
+  .cbtn.danger { border-color: rgba(243, 139, 168, .5); background: rgba(243, 139, 168, .16); color: var(--red); font-weight: 600; }
+  .cbtn.danger:hover { background: rgba(243, 139, 168, .28); }
 
   /* ---- 文本 / 颜色工具类 → 全部 9 屏通用 ---- */
   .mono { font-family: monospace; }
@@ -851,6 +876,23 @@ function brightModal() {
     '</div>';
 }
 
+/* 重启设备二级确认弹窗：危险操作不能一步到位，需二次确认
+   由 .foot-btn[data-modal="reboot"] 触发；只有两个按钮，都表示「结束本次确认」 */
+function confirmModal() {
+  return '<div class="modal-mask" data-modal="reboot">' +
+      '<div class="modal confirm">' +
+        '<div class="modal-head">' + ICO_POWER +
+          '<span class="modal-title">重启设备</span>' +
+          '<span class="modal-close">' + ICO_CLOSE + '</span>' +
+        '</div>' +
+        '<div class="confirm-foot">' +
+          '<span class="cbtn danger">确认重启</span>' +
+          '<span class="cbtn cancel">取消</span>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
 /* 底部功能页脚：左「系统设置 / 版本信息」，右「屏幕亮度 / 重启设备」 → 屏幕 01 使用 */
 function footBar() {
   const btn = (label, icon, danger, modal) =>
@@ -863,9 +905,9 @@ function footBar() {
       '</div>' +
       '<div class="foot-group">' +
         btn('屏幕亮度', ICO_SUN, false, 'bright') +
-        btn('重启设备', ICO_POWER, true) +
+        btn('重启设备', ICO_POWER, true, 'reboot') +   /* 危险操作：弹二级确认，不直接执行 */
       '</div>' +
-    '</div>' + verModal() + brightModal();
+    '</div>' + verModal() + brightModal() + confirmModal();
 }
 
 /* 屏幕外壳：页眉 + 页签栏 + 内容区 + 底部（传入 footer 用功能页脚，否则用提示底栏） */
@@ -1202,7 +1244,8 @@ document.getElementById('tabs').addEventListener('click', e => {
 });
 
 /* ============================================================
-   六、弹窗交互：点击页脚「版本信息 / 屏幕亮度」弹出，点遮罩 / 关闭按钮 / Esc 关闭
+   六、弹窗交互：点击页脚「版本信息 / 屏幕亮度 / 重启设备」弹出，
+       点遮罩 / 关闭按钮 / 确认弹窗的任一按钮 / Esc 关闭
    ============================================================ */
 document.getElementById('grid').addEventListener('click', e => {
   const btn = e.target.closest('.foot-btn[data-modal]');
@@ -1214,7 +1257,10 @@ document.getElementById('grid').addEventListener('click', e => {
   }
   const mask = e.target.closest('.modal-mask');
   if (!mask) return;
-  if (e.target.closest('.modal-close') || e.target === mask) mask.classList.remove('on');
+  /* 确认弹窗的两个按钮只是设计样例，均表示「结束本次确认」 */
+  if (e.target.closest('.modal-close') || e.target.closest('.cbtn') || e.target === mask) {
+    mask.classList.remove('on');
+  }
 });
 
 /* 亮度滑块：拖动时同步已选段填充（--p）与百分比读数 */
@@ -1262,6 +1308,7 @@ const RULER_SEL = [
   '.foot-bar', '.foot-group', '.foot-btn',
   '.modal-mask', '.modal', '.modal-head', '.modal-title', '.modal-close', '.modal-body', '.ver-notes',
   '.bright-body', '.slider', '.bright-val',
+  '.confirm-foot', '.cbtn',
   '.big-id', '.field', '.half', '.metric', '.big-hint', '.cell-hint', '.empty',
   '.agg-bar', '.lock', '.tag'
 ].join(', ');
@@ -1283,7 +1330,8 @@ const RULER_NAMES = {
   'foot-bar': '功能页脚', 'foot-group': '页脚按钮组', 'foot-btn': '页脚按钮',
   'modal-mask': '弹窗遮罩', 'modal': '弹窗', 'modal-head': '弹窗标题栏',
   'modal-title': '弹窗标题', 'modal-close': '关闭按钮', 'modal-body': '弹窗内容', 'ver-notes': '发布说明',
-  'bright-body': '亮度调节区', 'slider': '亮度滑块', 'bright-val': '亮度读数'
+  'bright-body': '亮度调节区', 'slider': '亮度滑块', 'bright-val': '亮度读数',
+  'confirm-foot': '确认按钮组', 'cbtn': '确认按钮'
 };
 
 const tip = document.getElementById('rulerTip');
