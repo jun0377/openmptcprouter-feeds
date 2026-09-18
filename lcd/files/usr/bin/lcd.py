@@ -12,6 +12,7 @@
 #   uart.py       串口的打开/下发/按结束符切帧
 #   uci.py        uci 配置读写
 #   aggregate.py  聚合模式页面(屏幕02)的状态
+#   version.py    版本信息页面(页脚弹窗)的状态
 #
 
 import os									# 主循环读串口, 退出时关闭描述符
@@ -29,6 +30,7 @@ from aggregate import AggregateStatus					# 聚合模式页面(屏幕02)的状�
 from logger import log, open_log						# 日志输出
 from uart import FrameParser, open_uart, uart_send		# 串口操作
 from uci import uci_get									# uci 配置读取
+from version import VersionStatus						# 版本信息页面(页脚弹窗)的状态
 
 UART_DEV = "/dev/ttyAMA4"					# uart4, 见 docs/018-屏幕.md
 UART_BAUD = 115200							# 串口屏波特率(仅用于启动日志, 实际配置见 uart.open_uart)
@@ -105,6 +107,11 @@ def handle_GetAggregateStatus(fd, text):
 	for command in AggregateStatus.collect().commands():		# 采集状态并生成待下发的指令序列
 		uart_send(fd, command)									# 逐条下发, 串口与日志由 uart.py 统一负责
 
+# 在版本信息页面时,获取版本信息
+def handle_GetVersion(fd, text):
+	for command in VersionStatus.collect().commands():			# 采集版本信息并生成待下发的指令序列
+		uart_send(fd, command)									# 逐条下发
+
 # 指令分发表: 字符串指令 -> 处理函数
 # 新增指令只需在此登记一行并写一个同签名的处理函数, handle_frame 无需改动
 # 注意 prints 无结束符, 屏侧需紧跟一条 printh ff ff ff 才能被 FrameParser 切成帧
@@ -112,6 +119,7 @@ TEXT_HANDLERS = {
 	"Booting": handle_booting,										# 等待 n0.val 握手, 仍在播动画
 	"Ready": handle_ready_report,									# 握手完成, 准备进入主页
 	"GetAggStatus": handle_GetAggregateStatus,						# 在聚合模式页面时,获取聚合模式页面的所有状态
+	"GetVersion": handle_GetVersion,								# 在版本信息页面时,获取版本信息
 }
 
 # 可被退出信号打断的定时等待
