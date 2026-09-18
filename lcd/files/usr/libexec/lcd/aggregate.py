@@ -38,6 +38,14 @@ LINK_TYPES = ("WAN", "LAN", "SIM")
 #   NumAggRtt.val      聚合时延(ms)   为在线链路的平均值
 #   NumAggChannel.val  聚合链路数量   在线链路的条数
 
+# 基站状态卡片(页面右侧, 4G / 5G 上下各一张, 控件名不按卡槽编号)的控件:
+#   PicLteOnline.pic  4G 在线状态图标   43 在线 / 42 离线
+#   Pic5GOnline.pic   5G 在线状态图标   同上
+#   NumLTEID.val      4G 物理小区 ID
+#   NumLteUser.val    4G 连接用户数
+#   Num5GID.val       5G 物理小区 ID
+#   Num5GUser.val     5G 连接用户数
+
 # 运营商 -> PicOperatorx 的图片号
 OPERATOR_PICS = {
 	"中国移动": 25,
@@ -65,6 +73,16 @@ RSRP_PICS = (
 	(-120, 32),								# >= -120dBm 一格
 )
 RSRP_NONE_PIC = 31							# 无信号(rsrp 为 None)
+
+# 基站制式 -> (在线状态图标控件, 物理小区 ID 控件, 连接用户数控件)
+BTS_WIDGETS = {
+	"4G": ("PicLteOnline", "NumLTEID", "NumLteUser"),
+	"5G": ("Pic5GOnline", "Num5GID", "Num5GUser"),
+}
+
+# 基站在线状态 -> Pic*Online 的图片号
+BTS_ONLINE_PIC = 43							# 在线
+BTS_OFFLINE_PIC = 42						# 离线
 
 
 # RSRP(dBm) -> PicRsrpx 的图片号; rsrp 为 None 表示读不到信号
@@ -177,11 +195,12 @@ def _mock_links():
 		LinkStatus("wan4", "SIM", "", "已禁用", None, 0.0, 0.0, 0),
 	]
 
-# 模拟的基站状态: 4G 在线, 5G 离线
+# 模拟的基站状态: 4G 在线、5G 离线, 两种状态图标各验证一次;
+# 5G 的 pci/ue 仍备着, 把它的 online 改成 True, 屏上就显示 1002 / 96
 def _mock_bts():
 	return [
-		BtsStatus("4G", True, 128, 36),
-		BtsStatus("5G", False, 0, 0),
+		BtsStatus("4G", True, 231, 128),
+		BtsStatus("5G", False, 1002, 96),
 	]
 
 
@@ -206,6 +225,7 @@ class AggregateStatus:
 		commands.extend(self._agg_commands())		# 顶部的聚合链路状态卡片
 		for index, link in enumerate(list(self.links)[:LINK_SLOTS]):
 			commands.extend(self._link_commands(index, link))
+		commands.extend(self._bts_commands())		# 右侧的基站状态卡片
 		return commands
 
 	# 生成聚合链路状态卡片(页面顶部)的全部指令
@@ -236,12 +256,13 @@ class AggregateStatus:
 			"Rtt%d.val=%d" % (slot, link.latency if link.online else 0),
 		]
 
-	# 生成第 index 张基站卡片的赋值指令
-	def _bts_commands(self, index, bts):
-		slot = index + 1
-		return [
-			'BtsName%d.txt="%s"' % (slot, bts.label),
-			'BtsState%d.txt="%s"' % (slot, "在线" if bts.online else "离线"),
-			'BtsPci%d.txt="%s"' % (slot, bts.pci if bts.online else "--"),
-			'BtsUe%d.txt="%s"' % (slot, bts.ue if bts.online else "--"),
-		]
+	# 生成基站状态卡片(4G / 5G 各一张)的全部指令
+	# 控件名不按卡槽编号, 由制式 label 查表; 基站离线时两个数值均下发 0
+	def _bts_commands(self):
+		commands = []
+		for bts in self.bts:
+			state_widget, pci_widget, ue_widget = BTS_WIDGETS[bts.label]
+			commands.append("%s.pic=%d" % (state_widget, BTS_ONLINE_PIC if bts.online else BTS_OFFLINE_PIC))
+			commands.append("%s.val=%d" % (pci_widget, bts.pci if bts.online else 0))
+			commands.append("%s.val=%d" % (ue_widget, bts.ue if bts.online else 0))
+		return commands

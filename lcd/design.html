@@ -454,7 +454,10 @@
   .bs-kv .k { font-size: 11px; color: var(--muted); }
   .bs-id  { font-family: monospace; font-size: 18px; font-weight: 700; color: var(--blue);  letter-spacing: .5px; }
   .bs-num { font-family: monospace; font-size: 18px; font-weight: 700; color: var(--green); }
-  .bs-state { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+  /* 基站卡的在线 / 离线：比链路行里的状态字略放大一档，卡片里的状态更好认
+     （只覆盖 .bs-state 内的圆点，链路行的 .sim-state .dot 不受影响） */
+  .bs-state { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .bs-state .dot { width: 9px; height: 9px; }
   .bs-state.on  { color: var(--green); }
   .bs-state.off { color: var(--red); }
 
@@ -751,9 +754,13 @@ const SIM_STATE = {
 const SAT = { cn0: 42, up: 1.2, down: 4.5, ping: 620, jitter: 35 };
 
 /* 基站状态：BTS4 → 屏幕 08（兼作屏幕 01 / 02 的 4G 基站卡）；BTS5 → 屏幕 09（兼作 5G 基站卡）
-   online 决定卡片底色与状态文案（在线淡绿 / 离线淡红），设计稿按「4G 在线、5G 离线」举例 */
+   online 决定卡片底色与状态文案（在线淡绿 / 离线淡红），设计稿按「4G 在线、5G 离线」举例
+   cardPci / cardUe 只给屏幕 01 / 02 的基站卡片用，都按 4 位数字控件的宽度预留：
+   物理小区 ID 最长 4 位且只有 5G 会到 4 位，故 5G 卡取 1002；连接用户数一律按 4 位，前导补 0；
+   屏幕 08 / 09 的参数表仍取 cells[0][1] 与 ue / ueMax 里的原示例值 */
 const BTS4 = {
   label: '4G基站', idName: '4G基站标识', id: '4G-BTS-0231', status: '激活', online: true, ue: 128, ueMax: 256,
+  cardPci: '231', cardUe: '0128',
   cells: [
     ['物理小区识别码', '231', ''],
     ['LTE频点',       '1825', 'EARFCN'],
@@ -765,6 +772,7 @@ const BTS4 = {
 };
 const BTS5 = {
   label: '5G基站', idName: '5G基站标识', id: '5G-BTS-0788', status: '激活', online: false, ue: 96, ueMax: 256,
+  cardPci: '1002', cardUe: '0096',
   cells: [
     ['物理小区识别码', '788',   ''],
     ['NR频点',        '627264', 'ARFCN'],
@@ -999,10 +1007,10 @@ function ratePanel(up, down, seed) {
 }
 
 /* 基站状态卡片（4G / 5G 各一张，上下排列）→ 屏幕 01、02 右侧使用
-   只显示两项：物理小区 ID（cells[0]）与当前连接的用户个数；
+   只显示两项：物理小区 ID（cardPci）与当前连接的用户个数（cardUe），两者都按 4 位数字控件的宽度预留；
    整卡底色随在线状态切换：在线淡绿（.on）/ 离线淡红（.off） */
 function btsCard(b) {
-  const pci = b.cells[0][1], on = b.online;
+  const pci = b.cardPci, ue = b.cardUe, on = b.online;
   return '<div class="bs-card ' + (on ? 'on' : 'off') + '">' +
       '<div class="bs-head"><span class="bs-name">' + b.label + '</span>' +
         '<span class="bs-state ' + (on ? 'on' : 'off') + '">' +
@@ -1010,7 +1018,7 @@ function btsCard(b) {
         '</span></div>' +
       '<div class="bs-meta">' +
         '<div class="bs-kv"><span class="k">物理小区 ID</span><span class="bs-id">' + pci + '</span></div>' +
-        '<div class="bs-kv"><span class="k">连接用户数</span><span class="bs-num">' + b.ue + '</span></div>' +
+        '<div class="bs-kv"><span class="k">连接用户数</span><span class="bs-num">' + ue + '</span></div>' +
       '</div>' +
     '</div>';
 }
