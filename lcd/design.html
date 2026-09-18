@@ -406,9 +406,13 @@
   .sim-sig { display: flex; justify-content: center; align-items: center; gap: 7px; }
   .sim-dbm { font-family: monospace; font-size: 11px; color: var(--txt2); }
   .sim-rate { display: flex; justify-content: center; gap: 10px; font-family: monospace; font-size: 12px; font-weight: 600; }
+  /* 方向箭头恒为彩色（↑ blue / ↓ yellow），只有数值在无流量时转灰（.idle）：
+     箭头与流量无关，做成静态素材即可 —— 串口屏上「上行箭头 / 下行箭头」各一张图，
+     不必再为「有流量 / 无流量」各出一张 */
   .sim-rate .up   { color: var(--blue); }
   .sim-rate .down { color: var(--yellow); }
   .sim-rate .idle { color: var(--line2); }
+  .sim-rate .arw  { font-style: normal; }
   .sim-ping { font-family: monospace; font-size: 12px; color: var(--mauve); text-align: right; }
   .sim-ping.idle { color: var(--line2); }
 
@@ -544,9 +548,9 @@
   .ver-list { display: flex; flex-direction: column; }
   .ver-notes { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 5px; }
   .ver-notes > .k { font-size: 11px; color: var(--muted); }
-  .ver-notes ul { list-style: none; display: flex; flex-direction: column; gap: 4px; }
-  .ver-notes li { position: relative; padding-left: 11px; font-size: 11px; line-height: 15px; color: var(--txt2); }
-  .ver-notes li::before { content: ''; position: absolute; left: 2px; top: 6px; width: 4px; height: 4px; border-radius: 1px; background: var(--blue); }
+  /* 发布说明由上位机按运行版本下发，屏上是一个文本控件，故设计稿里不排真实条目：
+     只画一个与原来四条说明等高的空文本框，边框标出文本控件的落位与大小，内部留空 */
+  .ver-box { height: 72px; border: 1px solid var(--line2); border-radius: 5px; }
 
   /* 屏幕亮度弹窗：一个水平滑块 + 百分比读数 → 屏幕 01、02 */
   .modal.sm { width: 300px; }
@@ -772,17 +776,13 @@ const BTS5 = {
   ]
 };
 
-/* 版本信息弹窗 → 屏幕 01、02 页脚「版本信息」按钮的弹窗内容 */
+/* 版本信息弹窗 → 屏幕 01、02 页脚「版本信息」按钮的弹窗内容
+   版本号用「V00.00.00」这种定宽占位串，屏上按它的宽度摆文本控件；
+   构建时间 / commit id 为样例值，发布说明在屏上是文本框、设计稿里只留空框 */
 const VERSION = {
-  ver:    'v1.4.2',
+  ver:    'V00.00.00',
   build:  '2026-09-16 14:32:08',
-  commit: '9f3c1d7',
-  notes: [
-    '新增聚合链路实时速率总览与在线链路计数',
-    '优化小屏文字对比度，提升户外光照下可视性',
-    '修复卫星传输模式下时延统计偏大的问题',
-    '调整基站卡片间距，物理小区 ID 改为等宽字体'
-  ]
+  commit: '9f3c1d7'
 };
 
 /* ============================================================
@@ -911,7 +911,7 @@ function verModal() {
             kv('commit id', VERSION.commit, 'var(--mauve)') +
           '</div>' +
           '<div class="ver-notes"><span class="k">发布说明</span>' +
-            '<ul>' + VERSION.notes.map(n => '<li>' + n + '</li>').join('') + '</ul>' +
+            '<div class="ver-box"></div>' +
           '</div>' +
         '</div>' +
       '</div>' +
@@ -1033,8 +1033,8 @@ function simPanel(fixed) {
       '<span class="sim-sig">' + barsHtml(st.sig ? signalBars(s.signal) : 0, st.sig ? sigTone(s.signal) : '') +
         '<span class="sim-dbm">' + fw(st.sig ? s.signal : '--', 4) + '</span></span>' +
       '<span class="sim-rate">' +
-        '<span class="' + (st.data ? 'up' : 'idle') + '">↑ ' + fw(st.data ? fmt(s.up, dec) : '--', 6) + '</span>' +
-        '<span class="' + (st.data ? 'down' : 'idle') + '">↓ ' + fw(st.data ? fmt(s.down, dec) : '--', 6) + '</span>' +
+        '<span class="up"><i class="arw">↑</i> <span class="' + (st.data ? 'up' : 'idle') + '">' + fw(st.data ? fmt(s.up, dec) : '--', 6) + '</span></span>' +
+        '<span class="down"><i class="arw">↓</i> <span class="' + (st.data ? 'down' : 'idle') + '">' + fw(st.data ? fmt(s.down, dec) : '--', 6) + '</span></span>' +
       '</span>' +
       '<span class="sim-ping' + (st.data ? '' : ' idle') + '">' + fw(st.data ? fmt(s.ping, 0) : '--', 3) + '</span>' +
     '</div>';
@@ -1383,7 +1383,7 @@ const RULER_SEL = [
   '.sim-dbm', '.sim-rate', '.sim-ping', '.fix-fw',
   '.bs-card', '.bs-head', '.bs-name', '.bs-meta', '.bs-id', '.bs-state',
   '.foot-bar', '.foot-group', '.foot-btn',
-  '.modal-mask', '.modal', '.modal-head', '.modal-title', '.modal-close', '.modal-body', '.ver-notes',
+  '.modal-mask', '.modal', '.modal-head', '.modal-title', '.modal-close', '.modal-body', '.ver-notes', '.ver-box',
   '.bright-body', '.slider', '.bright-val',
   '.confirm-foot', '.cbtn',
   '.big-id', '.field', '.half', '.metric', '.big-hint', '.cell-hint', '.empty',
@@ -1407,6 +1407,7 @@ const RULER_NAMES = {
   'foot-bar': '功能页脚', 'foot-group': '页脚按钮组', 'foot-btn': '页脚按钮',
   'modal-mask': '弹窗遮罩', 'modal': '弹窗', 'modal-head': '弹窗标题栏',
   'modal-title': '弹窗标题', 'modal-close': '关闭按钮', 'modal-body': '弹窗内容', 'ver-notes': '发布说明',
+  'ver-box': '发布说明文本框',
   'bright-body': '亮度调节区', 'slider': '亮度滑块', 'bright-val': '亮度读数',
   'confirm-foot': '确认按钮组', 'cbtn': '确认按钮'
 };
