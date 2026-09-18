@@ -30,12 +30,15 @@ define Build/Compile
 endef
 
 # pics/fonts/proj/design.html 仅界面设计时使用, 不打包;
-# 源码中的 lcd.init 按 OpenWrt 惯例安装为 /etc/init.d/lcd, 服务名即 lcd
+# 源码中的 lcd.init 按 OpenWrt 惯例安装为 /etc/init.d/lcd, 服务名即 lcd;
+# 私有库(各页面的状态模块)放 /usr/libexec/lcd, 由 lcd.py 通过 sys.path 引入
 define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/lcd.init $(1)/etc/init.d/lcd
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./files/usr/bin/lcd.py $(1)/usr/bin/lcd.py
+	$(INSTALL_DIR) $(1)/usr/libexec/lcd
+	$(INSTALL_DATA) ./files/usr/libexec/lcd/*.py $(1)/usr/libexec/lcd/
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
