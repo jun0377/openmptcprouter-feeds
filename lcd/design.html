@@ -17,8 +17,9 @@
                  页内靠页签栏在 SIM1~SIM5 之间就地切换，不再一条链路画一屏）
        屏幕 06  运维模式 · 4G基站（基站设置页：标识与小区状态可改、参数卡片可改）
        屏幕 07  运维模式 · 5G基站（同上，共用一个模板、数据不同）
-       屏幕 08  系统设置 · 待完善（独立整屏：无页眉模式切换、无页签栏、无底栏，
-                 内容区只有正中水印 + 居中靠下的「返回 / 确定」按钮）
+       屏幕 08  系统设置（独立整屏：无页眉模式切换、无页签栏，
+                 内容区两张设置卡左右并排 —— 左「管理平台地址」IP 大字可点着改、
+                 右「状态上报频率」四档选择器默认 15s；底部操作区「返回 / 确定」）
        屏幕 09  运维模式 · 卫星链路设置（04 上「卫星链路」卡的落点：精简版只放
                  链路开关 / 卫星系统 / 频段 / 卫星标识 四项可编辑参数，单列竖排、
                  标签与控件各对齐成一列，卡片铺满内容区只让开底部页脚）
@@ -28,18 +29,19 @@
                      屏幕 01~04（屏幕 05~07、09 是运维模式下的二级页、屏幕 08 整屏独立，
                      都不给模式切换入口）；
                      页签栏（.bar-nav）屏幕 01~03、05~07（屏幕 04 是入口页，不放页签栏）；
-                     底部栏：屏幕 01、02、03、05、06、07、09 用功能页脚，屏幕 04、08 整块不要底部
+                     底部栏：屏幕 01、02、03、05、06、07、08、09 用功能页脚，屏幕 04 整块不要底部
        屏幕 01、02、03 专用：基站状态卡片（.bs-card，底色随在线状态淡绿 / 淡红）+ 功能页脚（.foot-bar / .foot-btn）；
                      屏幕 01、02 另有链路状态列表（.sim-*）
-       屏幕 05、06、07、09 专用：功能页脚（.foot-bar / .foot-btn）—— 二级设置页共用 editFoot()：
-                     两个按钮都靠右下角，左「保存&应用」右「返回」（都回屏幕 04），
-                     填充色区分主次：保存蓝实底（.foot-btn.primary）、返回灰实底（.foot-btn.secondary）
+       屏幕 05、06、07、08、09 专用：功能页脚（.foot-bar / .foot-btn）—— 二级设置页共用 editFoot()：
+                     两个按钮都靠右下角，左「保存&应用」右「返回」，
+                     填充色区分主次：保存蓝实底（.foot-btn.primary）、返回灰实底（.foot-btn.secondary）；
+                     05、06、07、09 的「返回」跳回屏幕 04，屏幕 08 的「返回」退回来源页（data-back）
        屏幕 03 专用：指标卡（.m-card / .m-ico / .m-txt / .m-name，横排：图标 + 名称 + 数值，图标与数值同色）
        屏幕 04 专用：设置入口卡（.set-grid / .set-card / .set-l / .set-r / .set-ico / .set-t1 / .set-t2 / .set-go，
                      上「链路设置」3 列 × 2 行、下「基站设置」2 列，整卡即触摸热区；
                      两种卡都是左右分栏 —— 链路卡左「链路图标 + 标识」、右竖排「在线状态 + 运营商」；
                      基站卡左「基站图标 + 基站名」、右竖排三行「在线状态 .bts-state + 物理小区ID / 连接用户数 .set-kv」）
-       屏幕 08 专用：空白占位水印（.blank / .blank-mark）+ 底部操作区（.act-row / .act-btn）
+       屏幕 08 专用：设置卡里的设置行（.sys-row 项名 + .sys-ctl 控件，两行等分卡高）
        弹窗（.modal / .modal-mask）…… 屏幕 01、02、03，由页脚按钮与模式页签触发：
                      「版本信息」→ 版本号 / 构建时间 / commit id / 发布说明
                      「屏幕亮度」→ .modal.sm 内一个水平滑块 + 百分比读数
@@ -617,60 +619,22 @@
     color: var(--muted);
   }
 
-  /* ---- 空白占位页的整屏水印 + 底部操作区 → 屏幕 08（系统设置） ----
-     内容区整块留白，正中压一枚低对比度大字水印；
-     操作按钮不放进页脚，改为在内容区里水平居中、贴底部摆一行；
-     水印不参与交互（pointer-events: none），鼠标停留可按尺寸标注读出其真实像素 */
-  .blank {
-    position: relative;               /* 给底部操作区做定位参照 */
+  /* ---- 系统设置的设置行 → 屏幕 08（系统设置） ----
+     两项设置合并在一张卡里，一行一项、行间一条分隔线（.hr）：
+     行内左边是项名（固定 96px，两行左对齐）、右边是控件（.sys-ctl，贴左排）。
+     两行等分卡片剩余高度（flex:1），所以卡片铺满内容区、每项在行内竖直居中 ——
+     本屏只有两项设置，若按内容高度排会缩成窄窄一条，留白全堆在卡片下方 */
+  .sys-row {
     flex: 1;
     min-height: 0;
     display: flex;
     align-items: center;
-    justify-content: center;
-    pointer-events: none;
-    user-select: none;
-  }
-  .blank-mark {
-    font-size: 96px;
-    font-weight: 700;
-    letter-spacing: .12em;
-    text-indent: .12em;               /* 抵掉末字右侧多出的字距，视觉上仍居中 */
-    color: rgba(108, 112, 134, .22);  /* 极淡，读作水印而非正文 */
-  }
-  .act-row {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 26px;                     /* 内容区自带 12px 内边距，合计按钮底边距屏底 38px，落在页面居中的靠下位置 */
-    display: flex;
-    align-items: center;
-    justify-content: center;
     gap: 16px;
-    pointer-events: auto;             /* 水印层整体不吃事件，按钮要单独收回来 */
+    padding: 0 4px;
   }
-  /* 两个按钮用填充色区分：返回 = 中性灰实底，确定 = 蓝色实底（深色文字，沿用 .fgroup 标签的配色）
-     实底按钮在串口屏上直接导出成整块按钮素材即可，无需半透明处理 */
-  .act-btn {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    height: 34px;
-    padding: 0 26px;
-    border: 1px solid var(--line2);
-    border-radius: 6px;
-    background: var(--line);
-    color: var(--txt2);
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .act-btn svg { width: 15px; height: 15px; flex: none; }
-  .act-btn.primary {
-    background: var(--blue);
-    border-color: var(--blue);
-    color: #11111b;
-    font-weight: 600;
-  }
+  .sys-row .k { flex: none; width: 96px; font-size: 13px; color: var(--muted); }
+  .sys-ctl { flex: 1; min-width: 0; display: flex; align-items: center; }
+  .sys-ctl .seg > span { min-width: 52px; text-align: center; }   /* 四档按钮等宽，档位文字居中 */
 
   /* ---- 底部功能页脚（左 2 + 右 2 图标按钮，替代底栏） → 屏幕 01、02 ---- */
   .foot-bar {
@@ -1041,8 +1005,14 @@
                                               「小区参数」六（5G 七）张卡片，点卡片同样弹出
                                               编辑弹窗（editItemModal()）；数据源见
                                               「一、样例数据 → BTS4 / BTS5」
-       屏幕 08  renderSettings()           …… 空白占位页，整屏水印「待完善」，
-                                              入口见屏幕 01、02 页脚的「系统设置」按钮
+       屏幕 08  renderSettings()           …… 系统设置（屏幕 01、02 页脚「系统设置」按钮的落点）：
+                                              两项设置合并在一张「系统设置」卡里 ——
+                                              「管理平台地址」（IP 大字 + 铅笔，点它弹编辑弹窗）、
+                                              「状态上报频率」（四档选择器，默认 15s），
+                                              两行等分卡高、行间一条分隔线；
+                                              底部与屏幕 05 同款功能页脚 editFoot(true)
+                                              （「返回」走 data-back 退回来源页），
+                                              数据源见「一、样例数据 → SYS_SET / REPORT_STEPS」
        屏幕 09  satSettingsPage()          …… 卫星链路设置（屏幕 04「卫星链路」卡的落点）：
                                               精简版只一张「卫星参数设置」卡（链路开关 /
                                               卫星系统 / 频段 / 卫星标识），卡片铺满内容区、
@@ -1185,6 +1155,15 @@ const SAT = { cn0: 42, up: 1.2, down: 4.5, ping: 201, jitter: 30 };
 const SAT_SET = { disabled: false, system: '亚太6D', band: 'Ku', id: 'SAT-KU-03' };
 const SAT_SYSTEMS = ['天通一号', '北斗三号', '亚太6D', 'Inmarsat'];
 const SAT_BANDS   = ['L', 'S', 'Ku', 'Ka'];
+
+/* 屏幕 08「系统设置」的两项设置（改这两项 → 跳到「四、九个页面 → 屏幕 08」）：
+     ip     = 管理平台地址，状态数据上报到这个 IP；点地址那块大字弹编辑弹窗改它
+     report = 状态上报频率，单位秒，默认 15s 上报一次；
+              页面上摆成 REPORT_STEPS 四档的分段选择器，选中哪档就写回这个字段 */
+const SYS_SET = { ip: '192.168.10.100', report: 15 };
+
+/* 上报频率的可选档位（秒）：默认值 15 就在列表里，页面上高亮的那一档即当前值 */
+const REPORT_STEPS = [5, 15, 30, 60];
 
 /* 屏幕 03「链路状态」的三种取值：数组顺序即点击徽标时的切换顺序，
    默认停在下标 0（无卫星链路）。cls 只决定徽标底色，
@@ -1587,11 +1566,13 @@ function modeModal() {
 }
 
 /* 页脚按钮：图标 + 文案。cls = 附加样式（danger 危险操作 / primary 主操作 / secondary 次操作），
-   modal = 点击开合的弹窗名，go = 目标页下标（屏幕号 - 1）；后两个都不传就是纯展示按钮 */
-function footBtn(label, icon, cls, modal, go) {
+   modal = 点击开合的弹窗名，go = 目标页下标（屏幕号 - 1），back = 退回来源页（屏幕 08 的「返回」）；
+   后三个都不传就是纯展示按钮 */
+function footBtn(label, icon, cls, modal, go, back) {
   return '<span class="foot-btn' + (cls ? ' ' + cls : '') + '"' +
       (modal ? ' data-modal="' + modal + '"' : '') +
-      (go === undefined ? '' : ' data-go="' + go + '"') + '>' +
+      (go === undefined ? '' : ' data-go="' + go + '"') +
+      (back ? ' data-back' : '') + '>' +
       icon + '<span>' + label + '</span></span>';
 }
 
@@ -1612,17 +1593,20 @@ function footBar() {
 }
 
 /* 二级设置页的功能页脚（屏幕 05 SIM 链路详情 / 屏幕 06 4G基站 / 屏幕 07 5G基站 /
-   屏幕 09 卫星链路设置共用）：
+   屏幕 08 系统设置 / 屏幕 09 卫星链路设置共用）：
    两个按钮都靠右下角，左「保存&应用」右「返回」，并用填充色区分主次 ——
    保存是主操作（蓝实底）、返回是次操作（灰实底）。
    和屏幕 01、02 的页脚同一个组件（.foot-bar / .foot-btn），只是按钮少、位置与语义都不同 ——
    返回是跳页（data-go）、回上层即屏幕 04 的链路入口页；保存不跳页、走二级确认弹窗：
-   参数要下发到模组并重新拨号才生效，跟「重启设备」一样让用户再确认一次，避免误触 */
-function editFoot() {
+   参数要下发到模组并重新拨号才生效，跟「重启设备」一样让用户再确认一次，避免误触。
+   back = true 时「返回」不固定回屏幕 04，改成退回进来之前那一屏（走 [data-back]）——
+   屏幕 08 是从屏幕 01 / 02 的页脚进来的，来源页不固定，只能这么回 */
+function editFoot(back) {
   return '<div class="foot-bar" style="justify-content:flex-end">' +
       '<div class="foot-group">' +
         footBtn('保存&amp;应用', ICO_CHECK, 'primary', 'save') +
-        footBtn('返回', ICO_BACK, 'secondary', null, SIM_PAGE - 1) +
+        (back ? footBtn('返回', ICO_BACK, 'secondary', null, undefined, true)
+              : footBtn('返回', ICO_BACK, 'secondary', null, SIM_PAGE - 1)) +
       '</div>' +
     '</div>' + saveModal();
 }
@@ -2146,20 +2130,39 @@ function renderBase(b) {
   });
 }
 
-/* ========== 屏幕 08 · 系统设置（空白占位） → renderSettings() ==========
+/* ========== 屏幕 08 · 系统设置 → renderSettings() ==========
    入口：屏幕 01、02 页脚的「系统设置」按钮（data-go 跳转，不弹窗）。
-   整屏独立：没有页眉的模式切换、没有工程模式页签栏、也没有底部栏，
-   内容区只有正中水印 + 靠下的「返回 / 确定」按钮，两个按钮都退回进入本页前的来源页。
-   ============================================================================== */
+   整屏独立：没有页眉的模式切换、没有工程模式页签栏，底部是屏幕 05 同款功能页脚
+   （editFoot(true)：左「保存&应用」右「返回」，尺寸、位置、配色都与屏幕 05 一致，
+   只有「返回」的目标不同 —— 本屏是从屏幕 01 / 02 进来的、来源页不固定，
+   所以那枚按钮走 [data-back] 退回进来之前那一屏，见「八、跳转调试台」的派发）。
+   两项设置合并在一张卡里，一行一项，左边项名、右边控件，行间一条分隔线：
+     管理平台地址 —— IP 大字（等宽、蓝色）+ 行尾铅笔，整块可点，弹编辑弹窗改这串地址
+     状态上报频率 —— 四档选择器（5s / 15s / 30s / 60s，默认 15s）
+   两行等分卡片高度（.sys-row），所以卡片铺满内容区、每项在行内竖直居中；
+   样例值见「一、样例数据 → SYS_SET / REPORT_STEPS」。
+   ============================================================ */
 function renderSettings() {
-  const btn = (label, icon, cls) =>
-    '<span class="act-btn' + (cls ? ' ' + cls : '') + '" data-back>' +
-      icon + '<span>' + label + '</span></span>';
-  const body =
-    '<div class="blank"><span class="blank-mark">待完善</span>' +
-      '<div class="act-row">' + btn('返回', ICO_BACK) + btn('确定', ICO_CHECK, 'primary') + '</div>' +
+  const s = SYS_SET;
+  /* 一行设置：左边项名（固定宽度，两行左对齐）、右边控件 */
+  const field = (k, ctrl) =>
+    '<div class="sys-row">' +
+      '<span class="k">' + k + '</span>' +
+      '<div class="sys-ctl">' + ctrl + '</div>' +
     '</div>';
-  return shell({ group: '', nav: '', body: body });
+  const body =
+    '<section class="panel" style="flex:1">' +
+      '<div class="panel-title"><span>系统设置</span></div>' +
+      field('管理平台地址',
+        '<div class="big-id edit-hit" data-e="sys" data-p="ip">' + s.ip +
+          '<span class="pen">' + ICO_PEN + '</span></div>') +
+      '<div class="hr"></div>' +
+      field('状态上报频率',
+        seg(REPORT_STEPS.map(n => [n + 's', n === s.report]), 'report', 'sys')) +
+    '</section>';
+  /* 页眉整条不要（进本屏后不再给模式切换入口，与屏幕 05、06、07、09 一致）；
+     footer = 屏幕 05 同款功能页脚（返回改走 data-back）+ 本屏的编辑参数弹窗 */
+  return shell({ group: '', body: body, footer: editFoot(true) + editItemModal() });
 }
 
 /* ============================================================
@@ -2174,7 +2177,7 @@ const SCREENS = [
   /* 屏幕 05 */ { g: '运维模式', n: 'SIM 链路详情',         h: simPage },
   /* 屏幕 06 */ { g: '运维模式', n: '4G基站',               h: () => renderBase(BTS4) },
   /* 屏幕 07 */ { g: '运维模式', n: '5G基站',               h: () => renderBase(BTS5) },
-  /* 屏幕 08 */ { g: '系统设置', n: '待完善',               h: renderSettings },
+  /* 屏幕 08 */ { g: '系统设置', n: '平台与上报',           h: renderSettings },
   /* 屏幕 09 */ { g: '运维模式', n: '卫星链路设置',         h: satSettingsPage }
 ];
 /* 屏幕 05 / 09 的下标必须与上面的 SIM_PAGE / SAT_PAGE 一致（屏幕号 - 1） */
@@ -2256,6 +2259,13 @@ document.addEventListener('click', e => {
     return;
   }
 
+  /* 屏幕 08：状态上报频率，四档选择器（值是 '15s' 这样的档位文案，写回时取整数秒） */
+  if (segEl.dataset.t === 'sys') {
+    SYS_SET.report = parseInt(value, 10);
+    refreshPage(SETTINGS_PAGE, renderSettings);
+    return;
+  }
+
   /* 屏幕 06 / 07：左侧「小区状态」开关（激活 / 禁用）改的是顶层字段 status；
      参数卡片里的「工作模式」开关（FDD / TDD）改的是 b.cells 里那一项的值（data-i 指第几项）。
      写回后都重渲染本屏 */
@@ -2281,27 +2291,48 @@ document.addEventListener('click', e => {
   refreshPage(SIM_PAGE, simPage);
 });
 
-/* 屏幕 06 / 07 的「编辑参数」：点设置项弹输入框，确定后写回数据
-   ① 打开：点的是 .edit-hit（基站标识那块大字 / 任意一张参数卡片）时，
+/* 点「可编辑项」弹输入框的那些目标（屏幕 06 / 07 的基站设置、屏幕 08 的系统设置）：
+   key = .edit-hit 的 data-e，p = data-p，i = data-i（只有参数卡片用得上，指第几项）。
+   统一解析成 { name, value, set, page, render } —— 项名、当前值、写回、哪一屏、怎么重渲染，
+   打开与确定两处各调一次，于是三种来源（基站标识 / 参数卡片 / 平台地址）共用同一套弹窗逻辑 */
+function editTarget(key, p, i) {
+  /* 屏幕 08：整屏只有「管理平台地址」一处可编辑项 */
+  if (key === 'sys') {
+    return {
+      name: '管理平台地址', value: SYS_SET.ip,
+      set: v => { SYS_SET.ip = v; },
+      page: SETTINGS_PAGE, render: renderSettings
+    };
+  }
+  const b = BTS_KEYS[key];
+  if (!b) return null;
+  const isCell = p === 'cells';                    /* 参数卡片：只改数值、不动单位 */
+  return {
+    name:  isCell ? b.d.cells[i][0] : b.d.idName,
+    value: isCell ? b.d.cells[i][1] : b.d.id,
+    set: v => { if (isCell) b.d.cells[i][1] = v; else b.d.id = v; },
+    page: b.page, render: () => renderBase(b.d)
+  };
+}
+
+/* 屏幕 06 / 07 / 08 的「编辑参数」：点设置项弹输入框，确定后写回数据
+   ① 打开：点的是 .edit-hit（基站标识那块大字 / 任意一张参数卡片 / 屏幕 08 的平台地址）时，
       把弹窗的项名与输入框按这一项填好 —— 目标存在弹窗自己的 dataset 上，
       所以同一屏只需要一个弹窗实例（editItemModal() 里那份静态骨架）。
-   ② 确定：写回 b.d 上对应的字段（.cell 的 data-i 指 b.cells 的第几项，
-      只改数值、不动单位），再重渲染本屏。
+   ② 确定：按 editTarget() 解析出的 set() 写回数据，再重渲染那一屏。
       「取消 / ✕ / 点遮罩」由上面的通用遮罩处理直接收起，这里不拦，故不改数据。 */
 document.addEventListener('click', e => {
   const hit = e.target.closest('.edit-hit');
   if (hit) {
-    const b = BTS_KEYS[hit.dataset.e];
     const screen = hit.closest('.screen');
     const mask = screen && screen.querySelector('.modal-mask[data-modal="edit"]');
-    if (!b || !mask) return;
-    const isCell = hit.dataset.p === 'cells';
-    const i = +hit.dataset.i;
-    mask.querySelector('.edit-name').textContent = isCell ? b.d.cells[i][0] : b.d.idName;
-    mask.querySelector('.edit-inp').value = isCell ? b.d.cells[i][1] : b.d.id;
+    const t = mask && editTarget(hit.dataset.e, hit.dataset.p, +hit.dataset.i);
+    if (!t) return;
+    mask.querySelector('.edit-name').textContent = t.name;
+    mask.querySelector('.edit-inp').value = t.value;
     mask.dataset.e = hit.dataset.e;
     mask.dataset.p = hit.dataset.p;
-    if (isCell) mask.dataset.i = i; else delete mask.dataset.i;
+    if (hit.dataset.i === undefined) delete mask.dataset.i; else mask.dataset.i = hit.dataset.i;
     mask.classList.add('on');
     mask.querySelector('.edit-inp').focus();
     return;
@@ -2310,12 +2341,11 @@ document.addEventListener('click', e => {
   const ok = e.target.closest('.modal-mask[data-modal="edit"] .cbtn.ok');
   if (!ok) return;
   const mask = ok.closest('.modal-mask');
-  const b = BTS_KEYS[mask.dataset.e];
   const v = mask.querySelector('.edit-inp').value.trim();
-  if (!b || !v) return;                     /* 数据没了或填了空值：不改 */
-  if (mask.dataset.p === 'cells') b.d.cells[+mask.dataset.i][1] = v;
-  else b.d.id = v;
-  refreshPage(b.page, () => renderBase(b.d));
+  const t = v && editTarget(mask.dataset.e, mask.dataset.p, +mask.dataset.i);
+  if (!t) return;                           /* 数据没了或填了空值：不改 */
+  t.set(v);
+  refreshPage(t.page, t.render);
 });
 
 /* 亮度滑块：拖动时同步已选段填充（--p）与百分比读数 */
@@ -2344,7 +2374,7 @@ const RULER_SEL = [
   '.sim-dbm', '.sim-rate', '.sim-ping', '.fix-fw',
   '.bs-card', '.bs-head', '.bs-name', '.bs-meta', '.bs-id', '.bs-state',
   '.foot-bar', '.foot-group', '.foot-btn',
-  '.blank', '.blank-mark', '.act-row', '.act-btn',
+  '.sys-row', '.sys-ctl',
   '.modal-mask', '.modal', '.modal-head', '.modal-title', '.modal-close', '.modal-body', '.ver-notes', '.ver-box',
   '.bright-body', '.slider', '.bright-val', '.edit-inp',
   '.confirm-foot', '.cbtn', '.confirm-tip',
@@ -2374,7 +2404,7 @@ const RULER_NAMES = {
   'sim-ping': '时延', 'fix-fw': '等宽数值域', 'bs-card': '基站卡', 'bs-head': '基站卡头', 'bs-name': '基站名',
   'bs-id': '物理小区ID', 'bs-num': '连接用户数', 'bs-meta': '基站指标行', 'bs-kv': '基站指标', 'bs-state': '基站状态',
   'foot-bar': '功能页脚', 'foot-group': '页脚按钮组', 'foot-btn': '页脚按钮',
-  'blank': '留白区', 'blank-mark': '占位水印', 'act-row': '操作按钮组', 'act-btn': '操作按钮',
+  'sys-row': '设置行', 'sys-ctl': '设置行控件',
   'modal-mask': '弹窗遮罩', 'modal': '弹窗', 'modal-head': '弹窗标题栏',
   'modal-title': '弹窗标题', 'modal-close': '关闭按钮', 'modal-body': '弹窗内容', 'ver-notes': '发布说明',
   'ver-box': '发布说明文本框',
