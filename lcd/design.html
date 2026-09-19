@@ -6,38 +6,63 @@
 <title>中油测井显控看板 · 854x480 设计稿</title>
 <style>
   /* ============================================================
-     源码导航 · 屏幕序号速查（共 14 屏 = 9 屏设计稿 + 5 屏预留空白，单列纵向展示）
+     源码导航 · 屏幕序号速查（共 9 屏，顶部页签逐屏切换）
        屏幕 01  工程模式 · 直连模式（首页默认）
        屏幕 02  工程模式 · 聚合模式
-       屏幕 03  工程模式 · 卫星传输
-       屏幕 04  运维模式 · 首页默认 · 中国移动1
-       屏幕 05  运维模式 · 中国移动2
-       屏幕 06  运维模式 · 中国电信
-       屏幕 07  运维模式 · 中国联通（离线）
-       屏幕 08  运维模式 · 4G基站
-       屏幕 09  运维模式 · 5G基站
-       屏幕 10~14  预留空白区域（无标题、无内容，由 build() 生成）
+       屏幕 03  工程模式 · 卫星传输（左：卫星示意图 + 链路状态 / 信噪比 / 卫星参数，
+                 中：上/下行速率 + 链路时延 + 链路抖动，右：基站状态；底部与 01、02 同款功能页脚）
+       屏幕 04  运维模式 · 首页默认 · 设置入口（无页签栏：内容区上「链路设置」6 条链路
+                 SIM1~SIM5 + 卫星链路，下「基站设置」4G / 5G 基站，点卡片进二级页）
+       屏幕 05  运维模式 · SIM 链路详情（一屏通吃：04 上 5 张 SIM 卡都进这一屏，
+                 页内靠页签栏在 SIM1~SIM5 之间就地切换，不再一条链路画一屏）
+       屏幕 06  运维模式 · 4G基站（基站设置页：标识与小区状态可改、参数卡片可改）
+       屏幕 07  运维模式 · 5G基站（同上，共用一个模板、数据不同）
+       屏幕 08  系统设置 · 待完善（独立整屏：无页眉模式切换、无页签栏、无底栏，
+                 内容区只有正中水印 + 居中靠下的「返回 / 确定」按钮）
+       屏幕 09  运维模式 · 卫星链路设置（04 上「卫星链路」卡的落点：精简版只放
+                 链路开关 / 卫星系统 / 频段 / 卫星标识 四项可编辑参数，单列竖排、
+                 标签与控件各对齐成一列，卡片铺满内容区只让开底部页脚）
 
      CSS 分段与屏幕的对应（下面每段注释末尾也标了「→ 屏幕 xx」）：
-       页面外壳：页眉 / 页签栏 / 内容区 / 底栏 …… 全部 9 屏
-       屏幕 01、02 专用：链路状态列表（.sim-*）+ 基站状态卡片（.bs-card，底色随在线状态淡绿 / 淡红）+ 功能页脚（.foot-bar / .foot-btn）
-                     屏幕 01、02 用功能页脚替代底栏，其余 7 屏仍为提示底栏
-       弹窗（.modal / .modal-mask）…… 屏幕 01、02，由页脚按钮触发：
-                      「版本信息」→ 版本号 / 构建时间 / commit id / 发布说明
-                      「屏幕亮度」→ .modal.sm 内一个水平滑块 + 百分比读数
-                      「重启设备」→ .modal.confirm 二级确认（取消 / 确认重启）
+       页面外壳：内容区 …… 全部 9 屏；页眉（.bar-top，整条只有工程 / 运维两个模式按钮）
+                     屏幕 01~04（屏幕 05~07、09 是运维模式下的二级页、屏幕 08 整屏独立，
+                     都不给模式切换入口）；
+                     页签栏（.bar-nav）屏幕 01~03、05~07（屏幕 04 是入口页，不放页签栏）；
+                     底部栏：屏幕 01、02、03、05、06、07、09 用功能页脚，屏幕 04、08 整块不要底部
+       屏幕 01、02、03 专用：基站状态卡片（.bs-card，底色随在线状态淡绿 / 淡红）+ 功能页脚（.foot-bar / .foot-btn）；
+                     屏幕 01、02 另有链路状态列表（.sim-*）
+       屏幕 05、06、07、09 专用：功能页脚（.foot-bar / .foot-btn）—— 二级设置页共用 editFoot()：
+                     两个按钮都靠右下角，左「保存&应用」右「返回」（都回屏幕 04），
+                     填充色区分主次：保存蓝实底（.foot-btn.primary）、返回灰实底（.foot-btn.secondary）
+       屏幕 03 专用：指标卡（.m-card / .m-ico / .m-txt / .m-name，横排：图标 + 名称 + 数值，图标与数值同色）
+       屏幕 04 专用：设置入口卡（.set-grid / .set-card / .set-l / .set-r / .set-ico / .set-t1 / .set-t2 / .set-go，
+                     上「链路设置」3 列 × 2 行、下「基站设置」2 列，整卡即触摸热区；
+                     两种卡都是左右分栏 —— 链路卡左「链路图标 + 标识」、右竖排「在线状态 + 运营商」；
+                     基站卡左「基站图标 + 基站名」、右竖排三行「在线状态 .bts-state + 物理小区ID / 连接用户数 .set-kv」）
+       屏幕 08 专用：空白占位水印（.blank / .blank-mark）+ 底部操作区（.act-row / .act-btn）
+       弹窗（.modal / .modal-mask）…… 屏幕 01、02、03，由页脚按钮与模式页签触发：
+                     「版本信息」→ 版本号 / 构建时间 / commit id / 发布说明
+                     「屏幕亮度」→ .modal.sm 内一个水平滑块 + 百分比读数
+                     「重启设备」→ .modal.confirm 二级确认（取消 / 确认重启）
+                     模式页签（直连 / 聚合 / 卫星传输）→ .modal.confirm.mode 二级确认
+                     （确定 / 取消 + 一行「确认切换到 xx 模式吗？」提示 .confirm-tip，见 modeModal）
+                     …… 屏幕 05、06、07、09 页脚的「保存&应用」复用同一套 .modal.confirm（取消 / 保存并应用）
+                     …… 屏幕 06、07 点设置项弹出 .modal.edit（项名 + 输入框 + 确定 / 取消，见 editItemModal）
        通用控件：
-         环形仪表 .gauge-wrap …… 屏幕 03、04~07
-         大数值 .kpi …… 屏幕 02、03、08、09，以及 04~07 的速率面板
-         速率趋势 .trend / 键值列表 .kv …… 屏幕 03
-         信号格 .bars …… 屏幕 01、02、04~07
-         条形仪表 .meter …… 屏幕 04~09
-         分段选择器 .seg …… 屏幕 03、04~09
+         卫星示意图 .sat-fig …… 屏幕 03 左栏（替代原环形仪表）
+         大数值 .kpi …… 屏幕 02、03、06、07
+         键值列表 .kv …… 屏幕 03 与版本信息弹窗
+         信号格 .bars …… 屏幕 01、02
+         条形仪表 .meter …… 屏幕 05~07
+         分段选择器 .seg …… 屏幕 05~07、09；链路状态徽标 .state-slot …… 屏幕 03（点击循环切换三态）
          在线状态点 .dot / .bs-state、.sim-state（在线 / 拨号中 / 离线 / 未插卡 / 已禁用）…… 屏幕 01、02
-       速率面板（.row-panel / .half）…… 屏幕 02、04~07
+         页签里的链路状态点 .tab .sd（同一套五色，卫星那条取 .state-slot 三色）…… 屏幕 05~07 页签栏
+       速率面板（.row-panel / .half）…… 屏幕 02
        聚合链路状态条（.agg-bar，五列：首列连接状态 + 4 个 KPI）…… 屏幕 02
-       指标 + 邻区信息表（.metric / .thead / .trow / .lock / .empty）…… 屏幕 04~07
-       基站参数字卡片（.cells / .cell）…… 屏幕 08、09
+       可编辑值框（.inp）…… 屏幕 05、09（两屏的参数设置卡）；
+                     行尾那支铅笔（.pen）还单独用在屏幕 06、07 的基站标识与参数卡片上
+       屏幕 05（SIM 链路详情，设置页）专用：相邻小区两栏：固定表头 + 手动滚动的文本（.roll-head / .rollview / .empty）
+       基站参数字卡片（.cells / .cell）…… 屏幕 06、07
      ============================================================ */
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -60,9 +85,7 @@
     --mauve:  #cba6f7;
     --teal:   #94e2d5;
 
-    --s: .42;                        /* 单屏缩放比例 */
-    --cw: calc(854px * var(--s));
-    --ch: calc(480px * var(--s));
+    --ds: 1;                         /* 活屏（跳转调试台那块 854×480）的缩放，由 fitDbg() 按窗口宽自适应 */
   }
 
   body {
@@ -121,39 +144,6 @@
     cursor: pointer;
   }
   .tools button:hover { background: var(--line2); }
-  .tools span { font-size: 12px; font-family: monospace; color: var(--txt2); min-width: 38px; text-align: center; }
-
-  /* ======================= 平铺舞台 ======================= */
-  .stage { flex: 1; overflow: auto; padding: 22px 22px 60px; }
-  .grid {
-    display: grid;
-    grid-template-columns: var(--cw);   /* 单列纵向排列 */
-    gap: 40px;                          /* 屏与屏之间的间隔 */
-    margin: 0 auto;
-    width: max-content;
-  }
-
-  .frame { display: flex; flex-direction: column; gap: 7px; }
-  .frame-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--txt2); }
-  .frame-head .idx { font-family: monospace; color: var(--muted); }
-  .frame-head .fgroup { font-size: 10px; font-weight: 600; color: #11111b; background: var(--blue); border-radius: 3px; padding: 1px 6px; }
-  .frame-head .fgroup.ops { background: var(--teal); }
-  .frame-head .fname { font-weight: 600; color: var(--txt); }
-  .frame-head .fsize { margin-left: auto; font-family: monospace; font-size: 11px; color: var(--muted); }
-
-  .viewport {
-    width: var(--cw);
-    height: var(--ch);
-    overflow: hidden;
-    border-radius: 7px;
-    box-shadow: 0 10px 28px rgba(0, 0, 0, .45);
-    background: var(--scr);
-  }
-  .frame.flash .viewport { animation: flash .9s ease-out; }
-  @keyframes flash {
-    0%   { box-shadow: 0 0 0 0 rgba(137, 180, 250, .95); }
-    100% { box-shadow: 0 0 0 14px rgba(137, 180, 250, 0); }
-  }
 
   /* ======================= 屏幕本体：854 x 480 ======================= */
   .screen {
@@ -163,14 +153,13 @@
     background-image:
       radial-gradient(circle at 18% 0%, rgba(137, 180, 250, .07), transparent 55%),
       radial-gradient(circle at 88% 100%, rgba(148, 226, 213, .05), transparent 55%);
-    transform: scale(var(--s));
     transform-origin: top left;
     display: flex;
     flex-direction: column;
     overflow: hidden;
   }
 
-  /* ---- 页眉：右上角模式切换，独立占一行 → 屏幕 01~09 ---- */
+  /* ---- 页眉：右上角模式切换，独立占一行 → 屏幕 01~07 ---- */
   .bar-top {
     flex: 0 0 36px;
     display: flex;
@@ -198,7 +187,7 @@
   .dot { display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px rgba(166, 227, 161, .85); }
   .dot.bad { background: var(--red); box-shadow: 0 0 6px rgba(243, 139, 168, .85); }
 
-  /* ---- 页签栏 → 屏幕 01~09 ---- */
+  /* ---- 页签栏 → 屏幕 01~03、05~07 ---- */
   .bar-nav {
     flex: 0 0 46px;
     display: flex;
@@ -223,8 +212,15 @@
     white-space: nowrap;
   }
   .tab.on { color: #11111b; background: var(--blue); border-color: var(--blue); font-weight: 600; }
+  /* 页签里链路标识前的状态点 → 屏幕 05~07 页签栏
+     配色与屏幕 01 / 02 的在线状态点同一套（在线绿 / 拨号中黄 / 离线红 / 未插卡灰 / 已禁用桃）；
+     「卫星链路」那一枚取屏幕 03 的三态徽标配色（无卫星链路红 / 在线绿 / 离线黄）。
+     这几条写在 .tab.on .sd 前面：选中页签是蓝底，点要反成深色才看得见 */
   .tab .sd { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
-  .tab .sd.off { background: var(--red); }
+  .tab .sd.off, .tab .sd.st-none { background: var(--red); }
+  .tab .sd.dial, .tab .sd.st-off { background: var(--yellow); }
+  .tab .sd.nosim { background: var(--line2); }
+  .tab .sd.disabled { background: var(--peach); }
   .tab.on .sd { background: #11111b; }
 
   /* ---- 内容区 → 屏幕 01~09 ---- */
@@ -261,14 +257,102 @@
   .field .k { color: var(--muted); }
   .hr { height: 1px; background: var(--line); }
 
-  /* ---- 环形仪表 → 屏幕 03、04~07 ---- */
-  .gauge-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 16px; }
-  .gauge { display: flex; align-items: center; gap: 12px; }
-  .ring-num { font-family: monospace; font-size: 22px; font-weight: 700; }
-  .ring-unit { font-size: 10px; font-family: monospace; }
-  .big-hint { font-size: 13px; font-weight: 600; color: var(--teal); }
+  /* ---- 设置入口卡 → 屏幕 04（运维模式首页）----
+     屏幕 04 只做入口：内容区上下两张面板，各用 .set-grid 铺卡片
+     （.links = 3 列 × 2 行放 6 条链路，.bts = 2 列放 2 个基站），
+     卡片按 1fr 均分面板剩余高度 —— 串口屏上整卡就是触摸热区，比小按钮好按。
+     两种卡都走同一套左右分栏（.set-card.link / .set-card.bts 共用一组排布）：
+       链路卡 = 左栏 .set-l 是「链路图标 + 链路标识」，
+         右栏 .set-r 竖排两行：上面在线状态、下面运营商
+         （在线状态：SIM 用屏幕 01 / 02 那套 .sim-state，卫星用屏幕 03 的三态 .state-slot；
+           运营商：.set-t2 + .sim-op + .op-logo，与屏幕 01 / 02 链路列表共用同一份素材；
+           卫星没有运营商，右栏只有状态徽标一行）
+       基站卡 = 左栏 .set-l 是「基站图标 + 基站名」，
+         右栏 .set-r 竖排三行 —— 在线状态 .bts-state、物理小区ID / 连接用户数两行
+         （各为 .set-kv「标签 + 等宽数值」，与屏幕 01~03 基站卡 .bs-* 同一套信息层级；
+           数值取自 BTS4 / BTS5 的 cardPci / cardUe，4G、5G 图标靠波束弧数区分）
+     .set-go 是卡内的右下角箭头，只有挂了 data-go 的卡才渲染，
+     详情页还没建的入口不带箭头，避免出现「看着能点、点下去没反应」 */
+  .set-grid { flex: 1; min-height: 0; display: grid; gap: 8px; }
+  .set-grid.links { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); }
+  .set-grid.bts   { grid-template-columns: repeat(2, 1fr); }
+  .set-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-width: 0;
+    min-height: 0;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .set-card[data-go] { cursor: pointer; }
+  .set-card[data-go]:hover { border-color: var(--blue); }
+  /* 左右分栏后，左右两栏各自成组；右栏整体贴卡片右内边距对齐，
+     多行的右边缘齐平（右对齐），读起来是一列完整的「状态 + 各指标」 */
+  .set-card.link,
+  .set-card.bts {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 14px;
+  }
+  .set-l { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .set-r { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  /* 入口图标按入口类型配色：SIM 卡链路蓝、卫星链路青（与屏幕 03 的示意图同色）、基站紫 */
+  .set-ico { display: block; flex: none; width: 18px; height: 18px; }
+  .set-ico svg { display: block; width: 100%; height: 100%; }
+  .set-ico.sim { color: var(--blue); }
+  .set-ico.sat { color: var(--teal); }
+  /* 两枚基站图标共用一种紫色：4G / 5G 的区别在图形（波束弧数）上，颜色只标「这是基站」这一层，
+     与 SIM 蓝、卫星青一起构成「颜色 = 入口类型、形状 = 同类里的细分」这套规则。
+     基站图标比链路图标大得多（18 → 54，三倍）：基站卡左栏只有图标和基站名，放大后波束弧在屏上数得清 */
+  .set-ico.bts4,
+  .set-ico.bts5 { width: 54px; height: 54px; color: var(--mauve); }
+  .set-t1 { font-family: monospace; font-size: 17px; font-weight: 700; color: var(--txt); letter-spacing: .5px; }
+  .set-t2 { font-size: 11px; color: var(--muted); }
+  /* 基站卡的在线 / 离线：语义与屏幕 01 的 .sim-state 相同，只是名字换成基站的，
+     默认离线（红）、在线（绿 + 呼吸辉光），尺寸对齐链路卡那一行，04 上两种卡的状态行等高 */
+  .bts-state { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+  .bts-state .dot { width: 6px; height: 6px; background: var(--red); box-shadow: none; }
+  .bts-state.on  { color: var(--green); }
+  .bts-state.on .dot { background: var(--green); box-shadow: 0 0 6px rgba(166, 227, 161, .85); }
+  .bts-state.off { color: var(--red); }
+  /* 基站卡右栏的物理小区ID / 连接用户数：标签 muted 小字 + 等宽数值，
+     整行贴右边缘，与上面的在线状态右对齐成一列 */
+  .set-kv { display: flex; align-items: baseline; gap: 5px; }
+  .set-kv .k { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .set-kv .v { font-family: monospace; font-size: 12px; font-weight: 700; color: var(--txt2); }
+  /* 卫星链路卡的状态徽标：配色直接套屏幕 03「链路状态」的三态（.state-slot.st-*），
+     只有内边距要另给 —— 屏幕 03 那份内边距写在 .kv .v.state-slot 上，卡片里的徽标不在 .kv 内。
+     徽标沿用同一个 class，所以它和屏幕 03 那枚归同一个点击循环管（点哪一枚都是三态一起切），
+     卡片上的状态与屏幕 03 始终一致，也方便在设计串口屏时把三态宽度都量出来 */
+  .set-card .state-slot {
+    display: inline-block; padding: 1px 8px; border-radius: 5px;
+    font-size: 11px; font-weight: 600; color: #11111b;
+  }
+  .set-go { position: absolute; right: 9px; bottom: 8px; width: 13px; height: 13px; color: var(--line2); }
+  .set-go svg { display: block; width: 100%; height: 100%; }
+  .set-card[data-go]:hover .set-go { color: var(--blue); }
 
-  /* ---- 信号格 → 屏幕 01、02、04~07 ---- */
+  /* ---- 卫星示意图 → 屏幕 03 左栏（替代原环形仪表） ----
+     用的是 Tabler Icons 的 satellite（outline）图形本身，纯描边无填充，
+     描边走 currentColor，颜色由本类的 color（teal）决定；
+     用 flex:1 吃掉左栏剩余高度，svg 靠 preserveAspectRatio 等比缩放，不会撑破面板 */
+  .sat-fig { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; color: var(--teal); }
+  .sat-fig svg { display: block; width: 100%; height: 100%; }
+
+  /* 左栏纵向预算：本栏要挤下 8 个块（面板标题 / 示意图 / 链路状态 / 信噪比 + 5 条卫星参数），
+     而栏高只有 338px。为了让示意图拿到足够高度，这里把面板 gap 与键值行内边距各收紧一档；
+     用 .sat-panel 限定，不影响屏幕 01、02 以及版本信息弹窗里共用的 .kv */
+  .sat-panel { gap: 6px; padding: 8px 12px; }
+  .sat-panel .kv { padding: 3px 0; }
+
+  /* ---- 信号格 → 屏幕 01、02、05 ---- */
   .bars { display: flex; align-items: flex-end; gap: 2px; height: 22px; position: relative; }
   .bars i { display: block; width: 5px; border-radius: 1px; background: var(--line); }
   .bars i:nth-child(1) { height: 6px; }
@@ -282,16 +366,24 @@
   /* 无信号（0 格）：灰格表示强度归零，左上角再叠一个红色 ✕ 表示链路不可用 */
   .bars .bars-x { position: absolute; left: -2px; top: 6px; width: 9px; height: 9px; color: var(--red); }
 
-  /* ---- 大数值 → 屏幕 02、03、08、09，以及 04~07 的速率面板 ---- */
+  /* ---- 大数值 → 屏幕 02、03、06、07 ---- */
   .kpi { display: flex; align-items: baseline; gap: 6px; }
   .kpi .num { font-family: monospace; font-size: 36px; font-weight: 700; line-height: 1.05; color: var(--green); }
   .kpi .u { font-size: 11px; color: var(--muted); }
   .kpi .of { font-size: 18px; color: var(--muted); }
-  .kpi.sm .num { font-size: 24px; }
 
-  /* ---- 速率趋势 → 屏幕 03 ---- */
-  .trend { flex: 1 1 auto; min-height: 26px; display: flex; align-items: flex-end; gap: 2px; }
-  .trend i { display: block; width: 5px; border-radius: 1px; }
+  /* ---- 指标卡（图标 + 名称 + 数值） → 屏幕 03 中栏四张指标卡 ----
+     卡片走横排：左侧一枚圆形图标当徽章，右侧名称与数值上下两行。
+     图标是内联 SVG（全局 ico()，24×24 viewBox），描边走 currentColor，颜色由卡上的行内 accent 色决定
+     （与该卡数值同色），名称单独锁白，不跟着 accent 染色；四张卡图标同尺寸同线宽，保持成组观感。
+     本屏底部是功能页脚（与屏幕 01、02 等高），栏高约 338px，四张卡均分后每张约 75px；
+     卡片纵向内边距收到 7px，让「名称 + 数值」两行正好落在卡内；
+     图标放大到 30px 仍低于右侧两行文字的高度，不会把卡片撑高，也不需要压缩 36px 的大数值字号 */
+  .m-card { flex-direction: row; align-items: center; gap: 10px; padding: 7px 12px; }
+  .m-ico { flex: none; width: 30px; height: 30px; display: block; }
+  .m-ico svg { display: block; width: 100%; height: 100%; }
+  .m-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .m-name { font-size: 12px; font-weight: 600; color: var(--txt); letter-spacing: .4px; }
 
   /* ---- 键值列表 → 屏幕 03 ---- */
   .kv { display: flex; align-items: center; justify-content: space-between; font-size: 12px; padding: 5px 0; border-bottom: 1px dashed rgba(69, 71, 90, .45); }
@@ -299,34 +391,67 @@
   .kv .k { color: var(--muted); }
   .kv .v { font-family: monospace; color: var(--txt); }
 
-  /* ---- 分段选择器 → 屏幕 01、03、04~07、08、09 ---- */
+  /* ---- 链路状态徽标 → 屏幕 03「链路状态」行的值域 ----
+     同一时刻只显示一种状态（无卫星链路 / 在线 / 离线），不用分段选择器：
+     徽标底色即该状态的语义色（无卫星链路红 / 在线绿 / 离线黄），
+     文字统一改用深色 #11111b（与 .seg 选中态同一做法）压住亮底。
+     不设 width、不设 line-height：底色紧贴文字（左右各 6px 内边距），
+     高度沿用 .kv 原本的行盒，因此这一行的高度与改造前完全一致，左栏示意图不会被挤小；
+     代价是徽标宽度随文案变化 —— 正好可用尺子分别量出三种状态的真实控件宽度。
+     点击徽标循环切换三种状态（含默认态），见末尾「链路状态切换」。
+     选择器带上 .kv .v 前缀是为了压过上面的 .kv .v 文字色（同为类选择器时后者优先） */
+  .kv .v.state-slot { display: inline-block; padding: 0 6px; border-radius: 5px; font-weight: 600; color: #11111b; cursor: pointer; user-select: none; }
+  .state-slot.st-none { background: var(--red); }
+  .state-slot.st-on   { background: var(--green); }
+  .state-slot.st-off  { background: var(--yellow); }
+
+  /* ---- 分段选择器 → 屏幕 05~07。屏幕 05 上这几排是能点的开关（.seg 上带 data-f），
+     所以给个手型；屏幕 06、07 的只是标尺，不可点，保持默认指针 */
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
   .seg > span { font-size: 11px; line-height: 20px; padding: 0 12px; color: var(--muted); background: var(--panel2); }
   .seg > span.on { color: #11111b; background: var(--green); font-weight: 600; }
   .seg > span.on.bad { background: var(--red); }
+  .seg[data-f] > span { cursor: pointer; }
 
-  /* ---- 条形仪表 → 屏幕 01、02、04~09 ---- */
+  /* ---- 可编辑值框 → 屏幕 05「SIM 参数设置」卡的三行 ----
+     屏上是「文本控件 + 点击弹键盘」，设计稿画成一张小值框：等宽的值 + 行尾一支铅笔；
+     值框自带底色与描边（.field 是两端对齐，所以它整块贴右边缘）。
+     行高比旁边的分段选择器矮一档（16px + 上下 1px 描边 = 18px，选择器是 22px）：
+     卡片所在行的高度是定死的（屏幕 05 上下两行要平分内容区），
+     「标题 + 3 个选择器 + 3 个值框」正好落在卡内，六行都不会顶到卡片下边框 */
+  .inp { display: inline-flex; align-items: center; gap: 6px; padding: 0 7px;
+         background: var(--panel2); border: 1px solid var(--line2); border-radius: 5px; }
+  .inp .v { font-family: monospace; font-size: 12px; line-height: 16px; color: var(--txt); }
+
+  /* 铅笔 = 「这一项能改」的提示图标 —— 屏幕 05 / 09 的可编辑值框行尾一支，
+     屏幕 06 / 07 的基站标识与每个参数小卡片（.cell）上也各点一支，同一枚图标同一套配色 */
+  .inp .pen, .cell .pen, .big-id .pen { flex: none; width: 11px; height: 11px; color: var(--muted); }
+  .inp .pen svg, .cell .pen svg, .big-id .pen svg { display: block; width: 100%; height: 100%; }
+  .big-id .pen { width: 13px; height: 13px; }   /* 标识字大一号（24px），笔跟着大一档 */
+
+  /* ---- 条形仪表 → 屏幕 05~07 ---- */
   .meter { display: block; width: 100%; height: 7px; border-radius: 4px; background: var(--line); overflow: hidden; }
   .meter i { display: block; height: 100%; border-radius: 4px; }
 
-  /* ---- 指标（时延 / 抖动） → 屏幕 04~07 ---- */
-  .metric { display: flex; align-items: baseline; gap: 6px; font-size: 12px; }
-  .metric .k { color: var(--muted); min-width: 30px; }
-  .metric .v { font-family: monospace; font-size: 22px; font-weight: 700; color: var(--mauve); }
-  .metric.jit .v { color: var(--peach); }
-  .metric .u { font-size: 11px; color: var(--muted); }
+  /* ---- 相邻小区两栏（固定表头 + 手动滚动的文本） → 屏幕 05 下半屏 ----
+     屏上每一栏就是一个滑动文本控件：表头固定，下面是同一段等宽文字，手指拖动才滚
+     （下半屏并排两块，左边 LTE、右边 NR-5G）。
+     设计稿照抄这个结构 —— 表头与每一行都是同一套等宽网格（cellLine 补空格对齐），
+     字号行高也一致，两行必定对得上；.rollview 是滚动视窗，行数多于一屏时
+     出滚动条（设计稿上就是滚轮 / 触摸拖动），不自动滚，所以内容只有一份、没有动画。
+     滚动条特意画细（4px），与屏上滑动文本控件那条窄滚动条一个观感 */
+  .roll-head { margin: 0; font-family: monospace; font-size: 12px; line-height: 17px; color: var(--txt2);
+               padding-bottom: 4px; border-bottom: 1px solid var(--line); white-space: pre; }
+  .rollview { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin;
+              scrollbar-color: var(--line2) transparent; }
+  .rollview pre { margin: 0; font-family: monospace; font-size: 12px; line-height: 17px; color: var(--txt2); white-space: pre; }
+  .rollview::-webkit-scrollbar { width: 4px; }
+  .rollview::-webkit-scrollbar-track { background: transparent; }
+  .rollview::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 2px; }
 
-  /* ---- 邻区信息表 → 屏幕 04~07 ---- */
-  .thead, .trow { display: grid; grid-template-columns: 1.5fr .7fr 1.3fr 1fr .8fr; gap: 6px; align-items: center; }
-  .thead { font-size: 11px; color: var(--txt2); padding: 4px 0; border-bottom: 1px solid var(--line); }
-  .tbl { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .trow { flex: 1; font-size: 12px; border-bottom: 1px solid rgba(49, 50, 68, .55); }
-  .trow:last-child { border-bottom: none; }
-  .lock { font-size: 11px; line-height: 14px; padding: 1px 8px; border-radius: 3px; border: 1px solid var(--line2); color: var(--txt2); }
-  .lock.on { color: var(--yellow); border-color: rgba(249, 226, 175, .5); background: rgba(249, 226, 175, .12); }
   .empty { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--muted); }
 
-  /* ---- 速率面板 + 聚合总览（.row-panel / .half） → 屏幕 02、04~07 ---- */
+  /* ---- 速率面板 + 聚合总览（.row-panel / .half） → 屏幕 02 ---- */
   .row-panel { flex-direction: row; align-items: center; gap: 0; }
   .half { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 0 12px; border-left: 1px solid var(--line); }
   .half:first-child { border-left: none; padding-left: 0; }
@@ -348,8 +473,9 @@
   .agg-bar .agg-state .st.on  { color: var(--green); }
   .agg-bar .agg-state .st.off { color: var(--red); }
 
-  /* ---- 基站参数字卡片 → 屏幕 08、09 ---- */
-  .big-id { font-family: monospace; font-size: 24px; font-weight: 700; color: var(--blue); letter-spacing: 1px; }
+  /* ---- 基站参数字卡片 → 屏幕 06、07 ---- */
+  .big-id { display: flex; align-items: center; gap: 8px;
+            font-family: monospace; font-size: 24px; font-weight: 700; color: var(--blue); letter-spacing: 1px; }
   .cells { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .cell {
     background: var(--panel2);
@@ -362,13 +488,23 @@
     gap: 3px;
     min-height: 0;
   }
-  .cell.span2 { grid-column: span 2; }
   .cell .k { font-size: 11px; color: var(--muted); }
-  .cell .v { font-family: monospace; font-size: 19px; font-weight: 700; color: var(--txt); }
+  /* 值这一行排成横向 flex：等宽数值 +（单位 <small>）+ 行尾一支铅笔 —— 屏幕 06、07 的
+     每个参数都是可设置项，铅笔跟可编辑值框用的是同一枚图标 */
+  .cell .v { display: flex; align-items: center;
+             font-family: monospace; font-size: 19px; font-weight: 700; color: var(--txt); }
+  .cell .v .pen { margin-left: 6px; }
   .cell .v small { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 4px; }
-  .cell-hint { font-size: 11px; color: var(--muted); }
+  /* 卡片里的选择器（屏幕 06、07 的「工作模式」FDD / TDD）：
+     卡片是竖排 flex，.seg 作为它的子项会被拉满整格宽；而 .seg 里的按钮是按文字宽度排的，
+     两个按钮只占左侧一小段，右边那截空在 .seg 的边框里 —— 看着就像多了一个空白按钮。
+     故让按钮等分整格宽度（文字居中），整行都是可按的按钮，既没有空档也好点 */
+  .cell .seg > span { flex: 1; text-align: center; }
+  /* 卡内 / 卡头小字：屏幕 06、07 用来写容量说明，屏幕 05 锁小区卡用来写锁定后的行为
+     （放在卡头右侧，标题是加粗的，这里压回常规字重） */
+  .cell-hint { font-size: 11px; font-weight: 400; color: var(--muted); }
 
-  /* ---- 链路状态列表（5 条 SIM 链路） → 屏幕 01、02 ---- */
+  /* ---- 链路状态列表 → 屏幕 01（直连 · SIM4/SIM5 两条）、屏幕 02（聚合 · 5 条） ---- */
   .sim-head, .sim-row {
     display: grid;
     grid-template-columns: 56px 72px 58px 100px 1fr 50px;
@@ -385,6 +521,9 @@
   .sim-list { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .sim-row { flex: 1; font-size: 12px; border-bottom: 1px solid rgba(49, 50, 68, .55); }
   .sim-row:last-child { border-bottom: none; }
+  /* 直连模式（屏幕 01）只有 SIM4 / SIM5 两条链路，行不做撑高：
+     行高与聚合模式（屏幕 02 的 5 行均分结果，31px）保持一致，余下空间留空 */
+  .panel:not(.sim-agg) .sim-row { flex: none; height: 31px; }
   .sim-name { font-family: monospace; font-size: 13px; font-weight: 700; color: var(--txt); }
   /* 运营商列 = 官方 logo + 运营商名称
      图形一律放进 14×14 的方框内等比缩放（contain）：中国移动 / 中国电信的图形接近正方形、
@@ -418,8 +557,9 @@
 
   /* 屏幕 02 专属：数值位宽固定 —— 「实时带宽 / 时延」的单位已提到表头（/Mbps、/ms），
      数值列只留数字，小数点与个位在 5 行之间落在同一条竖线上，不再随位数左右跳动。
-     位宽固定的代价是带宽列比屏幕 01 宽，因此把横向空间重新分配：
-     链路 / 运营商 / 在线状态 / 信号强度四列放宽，带宽列收窄到刚好容下 ↑/↓ 两个数值 */
+     位宽固定后带宽列偏宽（屏幕 01 的实时带宽同样走 6ch 定宽，见 simPanel()），
+     故把横向空间重新分配：链路 / 运营商 / 在线状态 / 信号强度四列放宽，
+     带宽列收窄到刚好容下 ↑/↓ 两个数值 */
   .sim-agg .sim-head, .sim-agg .sim-row {
     grid-template-columns: 48px 72px 60px 94px 1fr 50px;
     gap: 8px;
@@ -430,7 +570,7 @@
   .fix-fw.f4 { min-width: 4ch; }
   .fix-fw.f6 { min-width: 6ch; }
 
-  /* ---- 基站状态卡片（上下两张） → 屏幕 01、02 ---- */
+  /* ---- 基站状态卡片（上下两张） → 屏幕 01、02、03 ---- */
   .bs-card {
     flex: 1;
     min-height: 0;
@@ -450,8 +590,11 @@
   .bs-name { font-size: 13px; font-weight: 700; color: var(--txt); }
   .bs-meta { display: flex; align-items: baseline; gap: 16px; }
   .bs-meta > .bs-kv { flex: 1; min-width: 0; }
-  .bs-kv { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
-  .bs-kv .k { font-size: 11px; color: var(--muted); }
+  .bs-kv { display: flex; align-items: baseline; justify-content: space-between; gap: 4px; }
+  /* 标签不许折行：单个指标列只有 101px，「物理小区ID」在 5G 卡（4 位数字值）会差几个像素
+     被挤成两行；这里锁死单行，并靠缩小与数值之间的最小间距腾出余量。
+     数值是右对齐的定宽占位，多余空间仍会由 space-between 补到标签与数值之间，视觉间距不变 */
+  .bs-kv .k { font-size: 11px; color: var(--muted); white-space: nowrap; }
   .bs-id  { font-family: monospace; font-size: 18px; font-weight: 700; color: var(--blue);  letter-spacing: .5px; }
   .bs-num { font-family: monospace; font-size: 18px; font-weight: 700; color: var(--green); }
   /* 基站卡的在线 / 离线：比链路行里的状态字略放大一档，卡片里的状态更好认
@@ -461,7 +604,7 @@
   .bs-state.on  { color: var(--green); }
   .bs-state.off { color: var(--red); }
 
-  /* ---- 底部提示栏 → 屏幕 01~09 ---- */
+  /* ---- 底部提示栏 → 屏幕 04~07 ---- */
   .bar-bot {
     flex: 0 0 24px;
     display: flex;
@@ -472,6 +615,61 @@
     border-top: 1px solid var(--line);
     font-size: 11px;
     color: var(--muted);
+  }
+
+  /* ---- 空白占位页的整屏水印 + 底部操作区 → 屏幕 08（系统设置） ----
+     内容区整块留白，正中压一枚低对比度大字水印；
+     操作按钮不放进页脚，改为在内容区里水平居中、贴底部摆一行；
+     水印不参与交互（pointer-events: none），鼠标停留可按尺寸标注读出其真实像素 */
+  .blank {
+    position: relative;               /* 给底部操作区做定位参照 */
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    user-select: none;
+  }
+  .blank-mark {
+    font-size: 96px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-indent: .12em;               /* 抵掉末字右侧多出的字距，视觉上仍居中 */
+    color: rgba(108, 112, 134, .22);  /* 极淡，读作水印而非正文 */
+  }
+  .act-row {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 26px;                     /* 内容区自带 12px 内边距，合计按钮底边距屏底 38px，落在页面居中的靠下位置 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    pointer-events: auto;             /* 水印层整体不吃事件，按钮要单独收回来 */
+  }
+  /* 两个按钮用填充色区分：返回 = 中性灰实底，确定 = 蓝色实底（深色文字，沿用 .fgroup 标签的配色）
+     实底按钮在串口屏上直接导出成整块按钮素材即可，无需半透明处理 */
+  .act-btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 34px;
+    padding: 0 26px;
+    border: 1px solid var(--line2);
+    border-radius: 6px;
+    background: var(--line);
+    color: var(--txt2);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .act-btn svg { width: 15px; height: 15px; flex: none; }
+  .act-btn.primary {
+    background: var(--blue);
+    border-color: var(--blue);
+    color: #11111b;
+    font-weight: 600;
   }
 
   /* ---- 底部功能页脚（左 2 + 右 2 图标按钮，替代底栏） → 屏幕 01、02 ---- */
@@ -500,11 +698,18 @@
   }
   .foot-btn svg { width: 14px; height: 14px; flex: none; }
   .foot-btn.danger { color: var(--red); border-color: rgba(243, 139, 168, .45); }
+  /* 屏幕 05 页脚那对按钮用填充色区分主次：主操作（保存&应用）蓝实底、
+     次操作（返回）中性灰实底 —— 与屏幕 08「确定 / 返回」那对同一套配色，
+     实底按钮在串口屏上直接导出成整块按钮素材即可 */
+  .foot-btn.primary   { background: var(--blue); border-color: var(--blue); color: #11111b; font-weight: 600; }
+  .foot-btn.secondary { background: var(--line); color: var(--txt2); }
 
   /* ---- 弹窗（.modal / .modal-mask） → 屏幕 01、02 ---- */
   /*      版本信息：点击页脚「版本信息」弹出（宽度 410）
           屏幕亮度：点击页脚「屏幕亮度」弹出（.modal.sm 宽度 300，内含水平滑块）
-          重启确认：点击页脚「重启设备」弹出（.modal.confirm 宽度 340，二级确认） */
+          重启确认：点击页脚「重启设备」弹出（.modal.confirm 宽度 340，二级确认）
+          模式切换：点页签栏「直连 / 聚合 / 卫星传输」弹出（.modal.confirm.mode 宽度 372，二级确认）
+          编辑参数：屏幕 06、07 点设置项弹出（.modal.edit 宽度 360，项名 + 输入框 + 确定 / 取消） */
   .modal-mask {
     position: absolute;
     inset: 0;
@@ -594,11 +799,26 @@
   }
   .bright-val { flex: none; width: 36px; text-align: right; font-size: 13px; color: var(--txt); }
 
-  /* 重启设备二级确认弹窗 → 屏幕 01、02；由页脚「重启设备」按钮触发
-     只有一行按钮，无提示文案；左「确认重启」右「取消」，两个按钮在弹窗内水平居中，
-     「取消」比「确认重启」略大，提供一个更顺手的退出位 */
+  /* 二级确认弹窗 → 屏幕 01、02 的「重启设备」与屏幕 05 的「保存&应用」
+     只有一行按钮，无提示文案；左「确认」右「取消」，两个按钮在弹窗内水平居中，
+     「取消」比确认按钮略大，提供一个更顺手的退出位 */
   .modal.confirm { width: 340px; }
   .modal.confirm .modal-head svg { color: var(--red); }      /* 危险操作：标题栏图标走红 */
+  .modal.confirm.save .modal-head svg { color: var(--green); }  /* 保存并应用不表危险：图标走绿 */
+  /* 模式切换二级确认 → 屏幕 01、02、03 页签栏的「直连 / 聚合 / 卫星传输」：
+     换模式要重建数据链路并重新拨号，当前连接会短暂中断，先让用户确认一次。
+     提示语只有一行「确认切换到 xx 模式吗？」，xx 在点开时填，见 modeConfirm()；
+     一行两个按钮「确定 / 取消」大小一致，靠填充色分主次 ——
+     确定黄实底（.cbtn.warn）、取消灰实底（.cbtn.cancel，与页脚的 .foot-btn.secondary 同色） */
+  .modal.confirm.mode { width: 340px; }
+  .modal.confirm.mode .modal-head svg { color: var(--yellow); }
+  .confirm-tip { padding: 8px 14px 0; text-align: center; font-size: 13px; line-height: 19px; color: var(--txt2); }
+  .confirm-tip b { color: var(--txt); font-weight: 600; }
+  .modal.confirm.mode .cbtn { height: 32px; padding: 0 30px; font-size: 13px; }   /* 两个按钮同尺寸 */
+  .cbtn.warn { background: var(--yellow); border-color: var(--yellow); color: #11111b; font-weight: 600; }
+  .cbtn.warn:hover { background: #f3d68e; border-color: #f3d68e; color: #11111b; }
+  .modal.confirm.mode .cbtn.cancel { background: var(--line); border-color: var(--line); color: var(--txt2); }
+  .modal.confirm.mode .cbtn.cancel:hover { background: var(--line2); border-color: var(--line2); color: var(--txt); }
   .confirm-foot { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 16px 12px 14px; }
   .cbtn {
     display: flex;
@@ -616,6 +836,29 @@
   .cbtn.cancel { height: 32px; padding: 0 30px; font-size: 13px; }   /* 比「确认重启」宽高都大一档 */
   .cbtn.danger { border-color: rgba(243, 139, 168, .5); background: rgba(243, 139, 168, .16); color: var(--red); font-weight: 600; }
   .cbtn.danger:hover { background: rgba(243, 139, 168, .28); }
+
+  /* 编辑参数弹窗 → 屏幕 06、07（点设置项弹出）：项名 + 一个输入框 + 确定 / 取消
+     输入框按等宽字体排，宽度撑满弹窗，跟串口屏上文本输入控件的落位一致 */
+  .modal.edit { width: 360px; }
+  .modal.edit .modal-head svg { color: var(--mauve); }       /* 编辑用紫色铅笔，与卡片上的笔呼应 */
+  .edit-name { font-size: 11px; color: var(--muted); margin-bottom: 5px; }
+  .edit-inp {
+    height: 30px;
+    padding: 0 9px;
+    font-family: monospace;
+    font-size: 13px;
+    color: var(--txt);
+    background: var(--panel2);
+    border: 1px solid var(--line2);
+    border-radius: 5px;
+  }
+  .edit-inp:focus { outline: none; border-color: var(--blue); }
+  .cbtn.ok { border-color: rgba(137, 180, 250, .5); background: rgba(137, 180, 250, .16); color: var(--blue); font-weight: 600; }
+  .cbtn.ok:hover { background: rgba(137, 180, 250, .3); }
+
+  /* 点了会弹编辑弹窗的设置项（屏幕 06、07 的基站标识，以及「数值 + 铅笔」的参数卡片） */
+  .edit-hit { cursor: pointer; }
+  .edit-hit:hover { border-color: var(--line2); }
 
   /* ---- 文本 / 颜色工具类 → 全部 9 屏通用 ---- */
   .mono { font-family: monospace; }
@@ -645,27 +888,118 @@
   .ruler-tip b { font-weight: 700; }
   .ruler-tip .pos { opacity: .75; }
   .ruler-tip[hidden] { display: none; }
+
+  /* ======================= 跳转调试台（评审用外壳，不属于设计稿内容） =======================
+     页面主干就这一块：一块 854×480 的活屏 + 右侧「页面清单 / 跳转记录」；
+     活屏里复用 .screen 本体，因此样式、弹窗、尺寸标注悬停与设计稿完全一致 */
+  .dbg { flex: 1; display: flex; flex-direction: column; padding: 16px 0 22px;
+         background: rgba(24, 24, 37, .5); }
+  .dbg-head { display: flex; align-items: center; gap: 9px; padding: 0 44px 13px; flex-wrap: wrap; }
+  .dbg-title { font-size: 13px; font-weight: 600; color: var(--txt); }
+  .dbg-badge { font-size: 10px; font-weight: 600; color: #11111b; background: var(--yellow); border-radius: 3px; padding: 1px 6px; }
+  .dbg-now { font-family: monospace; font-size: 12px; color: var(--blue); }
+  .dbg-tip { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+  .dbg-body { flex: 1; display: flex; align-items: center; justify-content: center; gap: 18px; padding: 0 44px; }
+  .dbg-stage {
+    flex: 0 0 auto;
+    width: calc(854px * var(--ds));
+    height: calc(480px * var(--ds));
+    overflow: hidden;
+    border-radius: 7px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .45);
+    background: var(--scr);
+  }
+  .dbg-stage .screen { transform: scale(var(--ds)); }   /* 活屏的缩放（按窗口宽自适应） */
+
+  .dbg-side { flex: 0 0 240px; width: 240px; display: flex; flex-direction: column; gap: 6px; }
+  .dbg-side-head { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 11px; font-weight: 600; color: var(--txt2); }
+  .dbg-side-head button {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--line2);
+    background: var(--panel);
+    color: var(--txt2);
+    cursor: pointer;
+  }
+  .dbg-side-head button:hover { background: var(--line); color: var(--txt); }
+
+  .dbg-list { display: flex; flex-direction: column; gap: 3px; }
+  .dbg-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--txt2);
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .dbg-item i { font-style: normal; font-family: monospace; font-size: 10px; color: var(--muted); }
+  .dbg-item .g { font-size: 9px; border-radius: 2px; padding: 0 4px; background: var(--line2); color: var(--txt2); }
+  .dbg-item .g.ops { background: #2f4a48; }
+  .dbg-item:hover { border-color: var(--line2); color: var(--txt); }
+  .dbg-item.on { background: var(--blue); border-color: var(--blue); color: #11111b; font-weight: 600; }
+  .dbg-item.on i { color: #11111b; }
+  .dbg-item.on .g { background: rgba(17, 17, 27, .2); color: #11111b; }
+
+  .dbg-log {
+    height: 170px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 7px 9px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel);
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 16px;
+    color: var(--txt2);
+  }
+  .dbg-log .r { display: flex; gap: 7px; }
+  .dbg-log .n { color: var(--muted); }
+  .dbg-log .a { color: var(--blue); }
+  .dbg-log .w { color: var(--mauve); }
+  .dbg-log .empty { color: var(--muted); font-family: inherit; }
 </style>
 </head>
 <body>
 
-  <!-- 评审用外壳（不属于设计稿内容）：顶部工具栏 + 9 屏画布 -->
+  <!-- 评审用外壳（不属于设计稿内容）：顶部工具栏（含 9 个页签）+ 一块 854×480 活屏 -->
   <header class="toolbar">
     <span class="t-title">中油测井显控看板 <em>· 854×480</em></span>
     <span class="tabs" id="tabs"></span>
     <span class="tools">
-      <button id="zoomOut">-</button>
-      <span id="zoomLabel">自适应</span>
-      <button id="zoomIn">+</button>
-      <button id="reset">复位</button>
       <button id="toggleRuler" style="background:var(--yellow);color:#11111b">隐藏尺寸</button>
     </span>
   </header>
 
-  <!-- 9 屏画布（内容由 build() 按 SCREENS 数组生成，01~09 编号即页面序号） -->
-  <div class="stage">
-    <main class="grid" id="grid"></main>
-  </div>
+  <!-- 跳转调试台（评审用外壳，不属于设计稿内容）：把 9 屏装进一块可点击的 854×480 活屏，
+       验证页眉模式切换 / 页签跳转 / 页脚弹窗与跳转；内容由末尾「八、跳转调试台」的 JS 渲染 -->
+  <section class="dbg">
+    <div class="dbg-head">
+      <span class="dbg-title">跳转调试台</span>
+      <span class="dbg-badge">评审用</span>
+      <span class="dbg-now" id="dbgNow"></span>
+      <span class="dbg-tip">点屏内页眉的模式按钮 / 页签 / 页脚按钮即可跳转，右侧「跳转记录」按顺序记下每一步</span>
+    </div>
+    <div class="dbg-body">
+      <div class="dbg-stage"><div class="screen" id="dbgScreen"></div></div>
+      <aside class="dbg-side">
+        <div class="dbg-side-head"><span>页面清单</span><button id="dbgHome">回首页</button></div>
+        <div class="dbg-list" id="dbgList"></div>
+        <div class="dbg-side-head"><span>跳转记录</span><button id="dbgClear">清空</button></div>
+        <div class="dbg-log" id="dbgLog"></div>
+      </aside>
+    </div>
+  </section>
 
   <div id="rulerTip" class="ruler-tip" hidden></div>
 
@@ -676,49 +1010,131 @@
        屏幕 01  renderDirect()            …… 四、九个页面 → 「屏幕 01」
        屏幕 02  renderAgg()               …… 四、九个页面 → 「屏幕 02」
        屏幕 03  renderSat()               …… 四、九个页面 → 「屏幕 03」
-       屏幕 04  renderOperator(OPS[0])    …… 共用模板 renderOperator()，屏幕 04~07
-       屏幕 05  renderOperator(OPS[1])        四个运营商只是样例数据不同，
-       屏幕 06  renderOperator(OPS[2])        数据源见「一、样例数据 → OPS」
-       屏幕 07  renderOperator(OPS[3])        传入 OPS[3]（中国联通）时自动变为离线态
-       屏幕 08  renderBase(BTS4)          …… 共用模板 renderBase()，屏幕 08、09
-       屏幕 09  renderBase(BTS5)              数据源见「一、样例数据 → BTS4 / BTS5」
-       屏幕 10~14  预留空白区域            …… 「五、页面清单」的 PLACEHOLDERS，空画面无内容
+       屏幕 04  renderOpsHome()           …… 运维模式首页：只做设置入口，无页签栏、无底部栏；
+                                              两种卡内都是左右分栏 = 左「图标 + 名称」/
+                                              右竖排「在线状态（SIM 用 .sim-state、卫星用 .state-slot、
+                                              基站用 .bts-state）+ 各自的第二、三行」（链路第二行是
+                                              运营商 logo + 名称，基站是物理小区ID / 连接用户数）；
+                                              基站 4G / 5G 图标见 ICO_BTS4 / ICO_BTS5，
+                                              这两枚在入口卡上按 54px 走（链路图标的 18px 三倍）；
+                                              入口数据见「一、样例数据 → OPS_HOME_LINKS / OPS_HOME_BTS」
+       屏幕 05  simPage()                 …… 共用模板 renderOperator()，只有这一屏：
+                                              一屏通吃 5 条 SIM 链路，页签栏点哪条就把本屏
+                                              重渲染成哪条（opsSel），数据源见「一、样例数据 → OPS」；
+                                              页签文案固定 SIM1~SIM5 + 一条卫星链路，
+                                              页签上那颗状态点跟着各自的在线状态配色；
+                                              本屏是设置页，上半屏三张卡 = 左上 SIM 参数设置
+                                              （链路开关 / 入网方式 / APN / 鉴权方式 / 用户名 / 密码）、
+                                              右上 锁LTE小区 + 锁5G小区，
+                                              下半屏并排两栏 = LTE相邻小区信息 + NR-5G相邻小区信息
+                                              （各是一块 固定表头 + 手动滚动的文本）；
+                                              离线 / 未插卡 / 已禁用三条走空态。
+                                              本屏没有页眉（二级页不给模式切换入口），
+                                              底部换成功能页脚 editFoot()：左「保存&应用」右「返回」；
+                                              本屏的分段选择器（链路开关 / 入网方式 / 鉴权方式 /
+                                              锁定开关）是能点的：点哪项就切到哪项，
+                                              改的是 OPS[opsSel] 上的字段并就地重渲染本屏
+       屏幕 06  renderBase(BTS4)          …… 基站设置页，共用模板 renderBase()，屏幕 06、07：
+       屏幕 07  renderBase(BTS5)              页眉整条不要（与 05、09 一致），底部同屏幕 05 的
+                                              editFoot()；左「基站标识（点它弹出编辑弹窗）+
+                                              小区状态开关 + 只读的 UE 个数 / 负载条」，右
+                                              「小区参数」六（5G 七）张卡片，点卡片同样弹出
+                                              编辑弹窗（editItemModal()）；数据源见
+                                              「一、样例数据 → BTS4 / BTS5」
+       屏幕 08  renderSettings()           …… 空白占位页，整屏水印「待完善」，
+                                              入口见屏幕 01、02 页脚的「系统设置」按钮
+       屏幕 09  satSettingsPage()          …… 卫星链路设置（屏幕 04「卫星链路」卡的落点）：
+                                              精简版只一张「卫星参数设置」卡（链路开关 /
+                                              卫星系统 / 频段 / 卫星标识），卡片铺满内容区、
+                                              卡内 4 行单列竖排且标签、控件各对齐成一列；
+                                              数据源见「一、样例数据 → SAT_SET」，
+                                              无页眉、无页签栏，底部同屏幕 05 的 editFoot()
 
      修改某一屏时怎么找：
        · 想改某一屏的排版/字段 → 直接跳到「四、九个页面」里对应的 renderXxx()
-       · 想改某一屏显示的数据   → 跳到「一、样例数据」改 OPS / SAT / BTS4 / BTS5
+       · 想改某一屏显示的数据   → 跳到「一、样例数据」改 OPS / SAT / SAT_SET / BTS4 / BTS5
        · 想改某一屏的样式       → 见 <style> 顶部的 CSS 源码导航（每段都标了 → 屏幕 xx）
        · 想调整屏幕顺序/标题     → 「五、页面清单」的 SCREENS 数组，第 N 项就是第 N 屏
-       · 想增减预留空白页       → 「五、页面清单」的 PLACEHOLDERS
    ============================================================ */
 /* ============================================================
    一、样例数据（设计稿用）
    ============================================================ */
 
-/* 运维模式：四家运营商链路 → 依次供屏幕 04 / 05 / 06 / 07 使用 */
+/* 运维模式：5 条 SIM 链路 → 屏幕 05「SIM 链路详情」的五种取值
+   （屏幕 05 一屏通吃，页签栏点哪条就把本屏渲染成哪条，见 OPS[opsSel]）
+   第 i 条就是 SIM(i+1)，顺序与在线状态都严格跟着「工程模式 → SIMS」走，
+   页签文案也只写 SIM1~SIM5、不写运营商名 —— 用户插的是哪家的卡页面无从得知。
+   本屏只做设置，不放速率 / 时延 / 信号读数（那些在屏幕 01 / 02 的链路状态表里），
+   所以每条链路只留本屏用得着的字段：
+     state    = 在线状态（在线 / 拨号中 / 离线 / 未插卡 / 已禁用这五种之一）：
+                页签上那颗状态点按它查 SIM_STATE 配色，相邻小区的空态文案也按它给
+     disabled = 链路开关，即「是否禁用该链路」，本屏 SIM 参数设置卡的第一行；
+                只有 SIM5 为 true（state 就是已禁用）；SIM4 未插卡只是插槽里没卡，
+                链路本身没被禁用，所以仍是 false
+     net      = 入网方式（自动 / SA / NSA / LTE 四选一）
+     auth     = 鉴权方式（无鉴权 / 自动 / PAP / CHAP）
+     apn / user / pwd = 「SIM 参数设置」卡里三个可编辑项的样例值（pwd 渲染时打码）
+     lte / nr = 相邻小区，按制式分成两组，正好对应下半屏并排的那两栏（左 LTE、右 NR-5G）。
+                两组要显示的列不一样（LTE 末尾是 RSSI、NR 末尾是 SINR），所以拆成两个数组，
+                不必再按频段名去猜是哪一制式。每行小区按串口屏上的口径拆成几项：
+                  arfcn = 频点号（LTE 是 EARFCN、NR 是 NR-ARFCN）、
+                  pci = 物理小区 ID（十进制）、rsrp = 参考信号接收功率（dBm）、
+                  rsrq = 参考信号接收质量（dB）、
+                  rssi = 接收信号强度（dBm，只有 LTE 有）、sinr = 信噪比（dB，只有 NR 有）
+                这几项一律只写数字、不带单位 —— 单位跟在表头里
+                （RSRP/dBm、RSRQ/dB、RSSI/dBm、SINR/dB，见 NB_TABLES）
+                每行还留着一组「给上面两张锁卡用」的字段，不占相邻小区表的列：
+                  freq / band / scs = 频点（中心频率）/ 频段 / 子载波间隔（只有 NR 有）、
+                  lock = 当前是否锁在这个小区上，两张锁卡各取自己那组里 lock 为真的那一行
+   离线 / 未插卡 / 已禁用这三条没有相邻小区读数，两组都给空数组走空态 */
 const OPS = [
-  { name: '中国移动1', online: true,  net: 'SA',  signal: -62, up: 5.2, down: 12.1, ping: 23, jitter: 4,
-    neighbors: [
-      { cell: 'CMCC-N78-231', pci: 231, freq: 'n78 · 3500MHz', rsrp: -68, lock: true  },
-      { cell: 'CMCC-N78-185', pci: 185, freq: 'n78 · 3500MHz', rsrp: -79, lock: false },
-      { cell: 'CMCC-B3-098',  pci: 98,  freq: 'B3 · 1800MHz',  rsrp: -88, lock: false }
+  /* SIM1 · 在线 —— 数据最全的一条：NR 7 个、LTE 4 个，NR 那栏一屏放不下，
+     页签切到它正好演示手动滚动；两组里各锁了一个小区，两张锁小区卡都会填上参数 */
+  { name: 'SIM1', state: '在线',   disabled: false,
+    net: 'SA', auth: 'PAP', apn: 'cmnet', user: 'user', pwd: 'passwd',
+    nr: [
+      { arfcn: 627264, pci: 231, rsrp: -68,  rsrq: -11, sinr: 24, freq: '3500MHz', band: 'n78', scs: '30kHz', lock: true  },
+      { arfcn: 627264, pci: 185, rsrp: -79,  rsrq: -13, sinr: 18, freq: '3500MHz', band: 'n78', scs: '30kHz', lock: false },
+      { arfcn: 627264, pci: 102, rsrp: -83,  rsrq: -14, sinr: 15, freq: '3500MHz', band: 'n78', scs: '30kHz', lock: false },
+      { arfcn: 499200, pci: 512, rsrp: -86,  rsrq: -15, sinr: 12, freq: '2600MHz', band: 'n41', scs: '30kHz', lock: false },
+      { arfcn: 499200, pci: 330, rsrp: -89,  rsrq: -16, sinr: 10, freq: '2600MHz', band: 'n41', scs: '30kHz', lock: false },
+      { arfcn: 499200, pci: 275, rsrp: -92,  rsrq: -17, sinr: 8,  freq: '2600MHz', band: 'n41', scs: '30kHz', lock: false },
+      { arfcn: 627264, pci: 96,  rsrp: -95,  rsrq: -18, sinr: 6,  freq: '3500MHz', band: 'n78', scs: '30kHz', lock: false }
+    ],
+    lte: [
+      { arfcn: 1825,  pci: 98,  rsrp: -92,  rsrq: -13, rssi: -65, freq: '1800MHz', band: 'B3',  lock: true  },
+      { arfcn: 38400, pci: 771, rsrp: -96,  rsrq: -15, rssi: -69, freq: '1900MHz', band: 'B39', lock: false },
+      { arfcn: 3625,  pci: 140, rsrp: -101, rsrq: -17, rssi: -74, freq: '900MHz',  band: 'B8',  lock: false },
+      { arfcn: 1825,  pci: 165, rsrp: -104, rsrq: -18, rssi: -77, freq: '1800MHz', band: 'B3',  lock: false }
     ] },
-  { name: '中国移动2', online: true,  net: 'SA',  signal: -71, up: 2.0, down: 6.4, ping: 31, jitter: 6,
-    neighbors: [
-      { cell: 'CMCC-N41-512', pci: 512, freq: 'n41 · 2600MHz', rsrp: -74, lock: false },
-      { cell: 'CMCC-N41-330', pci: 330, freq: 'n41 · 2600MHz', rsrp: -83, lock: false },
-      { cell: 'CMCC-B39-771', pci: 771, freq: 'B39 · 1900MHz', rsrp: -92, lock: false }
+  /* SIM2 · 拨号中 —— 正在扫频，两栏都有读数，但还没锁上任何小区（两张锁小区卡走未锁定态） */
+  { name: 'SIM2', state: '拨号中', disabled: false,
+    net: 'LTE', auth: '无鉴权', apn: '3gnet', user: 'user', pwd: 'passwd',
+    nr: [
+      { arfcn: 627264, pci: 266, rsrp: -74, rsrq: -12, sinr: 20, freq: '3500MHz', band: 'n78', scs: '30kHz', lock: false },
+      { arfcn: 627264, pci: 431, rsrp: -82, rsrq: -14, sinr: 15, freq: '3500MHz', band: 'n78', scs: '30kHz', lock: false },
+      { arfcn: 499200, pci: 388, rsrp: -87, rsrq: -15, sinr: 12, freq: '2600MHz', band: 'n41', scs: '30kHz', lock: false }
+    ],
+    lte: [
+      { arfcn: 1825, pci: 176, rsrp: -88, rsrq: -12, rssi: -61, freq: '1800MHz', band: 'B3', lock: false },
+      { arfcn: 350,  pci: 318, rsrp: -93, rsrq: -14, rssi: -66, freq: '2100MHz', band: 'B1', lock: false },
+      { arfcn: 3625, pci: 95,  rsrp: -99, rsrq: -16, rssi: -72, freq: '900MHz',  band: 'B8', lock: false }
     ] },
-  { name: '中国电信', online: true,  net: 'LTE', signal: -85, up: 1.1, down: 3.2, ping: 48, jitter: 11,
-    neighbors: [
-      { cell: 'CT-B3-142', pci: 142, freq: 'B3 · 1800MHz', rsrp: -88, lock: true  },
-      { cell: 'CT-B5-208', pci: 208, freq: 'B5 · 850MHz',  rsrp: -95, lock: false }
-    ] },
-  { name: '中国联通', online: false, net: 'LTE', signal: -96, up: null, down: null, ping: null, jitter: null,
-    neighbors: [] }
+  /* SIM3 · 离线 —— 没驻留上网络，读不到相邻小区 */
+  { name: 'SIM3', state: '离线',   disabled: false,
+    net: 'LTE', auth: 'CHAP', apn: 'ctnet', user: 'ctnet@mycdma.cn', pwd: 'vnet.mobi',
+    nr: [], lte: [] },
+  /* SIM4 · 未插卡 —— 插槽里没卡，参数按默认值占位（APN 无从读取，写 --） */
+  { name: 'SIM4', state: '未插卡', disabled: false,
+    net: '自动', auth: '无鉴权', apn: '--', user: 'user', pwd: 'passwd',
+    nr: [], lte: [] },
+  /* SIM5 · 已禁用 —— 链路开关打到「禁用」，其余设置项保留禁用前配置的样子 */
+  { name: 'SIM5', state: '已禁用', disabled: true,
+    net: '自动', auth: '无鉴权', apn: '3gnet', user: 'user', pwd: 'passwd',
+    nr: [], lte: [] }
 ];
 
-/* 工程模式：5 条 SIM 链路 → 屏幕 01 / 02「链路状态」列表专用
+/* 工程模式：聚合模式（屏幕 02）的「链路状态」列表 → 5 条 SIM 链路
    state 即「在线状态」列的文案，共五种：在线 / 拨号中 / 离线 / 未插卡 / 已禁用
    设计稿让 5 行各占一种状态，便于一次性看全配色 */
 const SIMS = [
@@ -727,6 +1143,14 @@ const SIMS = [
   { name: 'SIM3', op: '中国电信', state: '离线',   signal: -85,  up: null, down: null, ping: null },
   { name: 'SIM4', op: '--',       state: '未插卡', signal: null, up: null, down: null, ping: null },
   { name: 'SIM5', op: '中国联通', state: '已禁用', signal: null, up: null, down: null, ping: null }
+];
+
+/* 直连模式（屏幕 01）的「链路状态」列表 → 直连只认 SIM4 / SIM5 两张卡，故只列这两条
+   （聚合模式仍列全部 5 条，见上面的 SIMS）
+   两行按「一好一坏」举例：SIM4 在线（有带宽与时延），SIM5 离线（只有信号值） */
+const DIRECT_SIMS = [
+  { name: 'SIM4', op: '中国移动', state: '在线', signal: -68, up: 4.6,  down: 11.3, ping: 26 },
+  { name: 'SIM5', op: '中国联通', state: '离线', signal: -91, up: null, down: null, ping: null }
 ];
 
 /* 运营商官方 logo → 屏幕 01 / 02「链路状态」列表的「运营商」列专用
@@ -750,39 +1174,118 @@ const SIM_STATE = {
   '已禁用': { cls: 'disabled', sig: false, data: false }
 };
 
-/* 工程模式：卫星链路 → 屏幕 03 */
-const SAT = { cn0: 42, up: 1.2, down: 4.5, ping: 620, jitter: 35 };
+/* 工程模式：卫星链路 → 屏幕 03
+   up / down / ping / jitter 即中栏四张指标卡的样例读数（ping、jitter 由用户指定为 201 / 30） */
+const SAT = { cn0: 42, up: 1.2, down: 4.5, ping: 201, jitter: 30 };
 
-/* 基站状态：BTS4 → 屏幕 08（兼作屏幕 01 / 02 的 4G 基站卡）；BTS5 → 屏幕 09（兼作 5G 基站卡）
+/* 运维模式：屏幕 09「卫星链路设置」的四项可编辑样例值（精简版，只这四项）
+   disabled 与屏幕 05 的「链路开关」同义：true = 这条链路被禁用（不拨号，按「无卫星链路」看）；
+   system / band 是两排分段选择器的取值（选项见下面两个常量），id 是文本输入框里的卫星标识；
+   id / band 取的就是屏幕 03「卫星传输」上的那两个样例值，两屏对照着看能对上 */
+const SAT_SET = { disabled: false, system: '亚太6D', band: 'Ku', id: 'SAT-KU-03' };
+const SAT_SYSTEMS = ['天通一号', '北斗三号', '亚太6D', 'Inmarsat'];
+const SAT_BANDS   = ['L', 'S', 'Ku', 'Ka'];
+
+/* 屏幕 03「链路状态」的三种取值：数组顺序即点击徽标时的切换顺序，
+   默认停在下标 0（无卫星链路）。cls 只决定徽标底色，
+   无卫星链路→红、在线→绿、离线→黄；文字色与内边距统一由 .kv .v.state-slot 控制 */
+const LINK_STATES = [
+  { text: '无卫星链路', cls: 'st-none' },
+  { text: '在线',       cls: 'st-on'   },
+  { text: '离线',       cls: 'st-off'  }
+];
+let linkIdx = 0;
+
+/* 基站状态：BTS4 → 屏幕 06（兼作屏幕 01 / 02 的 4G 基站卡）；BTS5 → 屏幕 07（兼作 5G 基站卡）
+   key 是屏幕 06 / 07 上那排「小区状态」开关写回数据的标识（见 BTS_KEYS），也是 .seg 的 data-t；
+   status 是小区状态开关的取值（激活 / 禁用），跟 online 不是一回事：
+   一个小区可以「激活」但「离线」（BTS5 就是），所以两个字段各改各的，改开关不动 online；
    online 决定卡片底色与状态文案（在线淡绿 / 离线淡红），设计稿按「4G 在线、5G 离线」举例
    cardPci / cardUe 只给屏幕 01 / 02 的基站卡片用，都按 4 位数字控件的宽度预留：
    物理小区 ID 最长 4 位且只有 5G 会到 4 位，故 5G 卡取 1002；连接用户数一律按 4 位，前导补 0；
-   屏幕 08 / 09 的参数表仍取 cells[0][1] 与 ue / ueMax 里的原示例值 */
+   屏幕 06 / 07 的参数表仍取 cells[0][1] 与 ue / ueMax 里的原示例值。
+
+   cells 每项 = [参数名, 当前值, 单位（可省）, 选项表（可省）]：
+   前两项是屏上排的文案，值是可改的（点卡片弹输入框，或第 4 项给了选项表时排成两/几个按钮）；
+   工作频段只排频段号（B3 / n78），不写中心频率 —— 频点那一项已经有 MHz 量级的读数了；
+   工作模式只有 FDD / TDD 两种，故排成两个按钮而不是输入框。
+   参数卡片一律一格一张、右边不留空位：5G 有 7 项，最后一行就只有「发射功率」一张（右侧空着） */
 const BTS4 = {
-  label: '4G基站', idName: '4G基站标识', id: '4G-BTS-0231', status: '激活', online: true, ue: 128, ueMax: 256,
+  key: 'bts4', label: '4G基站', idName: '4G基站标识', id: '4G-BTS-0231', status: '激活', online: true, ue: 128, ueMax: 256,
   cardPci: '231', cardUe: '0128',
   cells: [
     ['物理小区识别码', '231', ''],
     ['LTE频点',       '1825', 'EARFCN'],
-    ['工作频段',       'B3',   '1800MHz'],
+    ['工作频段',       'B3',   ''],
     ['LTE带宽',        '20',   'MHz'],
-    ['工作模式',       'FDD',  ''],
+    ['工作模式',       'FDD',  '', ['FDD', 'TDD']],
     ['发射功率',       '43',   'dBm']
   ]
 };
 const BTS5 = {
-  label: '5G基站', idName: '5G基站标识', id: '5G-BTS-0788', status: '激活', online: false, ue: 96, ueMax: 256,
+  key: 'bts5', label: '5G基站', idName: '5G基站标识', id: '5G-BTS-0788', status: '激活', online: false, ue: 96, ueMax: 256,
   cardPci: '1002', cardUe: '0096',
   cells: [
     ['物理小区识别码', '788',   ''],
     ['NR频点',        '627264', 'ARFCN'],
-    ['工作频段',       'n78',   '3500MHz'],
+    ['工作频段',       'n78',   ''],
     ['NR带宽',         '100',   'MHz'],
-    ['工作模式',       'TDD',   ''],
+    ['工作模式',       'TDD',   '', ['FDD', 'TDD']],
     ['子载波间隔',     '30',    'kHz'],
-    ['发射功率',       '46',    'dBm', true]
+    ['发射功率',       '46',    'dBm']
   ]
 };
+
+/* 屏幕 05（SIM 链路详情）在「五、页面清单」SCREENS 里的下标，也就是屏幕号 05 减 1。
+   屏幕 04 的 5 张 SIM 卡指向这一屏，常量放这里免得两处各写一个 4 */
+const SIM_PAGE = 4;
+
+/* 屏幕 09（卫星链路设置）在 SCREENS 里的下标，也就是屏幕号 09 减 1。
+   屏幕 04 的「卫星链路」入口卡指向这一屏，常量放这里免得两处各写一个 8 */
+const SAT_PAGE = 8;
+
+/* 屏幕 06 / 07（4G基站 / 5G基站）在 SCREENS 里的下标，也就是屏幕号减 1，
+   排在屏幕 05 后面两屏 */
+const BTS4_PAGE = SIM_PAGE + 1;   /* 屏幕 06 */
+const BTS5_PAGE = SIM_PAGE + 2;   /* 屏幕 07 */
+
+/* 屏幕 06 / 07 上那排「小区状态」开关写回哪里：key（BTS4.key / BTS5.key）
+   → d = 要写的基站数据、page = 这一屏在 SCREENS 里的下标（写完就地重渲染哪一屏），
+   与屏幕 05 / 09 的分段选择器是同一套机制（.seg 的 data-t） */
+const BTS_KEYS = {
+  bts4: { d: BTS4, page: BTS4_PAGE },
+  bts5: { d: BTS5, page: BTS5_PAGE }
+};
+
+/* 运维模式首页（屏幕 04）的两组设置入口 → 一条链路 / 一个基站各一张卡
+   链路：SIM1~SIM5 直接取上面 SIMS 的「链路标识 + 运营商 + 在线状态」，
+        ico 决定卡首行画哪枚图标（ico:'sim' → SIM 卡图标、ico:'sat' → 小号卫星图标），
+        st 是状态行的配色与文案（配色查 SIM_STATE，文案取 SIMS 的 state 原值）；
+        末尾再追加一条卫星链路 —— 卫星既没有 SIM 号也没有运营商，卡上不排运营商行，
+        状态改用屏幕 03「链路状态」的三态徽标（slot，默认停在下标 0 = 无卫星链路）；
+   基站：取 BTS4 / BTS5 的「基站名 + 基站标识」，基站不分链路状态，不带 ico / st / slot。
+   go  = 点击后进入的二级页序号 - 1；
+   sim = 进去后屏幕 05 默认显示哪条链路（OPS 下标），只有链路卡有这一项。
+   5 张 SIM 卡都进屏幕 05（同一个模板，只是喂的数据不同），SIM(i+1) 就对应 OPS 的第 i 条
+   （两边同名同序，直接拿数组下标当 OPS 下标，不必再按运营商名去猜是哪条链路）。
+   末尾那张卫星链路卡进屏幕 09（卫星链路设置），它没有 SIM 号、也不走 OPS，
+   所以 sim 留 null = 卡上不挂 data-sim（屏幕 05 才按它选链路） */
+const OPS_HOME_LINKS = SIMS.map((s, i) => ({
+    ico: 'sim', t1: s.name, op: s.op,
+    st: { cls: SIM_STATE[s.state].cls, text: s.state },
+    go: SIM_PAGE, sim: i
+  })).concat([{
+    ico: 'sat', t1: '卫星链路', slot: LINK_STATES[linkIdx], go: SAT_PAGE, sim: null
+  }]);
+
+/* 基站条目：ico = 卡片左侧的基站图标（bts4 / bts5，形状即 4G / 5G 的区别），
+   online / pci / ue 直接取自 BTS4 / BTS5 的 online / cardPci / cardUe，
+   与屏幕 01~03 的基站卡同源，不另存一份数字；
+   4G / 5G 的详情页是分开的两屏，所以两个基站各挂一个 go */
+const OPS_HOME_BTS = [
+  { ico: 'bts4', t1: BTS4.label, online: BTS4.online, pci: BTS4.cardPci, ue: BTS4.cardUe, go: SIM_PAGE + 1 },  /* 4G基站 → 屏幕 06 */
+  { ico: 'bts5', t1: BTS5.label, online: BTS5.online, pci: BTS5.cardPci, ue: BTS5.cardUe, go: SIM_PAGE + 2 }   /* 5G基站 → 屏幕 07 */
+];
 
 /* 版本信息弹窗 → 屏幕 01、02 页脚「版本信息」按钮的弹窗内容
    版本号用「V00.00.00」这种定宽占位串，屏上按它的宽度摆文本控件；
@@ -799,13 +1302,11 @@ const VERSION = {
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const fmt = (v, d = 1) => (v === null || v === undefined) ? '--' : v.toFixed(d);
 
-/* 信号强度 -115 ~ -60 dBm 映射为 0 ~ 1 */
-const signalPct = d => clamp((d + 115) / 55, 0, 1);
+/* 信号强度 -105 ~ -60 dBm 折算成 0 ~ 5 格信号格 */
 const signalBars = d => d >= -60 ? 5 : d >= -70 ? 4 : d >= -80 ? 3 : d >= -90 ? 2 : d >= -100 ? 1 : 0;
-const sigColor = d => d >= -70 ? 'var(--green)' : d >= -85 ? 'var(--yellow)' : 'var(--red)';
 const sigTone  = d => d >= -70 ? '' : d >= -85 ? 'warn' : 'bad';
 
-/* 信号格 → 屏幕 01、02、04~07；0 格（无信号）时右上角叠一个红色 ✕ */
+/* 信号格 → 屏幕 01、02；0 格（无信号）时右上角叠一个红色 ✕ */
 function barsHtml(n, tone) {
   let h = '<span class="bars ' + (tone || '') + '">';
   for (let i = 1; i <= 5; i++) h += '<i class="' + (i <= n ? 'on' : '') + '"></i>';
@@ -814,68 +1315,138 @@ function barsHtml(n, tone) {
   return h + '</span>';
 }
 
-/* 速率趋势柱（用固定种子生成，保证每次渲染一致）→ 屏幕 03 */
-function trend(seed, color, n) {
-  n = n || 26;
-  let h = '';
-  for (let i = 0; i < n; i++) {
-    const r = Math.abs(Math.sin(seed * 12.9898 + i * 78.233)) % 1;
-    const v = .22 + r * .78;
-    h += '<i style="height:' + (v * 100).toFixed(0) + '%;background:' + color +
-         ';opacity:' + (.28 + v * .55).toFixed(2) + '"></i>';
-  }
-  return '<span class="trend">' + h + '</span>';
-}
-
-/* 环形仪表 → 屏幕 03、04~07 */
-function ring(o) {
-  const r = 34, c = 2 * Math.PI * r;
-  const off = (c * (1 - clamp(o.pct, 0, 1))).toFixed(1);
-  const size = o.size || 100;
-  return '<span class="gauge"><svg width="' + size + '" height="' + size + '" viewBox="0 0 80 80">' +
-    '<circle cx="40" cy="40" r="' + r + '" fill="none" stroke="#313244" stroke-width="8"/>' +
-    '<circle cx="40" cy="40" r="' + r + '" fill="none" stroke-width="8" stroke-linecap="round"' +
-      ' style="stroke:' + o.color + '" stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + off + '"' +
-      ' transform="rotate(-90 40 40)"/>' +
-    '<text class="ring-num" x="40" y="38" text-anchor="middle" style="fill:' + o.color + '">' + o.value + '</text>' +
-    '<text class="ring-unit" x="40" y="54" text-anchor="middle" style="fill:#6c7086">' + o.unit + '</text>' +
-    '</svg></span>';
-}
-
 /* 键值行 → 屏幕 03 */
 const kv = (k, v) => '<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>';
 
-/* 分段选择器：[[文案, 是否选中, 色调]] → 屏幕 01、03、04~09 */
-const seg = opts => '<span class="seg">' + opts.map(o =>
-  '<span class="' + (o[1] ? 'on ' + (o[2] || '') : '') + '">' + o[0] + '</span>').join('') + '</span>';
+/* 分段选择器：[[文案, 是否选中, 色调]] → 屏幕 05~07、09
+   能点的选择器要多传一个 field：
+   它就是被这一排按钮写的那个字段名（disabled / net / auth / lockLte / lockNr / system / band），
+   会落到 .seg 的 data-f 上，每一项的文案落到自己的 data-v 上；
+   第三项 t 指这份数据存在哪（'sat' → 屏幕 09 的 SAT_SET，'bts4' / 'bts5' → 屏幕 06 / 07 的
+   BTS4 / BTS5，不传 → 屏幕 05 的 OPS[opsSel]），落到 data-t 上；
+   第四项 i 只给「参数卡片里的那个选择器」用（屏幕 06、07 的「工作模式」）：
+   它写的是 b.cells 里第 i 项的值、不是顶层字段，落到 data-i 上；
+   屏幕 06、07 的只读标尺（.cells 之外的 seg）只传文案，不传 field */
+const seg = (opts, field, t, i) =>
+  '<span class="seg"' + (field ? ' data-f="' + field + '"' + (t ? ' data-t="' + t + '"' : '') +
+      (i === undefined ? '' : ' data-i="' + i + '"') : '') + '>' +
+  opts.map(o => '<span' + (field ? ' data-v="' + o[0] + '"' : '') +
+    ' class="' + (o[1] ? 'on ' + (o[2] || '') : '') + '">' + o[0] + '</span>').join('') + '</span>';
 
-/* 条形仪表 → 屏幕 01、02、04~09 */
+/* 条形仪表 → 屏幕 05~07 */
 const meter = (pct, color) =>
   '<span class="meter"><i style="width:' + (clamp(pct, 0, 1) * 100).toFixed(0) + '%;background:' + color + '"></i></span>';
 
-/* 参数字卡片 → 屏幕 08、09 */
-const cell = c => '<div class="cell' + (c[3] ? ' span2' : '') + '">' +
-  '<span class="k">' + c[0] + '</span>' +
-  '<span class="v">' + c[1] + (c[2] ? '<small>' + c[2] + '</small>' : '') + '</span></div>';
+/* 参数字卡片 → 屏幕 06、07
+   每张卡片 = 参数名（.k）+ 值（.v）+ 改造口，值分两种排法：
+     ① 默认「数值 + 单位（单位小一号）+ 行尾一支铅笔」：点整张卡片弹出编辑弹窗，
+        靠 data-e / data-p / data-i 三个值（key = BTS4.key / BTS5.key、i = b.cells 的下标）
+        让弹窗知道改哪一项；
+     ② 数据里给了第 4 项（选项表）时改用分段选择器：如「工作模式」只有 FDD / TDD 两种，
+        排成两个按钮、点哪项切哪项，不弹输入框 —— 此时卡片不再是 .edit-hit，
+        点按钮走分段选择器那条路（.seg 的 data-i 指回 b.cells 的第几项）
+   参数卡片一格一张、不跨列排版，所以卡片本身不带列宽相关的类 */
+const cell = (c, key, i) => {
+  const opts = c[3];
+  const ctrl = opts
+    ? seg(opts.map(t => [t, t === c[1]]), 'cells', key, i)
+    : '<span class="v">' + c[1] + (c[2] ? '<small>' + c[2] + '</small>' : '') +
+        '<span class="pen">' + ICO_PEN + '</span></span>';
+  return '<div class="cell' + (opts ? '' : ' edit-hit') + '"' +
+      ' data-e="' + key + '" data-p="cells" data-i="' + i + '">' +
+    '<span class="k">' + c[0] + '</span>' + ctrl + '</div>';
+};
+
+/* 可编辑值框 → 屏幕 05「SIM 参数设置」卡的 APN / 用户名 / 密码三行
+   屏上是「文本控件 + 点击弹键盘」，设计稿画成一张小值框：等宽数值 + 行尾一支铅笔，
+   值与笔都贴右边缘（.field 是两端对齐），一眼能看出这三行是可以改的 */
+const inp = v => '<span class="inp"><span class="v">' + v + '</span>' +
+  '<span class="pen">' + ICO_PEN + '</span></span>';
+
+/* 屏幕 05「SIM 参数设置」卡里两个分段选择器的取值 —— 把可选值全摆出来，
+   选中项由链路数据决定（net → 入网方式、auth → 鉴权方式，见「一、样例数据 → OPS」） */
+const NET_MODES  = ['自动', 'SA', 'NSA', 'LTE'];
+const AUTH_MODES = ['无鉴权', '自动', 'PAP', 'CHAP'];
+
+/* 相邻小区 → 屏幕 05 下半屏那两块「固定表头 + 手动滚动的文本」
+   屏上每一块是一个滑动文本控件：该制式的全部小区写成一段等宽文字，手指拖动才滚、不自动滚；
+   列与列之间只能靠空格撑，所以这里按显示宽度补空格 ——
+   实测这套等宽字体 ASCII 每字符 6px、中文 12px，正好是 1 格与 2 格；
+   表头与每一行都走同一套网格才对得齐，每列宽都够放下对应的表头
+   （最宽的「PCI(十进制)」占 11 格 < 该列的 16 格），不必另做绝对定位。
+   末列宽度只用于补齐、显示时由 trimEnd 去掉行尾空格 */
+const cellWidth = s => [...String(s)].reduce((n, c) => n + (c.charCodeAt(0) > 0x2e7f ? 2 : 1), 0);
+const cellPad = (s, w) => s + ' '.repeat(Math.max(0, w - cellWidth(s)));
+const cellLine = (vals, cols) => vals.map((v, i) => cellPad(String(v), cols[i])).join('').trimEnd();
+
+/* 屏幕 05 下半屏并排的两栏相邻小区，左边 LTE、右边 NR-5G：
+   两栏的列不一样（LTE 末尾是接收信号强度 RSSI、NR 末尾是信噪比 SINR），
+   所以表头、列宽、每行怎么取值都各自配一套（数据见「一、样例数据 → OPS」的 lte / nr）；
+   两栏列宽取得一样，左右并排时列与列正好对齐，看着是一张表被切成了两半。
+   单位一律写在表头里（RSRP/dBm、RSRQ/dB、RSSI/dBm、SINR/dB），数据行只留数字 ——
+   这样每行的数值短，列与列之间才空得出来。
+   列宽按「该列最宽的那一项（表头或数据）+ 4~5 格空档」定：
+   面板内容宽 383px、ASCII 每格 6px，一行约 63 格可用，
+   下面 5 列合计 58 格，右侧还留出余量（NR 那栏带竖向滚动条，可用宽少 10px） */
+const NB_COLS = [10, 16, 13, 11, 8];
+const NB_TABLES = [
+  { key: 'lte', title: 'LTE相邻小区信息',
+    head: ['ARFCN', 'PCI(十进制)', 'RSRP/dBm', 'RSRQ/dB', 'RSSI/dBm'],
+    row: n => [n.arfcn, n.pci, n.rsrp, n.rsrq, n.rssi] },
+  { key: 'nr',  title: 'NR-5G相邻小区信息',
+    head: ['ARFCN', 'PCI(十进制)', 'RSRP/dBm', 'RSRQ/dB', 'SINR/dB'],
+    row: n => [n.arfcn, n.pci, n.rsrp, n.rsrq, n.sinr] }
+];
+
+/* 一块相邻小区面板：标题（右边挂「共 N 个」）+ 固定表头 + 手动滚动的文本；
+   这组小区没有读数（离线 / 未插卡 / 已禁用）时走空态，文案按链路状态给 */
+function nbPanel(t, list, emptyText) {
+  return '<section class="panel" style="flex:1">' +
+      '<div class="panel-title"><span>' + t.title + '</span>' +
+        '<span class="tag">共 ' + list.length + ' 个</span></div>' +
+      (list.length
+        ? '<pre class="roll-head">' + cellLine(t.head, NB_COLS) + '</pre>' +
+          /* 行数多于一屏时由 .rollview 自己出滚动条（设计稿上是滚轮 / 触摸拖动，
+             与串口屏上手指拖动滑动文本控件同构）；不自动滚，所以内容只写一份、不挂动画 */
+          '<div class="rollview"><pre>' +
+            list.map(n => cellLine(t.row(n), NB_COLS)).join('\n') +
+          '</pre></div>'
+        : '<div class="empty">' + emptyText + '</div>') +
+    '</section>';
+}
 
 /* ============================================================
    三、页面骨架（9 屏共用的外壳与公共组件）
    ============================================================ */
-/* 工程模式页签栏 → 屏幕 01、02、03 */
+/* 工程模式页签栏 → 屏幕 01、02、03
+   data-go = 目标页序号 - 1，供开头的「跳转调试台」点击跳转；
+   data-mode 标出这是三种工作模式之间的切换：点了先弹二级确认（modeModal），
+   确认后才真跳 —— 换模式要重配模组并重新拨号，不能让一次误触就把链路打断 */
 function engNav(active) {
-  return ['直连模式', '聚合模式', '卫星传输'].map(t =>
-      '<span class="tab' + (t === active ? ' on' : '') + '">' + t + '</span>').join('');
+  return ['直连模式', '聚合模式', '卫星传输'].map((t, i) =>
+      '<span class="tab' + (t === active ? ' on' : '') + '" data-go="' + i + '" data-mode="1">' + t + '</span>').join('');
 }
 
-/* 运维模式页签栏 → 屏幕 04~09 */
+/* 运维模式页签栏 → 屏幕 05~07（屏幕 04 是入口页，不放页签栏）；
+   左「SIM链路」摆的是屏幕 05 这一屏的五种取值 + 一条卫星链路：前五条不带 data-go，
+   只挂 data-sim = OPS 下标，点它就地把本屏渲染成那条链路，不换屏；
+   页签文案固定写 SIM1~SIM5 —— 卡是哪家运营商的页面无从得知，不写运营商名；
+   标识前面那颗状态点按 SIM_STATE[state].cls 配色（在线绿 / 拨号中黄 / 离线红 /
+   未插卡灰 / 已禁用桃），与屏幕 01 / 02 的在线状态点同一套语义；
+   末尾「卫星链路」不在这五种取值里（卫星没有 SIM 号、也不走 OPS），
+   而是另有独立的一屏，所以挂 data-go = 屏幕 09（卫星链路设置）；
+   它的状态点取屏幕 03 的三态徽标配色；
+   右「基站」的 4G / 5G 各有独立的一屏，照旧 data-go = 目标页序号 - 1（屏幕 06、07） */
 function opsNav(active) {
-  const links = OPS.map(o =>
-    '<span class="tab' + (o.name === active ? ' on' : '') + '">' +
-      '<i class="sd' + (o.online ? '' : ' off') + '"></i>' + o.name + '</span>').join('');
-  const bts = ['4G基站', '5G基站'].map(t =>
-    '<span class="tab' + (t === active ? ' on' : '') + '">' + t + '</span>').join('');
-  return '<span class="nav-label">链路状态</span>' + links +
-         '<span class="nav-sep"></span><span class="nav-label">基站状态</span>' + bts;
+  const links = OPS.map((o, i) =>
+    '<span class="tab' + (o.name === active ? ' on' : '') + '" data-sim="' + i + '">' +
+      '<i class="sd ' + SIM_STATE[o.state].cls + '"></i>' + o.name + '</span>').join('') +
+    '<span class="tab' + ('卫星链路' === active ? ' on' : '') + '" data-go="' + SAT_PAGE + '">' +
+      '<i class="sd ' + LINK_STATES[linkIdx].cls + '"></i>卫星链路</span>';
+  const bts = ['4G基站', '5G基站'].map((t, i) =>
+    '<span class="tab' + (t === active ? ' on' : '') + '" data-go="' + (SIM_PAGE + 1 + i) + '">' + t + '</span>').join('');
+  return '<span class="nav-label">SIM链路</span>' + links +
+         '<span class="nav-sep"></span><span class="nav-label">基站</span>' + bts;
 }
 
 /* 线性图标（24×24 viewBox，颜色随所在按钮文字） */
@@ -897,7 +1468,38 @@ const ICO_INFO     = ico('<circle cx="12" cy="12" r="9"/><path d="M12 16.5v-5"/>
 const ICO_SUN      = ico('<circle cx="12" cy="12" r="4.2"/>' +
   '<path d="M12 1.8v2.2M12 20v2.2M2.6 12H4.8M19.2 12h2.2M5.6 5.6 7.2 7.2M16.8 16.8l1.6 1.6M5.6 18.4l1.6-1.6M16.8 7.2l1.6-1.6"/>');
 const ICO_POWER    = ico('<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><path d="M12 2.5v9"/>');
+const ICO_BACK     = ico('<path d="M19 12H5"/><path d="M11 18l-6-6 6-6"/>');   /* 返回：左向箭头 */
+const ICO_CHECK    = ico('<path d="M20 6 9 17l-5-5"/>');                        /* 确定：对勾 */
 const ICO_CLOSE    = ico('<path d="M6 6l12 12M18 6L6 18"/>');
+const ICO_CHEVRON  = ico('<path d="M9 6l6 6-6 6"/>');                        /* 右向箭头：屏幕 04 入口卡「可进二级页」 */
+const ICO_PEN      = ico('<path d="M4 20h4L18.5 9.5a2.5 2.5 0 0 0-3.5-3.5L4.5 16.5 4 20z"/>' +
+  '<path d="M13.8 7.2l3 3"/>');   /* 铅笔：屏幕 05「SIM 参数设置」卡里可编辑值框的行尾标记 */
+/* 屏幕 04 链路卡首行的两枚链路图标：
+   SIM 卡是自绘的（圆角卡体 + 右上切角 + 中间一枚芯片方块），工程里没有 SIM 卡的图片素材；
+   卫星与屏幕 03 左栏的示意图同源（Tabler Icons 的 satellite，MIT），
+   图形一模一样，只是这里按 18px 的图标尺寸走 ico() 的线宽（1.8），
+   比屏幕 03 那张 91px 的示意图细得多，缩到卡片上不会糊成一团 */
+const ICO_SIM = ico('<path d="M5 3h7.6a1 1 0 0 1 .7.3l5.4 5.4a1 1 0 0 1 .3.7V21a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>' +
+  '<path d="M9 12h6v5H9z"/>');
+const ICO_SAT = ico('<path d="M3.707 6.293l2.586-2.586a1 1 0 0 1 1.414 0l5.586 5.586a1 1 0 0 1 0 1.414l-2.586 2.586a1 1 0 0 1-1.414 0l-5.586-5.586a1 1 0 0 1 0-1.414"/>' +
+  '<path d="M6 10l-3 3 3 3 3-3"/><path d="M10 6l3-3 3 3-3 3"/><path d="M12 12l1.5 1.5"/>' +
+  '<path d="M14.5 17a2.5 2.5 0 0 0 2.5-2.5"/><path d="M15 21a6 6 0 0 0 6-6"/>');
+/* 屏幕 04 基站卡的两枚基站图标（4G / 5G）：
+   塔身自绘 —— 两条斜腿收到塔尖 (12, 8.5) + 上下两道横撑 + 底座，格构塔的形；
+  4G 与 5G 只差塔尖两侧的波束弧数：4G 各 2 道、5G 各 3 道，弧越密对应频段越高。
+   波束弧用二次贝塞尔（Q）而不是圆弧（A）：张角与弧长都由控制点直接决定，
+   改一个数就能把弧收紧或放开，缩到卡片的 18px 也不必重算半径。
+   两枚图标的区别是「形状本身不同」而不是靠角标文字，18px 下也数得清弧数 */
+const ICO_BTS4 = ico('<path d="M12 8.5 8.4 21"/><path d="M12 8.5 15.6 21"/>' +
+  '<path d="M9.9 15h4.2"/><path d="M9.1 18h5.8"/><path d="M6.6 21h10.8"/>' +
+  '<path d="M9.7 6.2Q8.4 8.5 9.7 10.8"/><path d="M7.9 4.4Q6 8.5 7.9 12.6"/>' +
+  '<path d="M14.3 6.2Q15.6 8.5 14.3 10.8"/><path d="M16.1 4.4Q18 8.5 16.1 12.6"/>');
+const ICO_BTS5 = ico('<path d="M12 8.5 8.4 21"/><path d="M12 8.5 15.6 21"/>' +
+  '<path d="M9.9 15h4.2"/><path d="M9.1 18h5.8"/><path d="M6.6 21h10.8"/>' +
+  '<path d="M9.7 6.2Q8.4 8.5 9.7 10.8"/><path d="M7.9 4.4Q6 8.5 7.9 12.6"/>' +
+  '<path d="M6.1 2.6Q3.6 8.5 6.1 14.4"/>' +
+  '<path d="M14.3 6.2Q15.6 8.5 14.3 10.8"/><path d="M16.1 4.4Q18 8.5 16.1 12.6"/>' +
+  '<path d="M17.9 2.6Q20.4 8.5 17.9 14.4"/>');
 
 /* 版本信息弹窗：版本号 / 构建时间 / commit id / 发布说明
    数据见「一、样例数据 → VERSION」；默认隐藏，由 .foot-btn[data-modal="ver"] 触发 */
@@ -963,51 +1565,128 @@ function confirmModal() {
     '</div>';
 }
 
-/* 底部功能页脚：左「系统设置 / 版本信息」，右「屏幕亮度 / 重启设备」 → 屏幕 01 使用 */
+/* 模式切换二级确认弹窗：屏幕 01、02、03 页签栏点「直连 / 聚合 / 卫星传输」触发 ——
+   换模式要重建数据链路并重新拨号，当前连接会短暂中断，不能一步到位；
+   与「重启设备 / 保存&应用」同一套 .modal.confirm，配色与按钮换成模式切换那一档：
+   一行两个等大的「确定 / 取消」，确定黄实底、取消灰实底。
+   一屏只有这一个实例，提示语里的目标模式名在点开时由 modeConfirm() 填 */
+function modeModal() {
+  return '<div class="modal-mask" data-modal="mode">' +
+      '<div class="modal confirm mode">' +
+        '<div class="modal-head">' + ICO_INFO +
+          '<span class="modal-title">模式切换</span>' +
+          '<span class="modal-close">' + ICO_CLOSE + '</span>' +
+        '</div>' +
+        '<div class="confirm-tip">确认切换到<b class="tip-to"></b>吗？</div>' +
+        '<div class="confirm-foot">' +
+          '<span class="cbtn warn">确定</span>' +
+          '<span class="cbtn cancel">取消</span>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+/* 页脚按钮：图标 + 文案。cls = 附加样式（danger 危险操作 / primary 主操作 / secondary 次操作），
+   modal = 点击开合的弹窗名，go = 目标页下标（屏幕号 - 1）；后两个都不传就是纯展示按钮 */
+function footBtn(label, icon, cls, modal, go) {
+  return '<span class="foot-btn' + (cls ? ' ' + cls : '') + '"' +
+      (modal ? ' data-modal="' + modal + '"' : '') +
+      (go === undefined ? '' : ' data-go="' + go + '"') + '>' +
+      icon + '<span>' + label + '</span></span>';
+}
+
+/* 底部功能页脚：左「系统设置 / 版本信息」，右「屏幕亮度 / 重启设备」 → 屏幕 01、02、03 使用
+   前三个按钮开弹窗（data-modal），「系统设置」是跳转按钮（data-go = 目标页序号 - 1）；
+   末尾再挂一枚模式切换确认弹窗，「直连 / 聚合 / 卫星传输」页签点开的就是它 */
 function footBar() {
-  const btn = (label, icon, danger, modal) =>
-    '<span class="foot-btn' + (danger ? ' danger' : '') + '"' +
-      (modal ? ' data-modal="' + modal + '"' : '') + '>' + icon + '<span>' + label + '</span></span>';
   return '<div class="foot-bar">' +
       '<div class="foot-group">' +
-        btn('系统设置', ICO_SETTINGS) +
-        btn('版本信息', ICO_INFO, false, 'ver') +
+        footBtn('系统设置', ICO_SETTINGS, '', null, SETTINGS_PAGE) +
+        footBtn('版本信息', ICO_INFO, '', 'ver') +
       '</div>' +
       '<div class="foot-group">' +
-        btn('屏幕亮度', ICO_SUN, false, 'bright') +
-        btn('重启设备', ICO_POWER, true, 'reboot') +   /* 危险操作：弹二级确认，不直接执行 */
+        footBtn('屏幕亮度', ICO_SUN, '', 'bright') +
+        footBtn('重启设备', ICO_POWER, 'danger', 'reboot') +   /* 危险操作：弹二级确认，不直接执行 */
       '</div>' +
-    '</div>' + verModal() + brightModal() + confirmModal();
+    '</div>' + verModal() + brightModal() + confirmModal() + modeModal();
 }
 
-/* 屏幕外壳：页眉 + 页签栏 + 内容区 + 底部（传入 footer 用功能页脚，否则用提示底栏） */
+/* 二级设置页的功能页脚（屏幕 05 SIM 链路详情 / 屏幕 06 4G基站 / 屏幕 07 5G基站 /
+   屏幕 09 卫星链路设置共用）：
+   两个按钮都靠右下角，左「保存&应用」右「返回」，并用填充色区分主次 ——
+   保存是主操作（蓝实底）、返回是次操作（灰实底）。
+   和屏幕 01、02 的页脚同一个组件（.foot-bar / .foot-btn），只是按钮少、位置与语义都不同 ——
+   返回是跳页（data-go）、回上层即屏幕 04 的链路入口页；保存不跳页、走二级确认弹窗：
+   参数要下发到模组并重新拨号才生效，跟「重启设备」一样让用户再确认一次，避免误触 */
+function editFoot() {
+  return '<div class="foot-bar" style="justify-content:flex-end">' +
+      '<div class="foot-group">' +
+        footBtn('保存&amp;应用', ICO_CHECK, 'primary', 'save') +
+        footBtn('返回', ICO_BACK, 'secondary', null, SIM_PAGE - 1) +
+      '</div>' +
+    '</div>' + saveModal();
+}
+
+/* 保存&应用二级确认弹窗：屏幕 05、09 页脚的「保存&应用」触发
+   结构与重启确认那枚一样（.modal.confirm + 一行两个按钮），只是图标走绿不表危险；
+   两个按钮同样都表示「结束本次确认」 */
+function saveModal() {
+  return '<div class="modal-mask" data-modal="save">' +
+      '<div class="modal confirm save">' +
+        '<div class="modal-head">' + ICO_CHECK +
+          '<span class="modal-title">保存并应用</span>' +
+          '<span class="modal-close">' + ICO_CLOSE + '</span>' +
+        '</div>' +
+        '<div class="confirm-foot">' +
+          '<span class="cbtn">保存并应用</span>' +
+          '<span class="cbtn cancel">取消</span>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+/* 编辑参数弹窗：屏幕 06、07 上点「基站标识」或任意参数卡片弹出
+   一屏只有这一个弹窗实例，标题与输入框在点开时按被点的那一项填（见 .edit-hit 的点击处理），
+   所以这里只排静态骨架：标题栏（铅笔图标）+ 项名 + 输入框 + 确定 / 取消。
+   点「确定」把输入框里的值写回数据并重渲染本屏，「取消 / ✕ / 遮罩」只收起不改数据 */
+function editItemModal() {
+  return '<div class="modal-mask" data-modal="edit">' +
+      '<div class="modal edit">' +
+        '<div class="modal-head">' + ICO_PEN +
+          '<span class="modal-title">编辑参数</span>' +
+          '<span class="modal-close">' + ICO_CLOSE + '</span>' +
+        '</div>' +
+        '<div class="modal-body">' +
+          '<span class="k edit-name">参数</span>' +
+          '<input class="edit-inp" type="text" value="" aria-label="参数值">' +
+        '</div>' +
+        '<div class="confirm-foot">' +
+          '<span class="cbtn ok">确定</span>' +
+          '<span class="cbtn cancel">取消</span>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+/* 屏幕外壳：页眉 + 页签栏 + 内容区 + 底部
+   底部三种情况：传 footer 用自定义功能页脚；只传 foot 用提示底栏；都不传则整块不要底部
+   页眉整条只有「工程模式 / 运维模式」两个模式按钮，group 传空串就整条不渲染 ——
+   屏幕 05 是运维模式下的二级页、屏幕 08 整屏独立，都不给模式切换入口
+   （屏幕 08 连通用的页签栏也不要，nav 也传空串；屏幕 05 保留页签栏，用来在各条链路之间切换） */
 function shell(o) {
   const ops = o.group === '运维模式';
-  return '<div class="bar-top">' +
+  const bottom = o.footer ? o.footer
+      : (o.foot ? '<div class="bar-bot"><span>' + o.foot + '</span><span>854×480 · 设计稿样例数据</span></div>' : '');
+  return (o.group ? '<div class="bar-top">' +
       '<span class="mode-btn' + (ops ? '' : ' on') + '">工程模式</span>' +
       '<span class="mode-btn' + (ops ? ' on ops' : '') + '">运维模式</span>' +
-    '</div>' +
-    '<div class="bar-nav">' + o.nav + '</div>' +
-    '<div class="body">' + o.body + '</div>' +
-    (o.footer || '<div class="bar-bot"><span>' + o.foot + '</span><span>854×480 · 设计稿样例数据</span></div>');
+    '</div>' : '') +
+    (o.nav ? '<div class="bar-nav">' + o.nav + '</div>' : '') +
+    '<div class="body">' + o.body + '</div>' + bottom;
 }
 
-/* 上下行速率面板（左右两个半区 + 趋势）→ 屏幕 04~07 使用 */
-function ratePanel(up, down, seed) {
-  return '<section class="panel row-panel">' +
-      '<div class="half"><span class="k">上行速率</span>' +
-        '<div class="kpi sm"><span class="num" style="color:var(--blue)">' + fmt(up) + '</span><span class="u">Mbps</span></div>' +
-        trend(seed, 'var(--blue)', 22) +
-      '</div>' +
-      '<div class="half"><span class="k">下行速率</span>' +
-        '<div class="kpi sm"><span class="num" style="color:var(--yellow)">' + fmt(down) + '</span><span class="u">Mbps</span></div>' +
-        trend(seed + 5.7, 'var(--yellow)', 22) +
-      '</div>' +
-    '</section>';
-}
-
-/* 基站状态卡片（4G / 5G 各一张，上下排列）→ 屏幕 01、02 右侧使用
-   只显示两项：物理小区 ID（cardPci）与当前连接的用户个数（cardUe），两者都按 4 位数字控件的宽度预留；
+/* 基站状态卡片（4G / 5G 各一张，上下排列）→ 屏幕 01、02、03 使用
+   只显示两项：物理小区ID（cardPci）与当前连接的用户个数（cardUe），两者都按 4 位数字控件的宽度预留；
    整卡底色随在线状态切换：在线淡绿（.on）/ 离线淡红（.off） */
 function btsCard(b) {
   const pci = b.cardPci, ue = b.cardUe, on = b.online;
@@ -1017,20 +1696,25 @@ function btsCard(b) {
           '<i class="dot' + (on ? '' : ' bad') + '"></i>' + (on ? '在线' : '离线') +
         '</span></div>' +
       '<div class="bs-meta">' +
-        '<div class="bs-kv"><span class="k">物理小区 ID</span><span class="bs-id">' + pci + '</span></div>' +
+        '<div class="bs-kv"><span class="k">物理小区ID</span><span class="bs-id">' + pci + '</span></div>' +
         '<div class="bs-kv"><span class="k">连接用户数</span><span class="bs-num">' + ue + '</span></div>' +
       '</div>' +
     '</div>';
 }
 
-/* 链路状态面板（5 条 SIM 链路）→ 屏幕 01、02 左侧共用
+/* 链路状态面板 → 屏幕 01、02 左侧共用
+   list 即要列出的链路：屏幕 01 传 DIRECT_SIMS（直连只有 SIM4 / SIM5 两条），
+   屏幕 02 传 SIMS（聚合 5 条全列）
    单位一律提到表头（信号强度/dBm、实时带宽/Mbps、时延/ms），数值列只留数字，左右两屏口径一致；
    fixed = true（屏幕 02）时数值走固定位宽：带宽 000.00 / 时延 000 / 信号 -000，
-   不足位宽处补白并右对齐，使小数点与个位在 5 行之间锁死 */
-function simPanel(fixed) {
+   不足位宽处补白并右对齐，使小数点与个位在各行之间锁死 */
+function simPanel(fixed, list) {
   const dec = fixed ? 2 : 1;                                  /* 屏幕 02 固定两位小数，屏幕 01 维持原样 */
   const fw = (txt, n) => fixed ? '<em class="fix-fw f' + n + '">' + txt + '</em>' : txt;
-  const rows = SIMS.map(s => {
+  /* 实时带宽的两个数字一律走 6ch 定宽占位（屏幕 01、02 一致）：
+     ↑ / ↓ 的箭头与数字的相对位置不随数字位数左右跳动，两行之间也对得齐 */
+  const fwRate = txt => '<em class="fix-fw f6">' + txt + '</em>';
+  const rows = list.map(s => {
     const st = SIM_STATE[s.state];
     return '<div class="sim-row">' +
       '<span class="sim-name">' + s.name + '</span>' +
@@ -1041,8 +1725,8 @@ function simPanel(fixed) {
       '<span class="sim-sig">' + barsHtml(st.sig ? signalBars(s.signal) : 0, st.sig ? sigTone(s.signal) : '') +
         '<span class="sim-dbm">' + fw(st.sig ? s.signal : '--', 4) + '</span></span>' +
       '<span class="sim-rate">' +
-        '<span class="up"><i class="arw">↑</i> <span class="' + (st.data ? 'up' : 'idle') + '">' + fw(st.data ? fmt(s.up, dec) : '--', 6) + '</span></span>' +
-        '<span class="down"><i class="arw">↓</i> <span class="' + (st.data ? 'down' : 'idle') + '">' + fw(st.data ? fmt(s.down, dec) : '--', 6) + '</span></span>' +
+        '<span class="up"><i class="arw">↑</i> <span class="' + (st.data ? 'up' : 'idle') + '">' + fwRate(st.data ? fmt(s.up, dec) : '--') + '</span></span>' +
+        '<span class="down"><i class="arw">↓</i> <span class="' + (st.data ? 'down' : 'idle') + '">' + fwRate(st.data ? fmt(s.down, dec) : '--') + '</span></span>' +
       '</span>' +
       '<span class="sim-ping' + (st.data ? '' : ' idle') + '">' + fw(st.data ? fmt(s.ping, 0) : '--', 3) + '</span>' +
     '</div>';
@@ -1058,7 +1742,7 @@ function simPanel(fixed) {
     '</section>';
 }
 
-/* 基站状态面板（4G / 5G 各一张卡片）→ 屏幕 01、02 右侧共用 */
+/* 基站状态面板（4G / 5G 上下两张卡片）→ 屏幕 01、02 右侧 / 屏幕 03 右栏共用 */
 function btsPanel() {
   return '<section class="panel" style="flex:1">' +
       '<div class="panel-title"><span>基站状态</span></div>' +
@@ -1072,7 +1756,8 @@ function btsPanel() {
    ============================================================ */
 
 /* ========== 屏幕 01 · 工程模式 · 直连模式（首页默认） → renderDirect() ==========
-   左：链路状态——5 条 SIM 链路，每行显示 运营商 / 在线状态 / 信号强度 / 实时带宽 / 时延
+   左：链路状态——直连只认 SIM4 / SIM5 两张卡，故只列这两条链路，
+       每行显示 运营商 / 在线状态 / 信号强度 / 实时带宽 / 时延
        （带宽与时延的单位统一写在表头，数值列只留数字）
    右：基站状态——上下两张卡片，分别为 4G 基站（在线·淡绿）与 5G 基站（离线·淡红）
    底：功能页脚——左「系统设置 / 版本信息」，右「屏幕亮度 / 重启设备」（替代提示底栏）
@@ -1080,7 +1765,7 @@ function btsPanel() {
 function renderDirect() {
   const body =
     '<div class="row" style="flex:1">' +
-      '<div class="col" style="flex:0 0 552px">' + simPanel() + '</div>' +
+      '<div class="col" style="flex:0 0 552px">' + simPanel(false, DIRECT_SIMS) + '</div>' +
       '<div class="col" style="flex:1">' + btsPanel() + '</div>' +
     '</div>';
   return shell({ group: '工程模式', nav: engNav('直连模式'), body: body, footer: footBar() });
@@ -1125,125 +1810,319 @@ function renderAgg() {
 
   const body = aggBar +
     '<div class="row" style="flex:1">' +
-      '<div class="col" style="flex:0 0 552px">' + simPanel(true) + '</div>' +
+      '<div class="col" style="flex:0 0 552px">' + simPanel(true, SIMS) + '</div>' +
       '<div class="col" style="flex:1">' + btsPanel() + '</div>' +
     '</div>';
 
   return shell({ group: '工程模式', nav: engNav('聚合模式'), body: body, footer: footBar() });
 }
 
-/* ========== 屏幕 03 · 工程模式 · 卫星传输 → renderSat() ========== */
+/* ========== 屏幕 03 · 工程模式 · 卫星传输 → renderSat() ==========
+   左（288px）：卫星状态面板，顶部一枚卫星示意图（替代原环形仪表），
+               下方依次是「链路状态」（同一时刻只显示一种：无卫星链路 / 在线 / 离线，
+               值域按最长文案预留宽度）、信噪比读数，
+               以及卫星参数（卫星标识 / 波束 / 仰角 / 方位角 / 频段）
+   中（剩余宽度）：上行速率 / 下行速率 / 链路时延 / 链路抖动 四张等分指标卡，
+               横排：左侧与数值同色的圆形图标，右侧名称与「数值 + 单位」两行，无趋势柱
+   右（288px）：基站状态面板（4G / 5G 上下两张卡，与屏幕 01、02 同一套 .bs-card）
+   底部：与屏幕 01、02 同款功能页脚（系统设置 / 版本信息 / 屏幕亮度 / 重启设备）
+   ============================================================================== */
 function renderSat() {
+  /* 四张卡的图标：复用全局 ico()（24×24 viewBox、1.8 线宽），显示尺寸 30px，颜色取自 .m-ico 上的行内 accent
+     上/下行  圆圈 + 朝上（下）箭头
+     链路时延  圆圈 + 时针与分针
+     链路抖动  圆圈 + 一段心电波形（"类似"心电图：平线 - 尖峰 - 回落 - 平线） */
+  const ICO_UP    = ico('<circle cx="12" cy="12" r="9"/><path d="M12 16.6V7.8M8.7 11.1 12 7.7l3.3 3.4"/>');
+  const ICO_DOWN  = ico('<circle cx="12" cy="12" r="9"/><path d="M12 7.4v8.8M8.7 12.9 12 16.3l3.3-3.4"/>');
+  const ICO_CLOCK = ico('<circle cx="12" cy="12" r="9"/><path d="M12 7.4V12l3.3 2"/>');
+  const ICO_PULSE = ico('<circle cx="12" cy="12" r="9"/><path d="M6.4 12h2l1.2-2.6 1.6 5 1.2-3.4.9 1.6h2.3"/>');
+
+  /* 左栏顶部的卫星示意图：取 Tabler Icons 的 satellite（outline，MIT 许可）原样搬入 ——
+     中央一根 45° 倾斜的圆角长条星体，右上、左下各挂一片菱形太阳能板，
+     朝向右下伸出一小段天线短杆，外侧再补内（r=2.5）外（r=6）两道同心信号弧，表示正对地面站通信；
+     纯描边无填充，颜色继承 .sat-fig 的 color（teal）。
+     viewBox 收紧到图形外框（原 0 0 24 24 的墨迹只占 3~21，四周全是留白）：
+     改成 2.5 2.5 19 19 后放大倍率由 4 提到 5.05，实绘从 72×72 变成 91×91px，
+     线宽同步由 0.9 降到 0.75，让屏幕上的实际线宽落在 3.8px 左右，
+     与原来那张示意图的观感粗细持平，不会比页面里其他图标明显更重 */
+  const SAT_FIG =
+    '<svg viewBox="2.5 2.5 19 19" fill="none" stroke="currentColor" stroke-width="0.75" ' +
+      'stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet">' +
+      '<path d="M3.707 6.293l2.586-2.586a1 1 0 0 1 1.414 0l5.586 5.586a1 1 0 0 1 0 1.414l-2.586 2.586a1 1 0 0 1-1.414 0l-5.586-5.586a1 1 0 0 1 0-1.414"/>' +  /* 星体（45° 倾斜的圆角长条） */
+      '<path d="M6 10l-3 3 3 3 3-3"/>' +                                    /* 左下方太阳能板（菱形） */
+      '<path d="M10 6l3-3 3 3-3 3"/>' +                                     /* 右上方太阳能板（菱形） */
+      '<path d="M12 12l1.5 1.5"/>' +                                        /* 天线短杆 */
+      '<path d="M14.5 17a2.5 2.5 0 0 0 2.5-2.5"/>' +                        /* 内侧信号弧 */
+      '<path d="M15 21a6 6 0 0 0 6-6"/>' +                                  /* 外侧信号弧 */
+    '</svg>';
+
+  /* 中栏四张指标卡同构：左侧圆形图标 + 右侧「名称 / 数值 + 单位」，图标与数值同色 */
+  const metric = (title, svg, num, unit, color) =>
+    '<section class="panel m-card" style="flex:1">' +
+      '<span class="m-ico" style="color:' + color + '">' + svg + '</span>' +
+      '<div class="m-txt">' +
+        '<span class="m-name">' + title + '</span>' +
+        '<div class="kpi"><span class="num" style="color:' + color + '">' + num + '</span><span class="u">' + unit + '</span></div>' +
+      '</div>' +
+    '</section>';
   const body =
     '<div class="row" style="flex:1">' +
       '<div class="col" style="flex:0 0 288px">' +
-        '<section class="panel">' +
-          '<div class="panel-title"><span>卫星信号（载噪比）</span><span class="tag teal">Ku 频段</span></div>' +
-          '<div class="gauge-wrap">' +
-            ring({ pct: .78, color: 'var(--teal)', value: SAT.cn0, unit: 'dBHz', size: 116 }) +
-            '<span class="big-hint">良好</span>' +
-          '</div>' +
-          '<div class="field"><span class="k">链路状态</span>' + seg([['已锁定', true], ['搜索中', false]]) + '</div>' +
-        '</section>' +
-      '</div>' +
-      '<div class="col" style="flex:1">' +
-        '<section class="panel"><div class="panel-title"><span>上行速率</span><span class="tag teal">实时</span></div>' +
-          '<div class="kpi"><span class="num" style="color:var(--blue)">' + fmt(SAT.up) + '</span><span class="u">Mbps</span></div>' +
-          trend(2.9, 'var(--blue)') + '</section>' +
-        '<section class="panel"><div class="panel-title"><span>下行速率</span><span class="tag teal">实时</span></div>' +
-          '<div class="kpi"><span class="num" style="color:var(--yellow)">' + fmt(SAT.down) + '</span><span class="u">Mbps</span></div>' +
-          trend(6.1, 'var(--yellow)') + '</section>' +
-      '</div>' +
-      '<div class="col" style="flex:0 0 288px">' +
-        '<section class="panel" style="flex:1">' +
-          '<div class="panel-title"><span>卫星参数</span></div>' +
+        '<section class="panel sat-panel" style="flex:1">' +
+          '<div class="panel-title"><span>卫星状态</span></div>' +
+          '<div class="sat-fig">' + SAT_FIG + '</div>' +
+          /* 链路状态同一时刻只显示一种（无卫星链路 / 在线 / 离线）：徽标底色即状态语义色，
+             宽度随文案自适应，三种状态各自的控件宽度都能用尺子分别量出来；点一下换下一种。
+             class 里 state-slot 必须排在 v 前面 —— rulerName() 取首个命中名称表的 class，
+             若 v 在前会被标成通用的「值」，排在前面才显示为「链路状态徽标」 */
+          '<div class="kv"><span class="k">链路状态</span>' +
+            '<span class="state-slot v ' + LINK_STATES[linkIdx].cls + '">' + LINK_STATES[linkIdx].text + '</span></div>' +
+          kv('信噪比', SAT.cn0 + ' dBHz') +
           kv('卫星标识', 'SAT-KU-03') +
           kv('波束', '亚太6D · 东波束') +
           kv('仰角', '45.2°') +
           kv('方位角', '182.4°') +
           kv('频段', 'Ku · 12.5GHz') +
-          kv('时延', SAT.ping + ' ms') +
-          kv('抖动', SAT.jitter + ' ms') +
         '</section>' +
       '</div>' +
+      '<div class="col" style="flex:1">' +
+        metric('上行速率', ICO_UP,    fmt(SAT.up),     'Mbps', 'var(--blue)') +
+        metric('下行速率', ICO_DOWN,  fmt(SAT.down),   'Mbps', 'var(--yellow)') +
+        metric('链路时延（RTT）', ICO_CLOCK, fmt(SAT.ping, 0),   'ms', 'var(--mauve)') +
+        metric('链路抖动', ICO_PULSE, fmt(SAT.jitter, 0), 'ms', 'var(--green)') +
+      '</div>' +
+      '<div class="col" style="flex:0 0 288px">' + btsPanel() + '</div>' +
     '</div>';
-  return shell({ group: '工程模式', nav: engNav('卫星传输'), body: body, foot: '工程模式 · 卫星链路传输' });
+  return shell({ group: '工程模式', nav: engNav('卫星传输'), body: body, footer: footBar() });
 }
 
-/* ========== 屏幕 04~07 · 运维模式 · 运营商链路详情（共用本模板） ==========
-   调用方式见「五、页面清单」SCREENS：
-     SCREENS[3] → renderOperator(OPS[0], 1.3)  屏幕 04 首页默认 · 中国移动1
-     SCREENS[4] → renderOperator(OPS[1], 2.7)  屏幕 05 中国移动2
-     SCREENS[5] → renderOperator(OPS[2], 3.9)  屏幕 06 中国电信
-     SCREENS[6] → renderOperator(OPS[3], 5.1)  屏幕 07 中国联通（离线）
-   四屏结构完全相同，差异只来自传入的 op 数据（改数据见「一、样例数据 → OPS」）。
-   ========================================================================== */
-function renderOperator(op, seed) {
-  const rows = op.neighbors.length
-    ? op.neighbors.map(n =>
-        '<div class="trow">' +
-          '<span class="mono">' + n.cell + '</span>' +
-          '<span class="mono">' + n.pci + '</span>' +
-          '<span class="mono muted">' + n.freq + '</span>' +
-          '<span class="mono ' + (n.rsrp >= -80 ? 'good' : n.rsrp >= -95 ? 'warn' : 'bad') + '">' + n.rsrp + ' dBm</span>' +
-          '<span><span class="lock' + (n.lock ? ' on' : '') + '">' + (n.lock ? '已锁定' : '锁定') + '</span></span>' +
-        '</div>').join('')
-    : '<div class="empty">无邻区信息（当前链路已离线）</div>';
-
-  const pingPct = op.ping === null ? 0 : clamp(op.ping / 200, 0, 1);
-  const jitPct  = op.jitter === null ? 0 : clamp(op.jitter / 50, 0, 1);
-
-  const body =
-    '<div class="row" style="flex:0 0 194px">' +
-      '<section class="panel" style="flex:0 0 280px">' +
-        '<div class="field"><span class="k">在线状态</span>' +
-          seg([['在线', op.online], ['离线', !op.online, 'bad']]) + '</div>' +
-        '<div class="field"><span class="k">入网制式</span>' +
-          seg([['SA', op.net === 'SA'], ['LTE', op.net === 'LTE']]) + '</div>' +
-        '<div class="gauge-wrap">' +
-          ring({ pct: op.online ? signalPct(op.signal) : 0, color: sigColor(op.signal),
-                 value: op.signal, unit: 'dBm', size: 96 }) +
-          barsHtml(op.online ? signalBars(op.signal) : 0, sigTone(op.signal)) +
-        '</div>' +
-      '</section>' +
-      ratePanel(op.up, op.down, seed) +
-      '<section class="panel" style="flex:0 0 280px">' +
-        '<div class="panel-title"><span>时延 / 抖动</span></div>' +
-        '<div class="metric"><span class="k">时延</span><span class="v">' + fmt(op.ping, 0) + '</span><span class="u">ms</span></div>' +
-        meter(pingPct, 'var(--mauve)') +
-        '<div class="metric jit"><span class="k">抖动</span><span class="v">' + fmt(op.jitter, 0) + '</span><span class="u">ms</span></div>' +
-        meter(jitPct, 'var(--peach)') +
-      '</section>' +
-    '</div>' +
-    '<div class="row" style="flex:1">' +
-      '<section class="panel" style="flex:1">' +
-        '<div class="panel-title"><span>邻区信息</span><span class="tag yellow">支持锁定</span></div>' +
-        '<div class="thead"><span>小区标识</span><span>PCI</span><span>频点</span><span>参考信号</span><span>锁定</span></div>' +
-        '<div class="tbl">' + rows + '</div>' +
-      '</section>' +
+/* ========== 屏幕 04 · 运维模式 · 首页（设置入口） → renderOpsHome() ==========
+   运维模式第一屏，只做入口：不放页签栏（顶部只留「工程模式 / 运维模式」模式切换页眉），
+   也不放底部栏，高度全留给入口卡。
+   内容区上下两张面板，上面「链路设置」列出 6 条可设置的链路（SIM1~SIM5 + 卫星链路），
+   下面「基站设置」列出 2 个可设置的基站。外层网格是固定的（链路 3 列 × 2 行、基站 2 列），
+   卡内排布两种卡都走同一套左右分栏：
+     链路卡 = 左栏「链路图标 + 链路标识」，
+              右栏竖排两行 —— 上面在线状态、下面运营商（卫星链路没有运营商，右栏只有状态徽标）；
+              在线状态：SIM 用屏幕 01 / 02 那套 .sim-state，
+                        卫星用屏幕 03 的三态 .state-slot
+     基站卡 = 左栏「基站图标 + 基站名」，
+              右栏竖排三行 —— 在线状态 .bts-state、物理小区ID / 连接用户数两行 .set-kv；
+              4G / 5G 靠图标形状区分（波束弧数不同），状态与数值取自 BTS4 / BTS5
+   免得点进二级页之前分不清正在设置哪条链路、也看不出它是通的还是断的。
+   点卡片进各自的详情页：5 张 SIM 卡都进屏幕 05（同一个模板，卡上的 data-sim 决定
+   进去后先看哪条链路），两个基站分别进屏幕 06 / 07，卫星链路进屏幕 09（卫星链路设置）；
+   6 张链路卡都挂 data-go，只有 SIM 卡另挂 data-sim（卫星那条 sim 为 null，不挂）。
+   卡片数据 / 跳转关系见「一、样例数据 → OPS_HOME_LINKS / OPS_HOME_BTS」。
+   ============================================================================== */
+function renderOpsHome() {
+  const card = it =>
+    '<div class="set-card link" data-go="' + it.go + '"' +
+      (it.sim === null ? '' : ' data-sim="' + it.sim + '"') + '>' +
+      '<span class="set-l">' +
+        '<span class="set-ico ' + it.ico + '">' + (it.ico === 'sim' ? ICO_SIM : ICO_SAT) + '</span>' +
+        '<span class="set-t1">' + it.t1 + '</span>' +
+      '</span>' +
+      '<span class="set-r">' +
+        (it.st
+          ? '<span class="sim-state ' + it.st.cls + '"><i class="dot"></i>' + it.st.text + '</span>'
+          : '<span class="state-slot ' + it.slot.cls + '">' + it.slot.text + '</span>') +
+        (it.op ? '<span class="set-t2 sim-op">' +
+                   (OP_LOGO[it.op] ? '<img class="op-logo" src="' + OP_LOGO[it.op] + '" alt="">' : '') + it.op +
+                 '</span>' : '') +
+      '</span>' +
+      (it.go === null ? '' : '<span class="set-go">' + ICO_CHEVRON + '</span>') +
     '</div>';
 
+  const btsCard = it =>
+    '<div class="set-card bts"' + (it.go === null ? '' : ' data-go="' + it.go + '"') + '>' +
+      '<span class="set-l">' +
+        '<span class="set-ico ' + it.ico + '">' + (it.ico === 'bts4' ? ICO_BTS4 : ICO_BTS5) + '</span>' +
+        '<span class="set-t1">' + it.t1 + '</span>' +
+      '</span>' +
+      '<span class="set-r">' +
+        '<span class="bts-state ' + (it.online ? 'on' : 'off') + '">' +
+          '<i class="dot"></i>' + (it.online ? '在线' : '离线') +
+        '</span>' +
+        '<span class="set-kv"><span class="k">物理小区ID</span><span class="v">' + it.pci + '</span></span>' +
+        '<span class="set-kv"><span class="k">连接用户数</span><span class="v">' + it.ue + '</span></span>' +
+      '</span>' +
+      (it.go === null ? '' : '<span class="set-go">' + ICO_CHEVRON + '</span>') +
+    '</div>';
+
+  const body =
+    '<section class="panel" style="flex:0 0 250px">' +
+      '<div class="panel-title"><span>链路设置</span></div>' +
+      '<div class="set-grid links">' + OPS_HOME_LINKS.map(card).join('') + '</div>' +
+    '</section>' +
+    '<section class="panel" style="flex:1">' +
+      '<div class="panel-title"><span>基站设置</span></div>' +
+      '<div class="set-grid bts">' + OPS_HOME_BTS.map(btsCard).join('') + '</div>' +
+    '</section>';
+
+  return shell({ group: '运维模式', body: body });   /* 不放底部栏，高度全留给两张入口面板 */
+}
+
+/* ========== 屏幕 05 · 运维模式 · SIM 链路详情 → simPage() ==========
+   5 条 SIM 链路的二级页长得一模一样、只是数据不同，所以只画这一屏、不按链路分成多屏。
+   看的是哪条链路记在 opsSel（OPS 下标），页面函数只做「取当前链路 + 交给下面的模板渲染」，
+   真正的排版在 renderOperator() 里；两处入口都会先定好 opsSel：
+     · 屏幕 04 的 SIM 卡 → 卡上的 data-sim（在 OPS_HOME_LINKS 里按 SIM 序号给好）
+     · 本屏页签栏左半「SIM链路」→ data-sim，点了就地重渲染本屏，不换屏
+   OPS 的第 i 条就是 SIM(i+1)：在线的那条数据最全，拨号中 / 离线 / 未插卡 / 已禁用的
+   相邻小区依次变少或为空，两张锁小区卡也就跟着从「已锁定」变成未锁定。
+   ================================================================= */
+let opsSel = 0;
+
+function simPage() {
+  return renderOperator(OPS[opsSel]);
+}
+
+/* 屏幕 05「相邻小区」两栏没有读数时，按链路状态说明原因（三种状态各一句）；
+   状态取值见「一、样例数据 → OPS」，其余状态用兜底文案 */
+const NB_EMPTY = {
+  '离线':   '无相邻小区信息（当前链路已离线）',
+  '未插卡': '无相邻小区信息（未检测到 SIM 卡）',
+  '已禁用': '无相邻小区信息（该链路已禁用）'
+};
+
+/* 屏幕 05 的排版模板：op = 一条链路的数据（改数据见「一、样例数据 → OPS」）。
+   本屏是「SIM 链路的设置页」，上半屏三张设置卡、下半屏并排两栏相邻小区：
+     左上 · SIM 参数设置 —— 链路开关 / 入网方式 / APN / 鉴权方式 / 用户名 / 密码
+     右上 · 锁LTE小区、锁5G小区 —— 4G、5G 各一张，各自锁自己制式下的那个小区
+     下半 · LTE相邻小区信息、NR-5G相邻小区信息 —— 各是一块「固定表头 + 可手动滚动的文本」
+            （nbPanel），左右并排占满下半屏
+   在线状态与信号强度不在这屏出现：前者在页签栏的状态点上，后者在屏幕 04 的入口卡上，
+   本屏只管设置；也不放页脚（底部提示栏那一条），把高度全让给相邻小区 */
+function renderOperator(op) {
+  /* 左上「SIM 参数设置」：第一行链路开关（这条链路整体启用 / 禁用），
+     入网方式 / 鉴权方式走分段选择器（把可选值全摆出来），
+     APN / 用户名 / 密码走 inp()（值 + 行尾一支铅笔 = 屏上点开软键盘），密码打码；
+     三排按钮都是「能点的开关」，各自带上写的字段名（见 seg()），点了就地切换 */
+  const pwd = '•'.repeat(op.pwd.length);
+  const setCard =
+    '<section class="panel" style="flex:0 0 306px;gap:6px">' +
+      '<div class="panel-title"><span>SIM 参数设置</span></div>' +
+      '<div class="field"><span class="k">链路开关</span>' +
+        seg([['启用', !op.disabled], ['禁用', op.disabled]], 'disabled') + '</div>' +
+      '<div class="field"><span class="k">入网方式</span>' +
+        seg(NET_MODES.map(t => [t, t === op.net]), 'net') + '</div>' +
+      '<div class="field"><span class="k">APN</span>' + inp(op.apn) + '</div>' +
+      '<div class="field"><span class="k">鉴权方式</span>' +
+        seg(AUTH_MODES.map(t => [t, t === op.auth]), 'auth') + '</div>' +
+      '<div class="field"><span class="k">用户名</span>' + inp(op.user) + '</div>' +
+      '<div class="field"><span class="k">密码</span>' + inp(pwd) + '</div>' +
+    '</section>';
+
+  /* 右上两张锁小区卡：4G / 5G 各一张，锁的是相邻小区里对应制式下 lock = true 的那一个，
+     没锁就整卡显示 '--'。卡头右边那行小字说明锁上以后的行为（原来放「已锁定」标签的位置，
+     锁没锁上直接看下面的「锁定开关」）。两张卡要填的参数按制式给：
+       LTE = 锁定开关 / PCID(十进制) / 频点 / 频段
+       5G  = 锁定开关 / PCID(十进制) / 频点 / 频段 / 子载波间隔（子载波间隔只有 NR 有）
+     锁定开关写的字段就是这条链路的 lte / nr 那组小区（lockLte / lockNr）：
+     开启 = 锁上该制式里信号最好的那个小区，关闭 = 把该制式的锁清掉 */
+  const lockCard = (title, hint, c, fields, key) =>
+    '<section class="panel" style="flex:1;gap:6px">' +
+      '<div class="panel-title"><span>' + title + '</span>' +
+        '<span class="cell-hint">' + hint + '</span></div>' +
+      '<div class="field"><span class="k">锁定开关</span>' +
+        seg([['开启', !!c], ['关闭', !c]], key) + '</div>' +
+      '<div class="field"><span class="k">PCID(十进制)</span>' +
+        '<span class="mono">' + (c ? c.pci : '--') + '</span></div>' +
+      fields.map(f => '<div class="field"><span class="k">' + f[0] + '</span>' +
+        '<span class="mono">' + (c ? c[f[1]] : '--') + '</span></div>').join('') +
+    '</section>';
+
+  /* 下半屏并排两栏相邻小区（左 LTE、右 NR-5G），列见 NB_TABLES；
+     两栏都没有读数（离线 / 未插卡 / 已禁用）时各自走空态，文案按状态给 */
+  const nbEmpty = NB_EMPTY[op.state] || '无相邻小区信息';
+  const nbRow = NB_TABLES.map(t => nbPanel(t, op[t.key], nbEmpty)).join('');
+
+  /* 上半屏那行 198px 是按左边「SIM 参数设置」（6 行，最高的那张）定死的，
+     剩下的都留给下半屏的相邻小区，本屏不放页脚，底栏那 24px 也一并给了它 */
+  const body =
+    '<div class="row" style="flex:0 0 198px">' + setCard +
+      lockCard('锁LTE小区', '锁定后仅驻留该 4G 小区', op.lte.find(n => n.lock),
+               [['频点', 'freq'], ['频段', 'band']], 'lockLte') +
+      lockCard('锁5G小区',  '锁定后仅驻留该 5G 小区', op.nr.find(n => n.lock),
+               [['频点', 'freq'], ['频段', 'band'], ['子载波间隔', 'scs']], 'lockNr') +
+    '</div>' +
+    '<div class="row" style="flex:1">' + nbRow + '</div>';
+
   return shell({
-    group: '运维模式',
+    group: '',                 /* 二级页不给模式切换入口，页眉整条不要 */
     nav: opsNav(op.name),
-    body: body,
-    foot: '运维模式' + (op === OPS[0] ? '首页（默认）· 点击中国移动1 进入' : ' · ' + op.name + '链路详情')
+    footer: editFoot(),        /* 底部换成页脚：左「保存&应用」右「返回」 */
+    body: body
   });
 }
 
-/* ========== 屏幕 08~09 · 运维模式 · 基站状态（共用本模板） ==========
-   SCREENS[7] → renderBase(BTS4)  屏幕 08 4G基站
-   SCREENS[8] → renderBase(BTS5)  屏幕 09 5G基站
+/* ========== 屏幕 09 · 运维模式 · 卫星链路设置 → satSettingsPage() ==========
+   屏幕 04「卫星链路」入口卡的落点（那一屏的 6 张链路卡里，只有卫星这张原来点了没反应）。
+   精简版：只有一张「卫星参数设置」卡，4 项可编辑参数 ——
+     链路开关（启用 / 禁用）、卫星系统、频段、卫星标识（文本输入框）。
+   卡片铺满内容区（只让开底部页脚那一条），卡内 4 行参数单列竖排、整列左对齐 ——
+   标签列固定 80px 宽（四个标签都在 4 个字以内，统一宽度后左边缘自然对齐），
+   控件紧跟在标签列后面（8px 间隙），控件左边缘也因此对齐成一列；
+   .field 默认是 label 贴左、控件贴右的 space-between，这里改成 flex-start 才收得拢；
+   每行高固定 56px（行内控件 22px 高，上下各留 17px），不再让 4 行去均分整张卡的高度 ——
+   卡高 420px 均分下来每行要 89.5px，行与行之间空得太大，参数看着散；
+   缩到 56px 后行距回到正常表单的密度，卡片下方多出来的空档留白。
+   链路开关的语义与屏幕 05 的链路开关一致：禁用 = 这条链路不拨号（屏幕 03 上按「无卫星链路」看）。
+   本屏是二级页：不给模式切换页眉，也不带页签栏（卫星只有一条链路，没有可就地切换的兄弟页），
+   底部与屏幕 05 同款功能页脚（editFoot）：左「保存&应用」（二级确认）右「返回」（回屏幕 04）。
+   只读读数（信噪比 / 上行 / 下行 / 时延 / 抖动）不在这屏，仍在屏幕 03「卫星传输」上。
+   可编辑项的样例值见「一、样例数据 → SAT_SET / SAT_SYSTEMS / SAT_BANDS」。
+   ========================================================================== */
+function satSettingsPage() {
+  const s = SAT_SET;
+  const field = (k, ctrl) =>
+    '<div class="field" style="flex:0 0 56px;justify-content:flex-start">' +
+      '<span class="k" style="width:80px">' + k + '</span>' + ctrl + '</div>';
+  const setCard =
+    '<section class="panel" style="flex:1;gap:6px">' +
+      '<div class="panel-title"><span>卫星参数设置</span></div>' +
+      field('链路开关', seg([['启用', !s.disabled], ['禁用', s.disabled]], 'disabled', 'sat')) +
+      field('卫星系统', seg(SAT_SYSTEMS.map(t => [t, t === s.system]), 'system', 'sat')) +
+      field('频段',     seg(SAT_BANDS.map(t => [t, t === s.band]), 'band', 'sat')) +
+      field('卫星标识', inp(s.id)) +
+    '</section>';
+
+  return shell({
+    group: '',                 /* 二级页不给模式切换入口，页眉整条不要 */
+    footer: editFoot(),        /* 底部：左「保存&应用」右「返回」 */
+    body: '<div class="row" style="flex:1">' + setCard + '</div>'
+  });
+}
+
+/* ========== 屏幕 06~07 · 运维模式 · 基站设置（共用本模板） ==========
+   SCREENS[5] → renderBase(BTS4)  屏幕 06 4G基站
+   SCREENS[6] → renderBase(BTS5)  屏幕 07 5G基站
    两屏结构相同，差异只来自传入的 b 数据（改数据见「一、样例数据 → BTS4 / BTS5」）。
+
+   整屏都是「可设置项」，改法按参数的形态分两种：
+     左 · 基站标识 —— 24px 等宽大字 + 行尾一支铅笔，点它弹编辑弹窗改这串标识；
+          下面一行「小区状态」是能点的开关（激活 / 禁用，点哪项切哪项，写回 b.status）
+     右 · 小区参数 —— 六（5G 是七）张参数卡片，绝大多数是「数值 + 单位 + 铅笔」，
+          点卡片弹编辑弹窗；「工作模式」只有 FDD / TDD 两种，排成两个按钮、点了直接切。
+          本屏按「保留卡片网格」的写法只加铅笔 / 按钮与点击热区，不改成一格一行的字段行
+     左栏下半的「UE 个数 + 负载条 + 容量说明」是唯一保留的只读监控（不弹窗、不可点）：
+       连接数是测出来的、不是参数，故不做成开关；参数本身（最大接入数）不在这屏
+     底部换成与屏幕 05 完全一致的功能页脚 editFoot()：左「保存&应用」右「返回」（回屏幕 04）
    ================================================================== */
 function renderBase(b) {
   const body =
     '<div class="row" style="flex:1">' +
       '<section class="panel" style="flex:0 0 320px">' +
         '<div class="panel-title"><span>' + b.idName + '</span></div>' +
-        '<div class="big-id">' + b.id + '</div>' +
+        /* 标识整块可点：data-e = 写回哪份数据（BTS_KEYS 的 key）、data-p = 改哪个字段 */
+        '<div class="big-id edit-hit" data-e="' + b.key + '" data-p="id">' +
+          b.id + '<span class="pen">' + ICO_PEN + '</span></div>' +
         '<div class="field"><span class="k">小区状态</span>' +
-          seg([['激活', b.status === '激活'], ['未激活', b.status !== '激活', 'bad']]) + '</div>' +
+          seg([['激活', b.status === '激活'], ['禁用', b.status !== '激活', 'bad']],
+              'status', b.key) + '</div>' +
+        /* 分隔线以下（UE 那一组只读读数）贴着小区状态那行往下排，
+           不往卡片底部撑：这组是监控读数，靠上更顺手，余下的空白留在卡片下方 */
         '<div class="hr"></div>' +
         '<span class="k muted" style="font-size:11px">UE 个数</span>' +
         '<div class="kpi"><span class="num" style="color:var(--green)">' + b.ue + '</span><span class="u">个</span></div>' +
@@ -1251,105 +2130,196 @@ function renderBase(b) {
         '<div class="cell-hint">小区容量 ' + b.ueMax + ' · 负载 ' + (b.ue / b.ueMax * 100).toFixed(0) + '%</div>' +
       '</section>' +
       '<section class="panel" style="flex:1">' +
-        '<div class="panel-title"><span>小区参数</span><span class="tag">' + b.label + '</span></div>' +
-        '<div class="cells">' + b.cells.map(cell).join('') + '</div>' +
+        /* 卡头不再挂基站名标签：本屏就是 4G / 5G 基站的设置页，页签栏与标识里都已写明 */
+        '<div class="panel-title"><span>小区参数</span></div>' +
+        '<div class="cells">' + b.cells.map((c, i) => cell(c, b.key, i)).join('') + '</div>' +
       '</section>' +
     '</div>';
 
-  return shell({ group: '运维模式', nav: opsNav(b.label), body: body, foot: '运维模式 · ' + b.label + '状态' });
+  /* 页眉整条不要（进入本屏后不再给「工程模式 / 运维模式」入口，与屏幕 05、09 一致）；
+     底部除了页脚，还带出本屏的编辑参数弹窗 */
+  return shell({
+    group: '',
+    nav: opsNav(b.label),
+    body: body,
+    footer: editFoot() + editItemModal()
+  });
+}
+
+/* ========== 屏幕 08 · 系统设置（空白占位） → renderSettings() ==========
+   入口：屏幕 01、02 页脚的「系统设置」按钮（data-go 跳转，不弹窗）。
+   整屏独立：没有页眉的模式切换、没有工程模式页签栏、也没有底部栏，
+   内容区只有正中水印 + 靠下的「返回 / 确定」按钮，两个按钮都退回进入本页前的来源页。
+   ============================================================================== */
+function renderSettings() {
+  const btn = (label, icon, cls) =>
+    '<span class="act-btn' + (cls ? ' ' + cls : '') + '" data-back>' +
+      icon + '<span>' + label + '</span></span>';
+  const body =
+    '<div class="blank"><span class="blank-mark">待完善</span>' +
+      '<div class="act-row">' + btn('返回', ICO_BACK) + btn('确定', ICO_CHECK, 'primary') + '</div>' +
+    '</div>';
+  return shell({ group: '', nav: '', body: body });
 }
 
 /* ============================================================
    五、页面清单（9 屏）
    数组第 N 项 = 页面第 N 屏，渲染顺序即界面上的纵向排列顺序。
-   末尾再追加 PLACEHOLDERS 个空白页面（屏幕 10~14）作为预留区域。
    ============================================================ */
 const SCREENS = [
   /* 屏幕 01 */ { g: '工程模式', n: '直连模式（首页默认）', h: renderDirect },
   /* 屏幕 02 */ { g: '工程模式', n: '聚合模式',             h: renderAgg },
   /* 屏幕 03 */ { g: '工程模式', n: '卫星传输',             h: renderSat },
-  /* 屏幕 04 */ { g: '运维模式', n: '首页默认 · 中国移动1',  h: () => renderOperator(OPS[0], 1.3) },
-  /* 屏幕 05 */ { g: '运维模式', n: '中国移动2',            h: () => renderOperator(OPS[1], 2.7) },
-  /* 屏幕 06 */ { g: '运维模式', n: '中国电信',             h: () => renderOperator(OPS[2], 3.9) },
-  /* 屏幕 07 */ { g: '运维模式', n: '中国联通（离线）',      h: () => renderOperator(OPS[3], 5.1) },
-  /* 屏幕 08 */ { g: '运维模式', n: '4G基站',               h: () => renderBase(BTS4) },
-  /* 屏幕 09 */ { g: '运维模式', n: '5G基站',               h: () => renderBase(BTS5) }
+  /* 屏幕 04 */ { g: '运维模式', n: '首页默认 · 设置入口',  h: renderOpsHome },
+  /* 屏幕 05 */ { g: '运维模式', n: 'SIM 链路详情',         h: simPage },
+  /* 屏幕 06 */ { g: '运维模式', n: '4G基站',               h: () => renderBase(BTS4) },
+  /* 屏幕 07 */ { g: '运维模式', n: '5G基站',               h: () => renderBase(BTS5) },
+  /* 屏幕 08 */ { g: '系统设置', n: '待完善',               h: renderSettings },
+  /* 屏幕 09 */ { g: '运维模式', n: '卫星链路设置',         h: satSettingsPage }
 ];
+/* 屏幕 05 / 09 的下标必须与上面的 SIM_PAGE / SAT_PAGE 一致（屏幕号 - 1） */
 
-/* 预留空白区域数量（追加在 09 屏之后，只有空白画面，不含任何内容） */
-const PLACEHOLDERS = 5;
+/* 「系统设置」页在 SCREENS 中的下标 = 屏幕号 - 1；屏幕 01、02 页脚按钮据此跳转。
+   这里不能再写 SCREENS.length - 1：屏幕 09 卫星链路设置追加在它后面，系统设置已不是末屏 */
+const SETTINGS_PAGE = 7;
 
-/* 画布上的单屏外壳：头部信息 + 854×480 视口 */
-const frameHtml = (i, o) =>
-  '<section class="frame" id="frame-' + i + '">' +
-    '<header class="frame-head">' +
-      '<span class="idx">' + String(i + 1).padStart(2, '0') + '</span>' +
-      '<span class="fgroup' + (o.gcls || '') + '">' + o.group + '</span>' +
-      '<span class="fname">' + o.name + '</span>' +
-      '<span class="fsize">854×480</span>' +
-    '</header>' +
-    '<div class="viewport"><div class="screen">' + o.body + '</div></div>' +
-  '</section>';
-
-/* 渲染画布 + 页签（画布上的 01~09 编号即页面序号，与 SCREENS 下标 +1 一致） */
-function build() {
-  const frames = SCREENS.map((s, i) => frameHtml(i, {
-    group: s.g, gcls: s.g === '运维模式' ? ' ops' : '', name: s.n, body: s.h()
-  }));
-  /* 末尾追加预留空白区域：无标题、无内容的空画面 */
-  for (let k = 0; k < PLACEHOLDERS; k++) {
-    frames.push('<section class="frame" id="frame-' + (SCREENS.length + k) + '">' +
-        '<div class="viewport"><div class="screen"></div></div>' +
-      '</section>');
-  }
-  document.getElementById('grid').innerHTML = frames.join('');
-
-  document.getElementById('tabs').innerHTML = SCREENS.map((s, i) =>
+/* 顶部页签：一屏一个按钮，点哪个就把「跳转调试台」那块活屏切到哪一屏
+   （页签文案与高亮由 buildTabs() 维护，点这里与点右侧「页面清单」是同一个动作） */
+function buildTabs() {
+  const tabs = document.getElementById('tabs');
+  tabs.innerHTML = SCREENS.map((s, i) =>
     '<button class="ttab' + (s.g === '运维模式' ? ' ops' : '') + '" data-go="' + i + '">' +
       '<i>' + (i + 1) + '</i>' + s.n + '</button>').join('');
+  tabs.addEventListener('click', e => {
+    const btn = e.target.closest('.ttab');
+    if (btn) dbgGo(+btn.dataset.go, '顶部页签');
+  });
 }
 
-/* 页签：滚动定位到对应屏幕并高亮 */
-let activeTab = null, flashTimer = null;
-document.getElementById('tabs').addEventListener('click', e => {
-  const btn = e.target.closest('.ttab');
-  if (!btn) return;
-  const i = +btn.dataset.go;
-  const frame = document.getElementById('frame-' + i);
-  frame.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-  if (activeTab) activeTab.classList.remove('active');
-  btn.classList.add('active');
-  activeTab = btn;
-
-  clearTimeout(flashTimer);
-  document.querySelectorAll('.frame.flash').forEach(f => f.classList.remove('flash'));
-  frame.classList.add('flash');
-  flashTimer = setTimeout(() => frame.classList.remove('flash'), 900);
-});
+/* 高亮与当前活屏一致的那个页签（每次换屏时由 dbgGo() 调用） */
+function markTab(i) {
+  document.querySelectorAll('#tabs .ttab').forEach(b => b.classList.toggle('active', +b.dataset.go === i));
+}
 
 /* ============================================================
-   六、弹窗交互：点击页脚「版本信息 / 屏幕亮度 / 重启设备」弹出，
-       点遮罩 / 关闭按钮 / 确认弹窗的任一按钮 / Esc 关闭
+   六、屏内的就地交互（跳转走「九、跳转调试台」那一套）
+   这里是「不换屏、只改本屏」的几处：页签换数据、开关换选项、编辑参数弹窗、
+   弹窗开合与 Esc 收起。都挂在 document 上，因为屏只有一个（调试台那块活屏）。
    ============================================================ */
-document.getElementById('grid').addEventListener('click', e => {
-  const btn = e.target.closest('.foot-btn[data-modal]');
-  if (btn) {                                          /* 打开弹窗（再次点击则收起） */
-    const mask = btn.closest('.screen')
-      .querySelector('.modal-mask[data-modal="' + btn.dataset.modal + '"]');
-    if (mask) mask.classList.toggle('on');
+
+/* 屏幕 03「链路状态」徽标：点击按 LINK_STATES 的顺序循环切换
+   （无卫星链路 → 在线 → 离线 → 无卫星链路），便于在设计串口屏时逐态量尺寸。
+   就地改文案与配色类、不重建页面，所以滚动位置不会跳；
+   换个页面再切回来时由 renderSat() 重新按 linkIdx 渲染，状态不会丢 */
+document.addEventListener('click', e => {
+  if (!e.target.closest('.state-slot')) return;
+  linkIdx = (linkIdx + 1) % LINK_STATES.length;
+  const s = LINK_STATES[linkIdx];
+  /* class 顺序要与 renderSat() 里保持一致（state-slot 在 v 前，尺子的命名才准确） */
+  document.querySelectorAll('.state-slot').forEach(el => {
+    el.className = 'state-slot v ' + s.cls;
+    el.textContent = s.text;
+  });
+});
+
+/* 就地重渲染本屏（屏幕 05 SIM 链路详情 / 屏幕 06、07 基站 / 屏幕 09 卫星链路设置共用）：
+   只在活屏正显示这一屏时才重建它的内容，数据各用自己那一份
+   （屏幕 05 → OPS[opsSel]、屏幕 09 → SAT_SET、屏幕 06、07 → BTS4 / BTS5）。
+   换的只是 .screen 内部，弹窗与滚动位置都不动 */
+function refreshPage(page, html) {
+  if (dbgCur === page) dbgScreen.innerHTML = html();
+}
+
+/* 屏幕 05 / 06 / 07 / 09 上那几个「开关」：分段选择器
+   （屏幕 05 = 链路开关 / 入网方式 / 鉴权方式 / 锁定开关，
+     屏幕 06、07 = 小区状态 + 参数卡片里的工作模式，
+     屏幕 09 = 链路开关 / 卫星系统 / 频段）
+   点哪一项就切到哪一项，写回哪份数据看 .seg 的 data-t（不传 = 屏幕 05 的 OPS[opsSel]，
+   'sat' = 屏幕 09 的 SAT_SET，'bts4' / 'bts5' = 屏幕 06 / 07 的 BTS4 / BTS5），
+   写完都就地重渲染本屏 —— 屏幕 05 还连带刷新锁小区卡的 PCID / 频点 / 频段那几行。
+   锁定开关没有独立字段，它就是「该制式下有没有锁住的小区」：
+   关闭 = 把这组小区的锁都清掉、开启 = 锁上信号最好的那个（列表为空时没得锁，保持关闭）。
+   屏幕 06、07 参数卡片里那些「数值 + 铅笔」的卡片本身不是选择器（点了弹输入框），
+   所以那种卡片只描了铅笔、没有 data-f */
+document.addEventListener('click', e => {
+  const opt = e.target.closest('.seg[data-f] > span');
+  if (!opt) return;
+  const segEl = opt.parentElement;
+  const field = segEl.dataset.f;
+  const value = opt.dataset.v;
+
+  /* 屏幕 09：卫星链路设置的三排开关，直接写 SAT_SET */
+  if (segEl.dataset.t === 'sat') {
+    if (field === 'disabled') SAT_SET.disabled = value === '禁用';
+    else SAT_SET[field] = value;                     /* system / band */
+    refreshPage(SAT_PAGE, satSettingsPage);
     return;
   }
-  const mask = e.target.closest('.modal-mask');
-  if (!mask) return;
-  /* 确认弹窗的两个按钮只是设计样例，均表示「结束本次确认」 */
-  if (e.target.closest('.modal-close') || e.target.closest('.cbtn') || e.target === mask) {
-    mask.classList.remove('on');
+
+  /* 屏幕 06 / 07：左侧「小区状态」开关（激活 / 禁用）改的是顶层字段 status；
+     参数卡片里的「工作模式」开关（FDD / TDD）改的是 b.cells 里那一项的值（data-i 指第几项）。
+     写回后都重渲染本屏 */
+  const bts = BTS_KEYS[segEl.dataset.t];
+  if (bts) {
+    if (segEl.dataset.i === undefined) bts.d[field] = value;
+    else bts.d.cells[+segEl.dataset.i][1] = value;
+    refreshPage(bts.page, () => renderBase(bts.d));
+    return;
   }
+
+  const op = OPS[opsSel];
+
+  if (field === 'disabled') op.disabled = value === '禁用';
+  else if (field === 'net') op.net = value;
+  else if (field === 'auth') op.auth = value;
+  else {
+    const list = field === 'lockLte' ? op.lte : op.nr;
+    if (value === '关闭') list.forEach(n => n.lock = false);
+    else if (list.length && !list.some(n => n.lock)) list[0].lock = true;
+    else return;                       /* 已经开着 / 没有可锁的小区：不重渲染 */
+  }
+  refreshPage(SIM_PAGE, simPage);
+});
+
+/* 屏幕 06 / 07 的「编辑参数」：点设置项弹输入框，确定后写回数据
+   ① 打开：点的是 .edit-hit（基站标识那块大字 / 任意一张参数卡片）时，
+      把弹窗的项名与输入框按这一项填好 —— 目标存在弹窗自己的 dataset 上，
+      所以同一屏只需要一个弹窗实例（editItemModal() 里那份静态骨架）。
+   ② 确定：写回 b.d 上对应的字段（.cell 的 data-i 指 b.cells 的第几项，
+      只改数值、不动单位），再重渲染本屏。
+      「取消 / ✕ / 点遮罩」由上面的通用遮罩处理直接收起，这里不拦，故不改数据。 */
+document.addEventListener('click', e => {
+  const hit = e.target.closest('.edit-hit');
+  if (hit) {
+    const b = BTS_KEYS[hit.dataset.e];
+    const screen = hit.closest('.screen');
+    const mask = screen && screen.querySelector('.modal-mask[data-modal="edit"]');
+    if (!b || !mask) return;
+    const isCell = hit.dataset.p === 'cells';
+    const i = +hit.dataset.i;
+    mask.querySelector('.edit-name').textContent = isCell ? b.d.cells[i][0] : b.d.idName;
+    mask.querySelector('.edit-inp').value = isCell ? b.d.cells[i][1] : b.d.id;
+    mask.dataset.e = hit.dataset.e;
+    mask.dataset.p = hit.dataset.p;
+    if (isCell) mask.dataset.i = i; else delete mask.dataset.i;
+    mask.classList.add('on');
+    mask.querySelector('.edit-inp').focus();
+    return;
+  }
+
+  const ok = e.target.closest('.modal-mask[data-modal="edit"] .cbtn.ok');
+  if (!ok) return;
+  const mask = ok.closest('.modal-mask');
+  const b = BTS_KEYS[mask.dataset.e];
+  const v = mask.querySelector('.edit-inp').value.trim();
+  if (!b || !v) return;                     /* 数据没了或填了空值：不改 */
+  if (mask.dataset.p === 'cells') b.d.cells[+mask.dataset.i][1] = v;
+  else b.d.id = v;
+  refreshPage(b.page, () => renderBase(b.d));
 });
 
 /* 亮度滑块：拖动时同步已选段填充（--p）与百分比读数 */
-document.getElementById('grid').addEventListener('input', e => {
+document.addEventListener('input', e => {
   if (!e.target.classList.contains('slider')) return;
   const s = e.target;
   s.style.setProperty('--p', s.value + '%');
@@ -1361,70 +2331,66 @@ document.addEventListener('keydown', e => {
 });
 
 /* ============================================================
-   七、缩放：默认按视口宽度自适应，单列下尽量接近 1:1
-   ============================================================ */
-const STAGE_PAD = 44;   /* 舞台左右内边距 */
-let manual = false, scale = 1;
-
-function fitScale() {
-  /* 用舞台自身的 clientWidth，已排除竖向滚动条占位 */
-  const avail = document.querySelector('.stage').clientWidth - STAGE_PAD;
-  return Math.min(1, Math.max(0.3, avail / 854));
-}
-function applyZoom() {
-  document.documentElement.style.setProperty('--s', scale);
-  document.getElementById('zoomLabel').textContent = Math.round(scale * 100) + '%';
-}
-document.getElementById('zoomIn').onclick  = () => { manual = true; scale = Math.min(scale + 0.08, 1); applyZoom(); };
-document.getElementById('zoomOut').onclick = () => { manual = true; scale = Math.max(scale - 0.08, 0.2); applyZoom(); };
-document.getElementById('reset').onclick   = () => { manual = false; scale = fitScale(); applyZoom(); };
-window.addEventListener('resize', () => { if (!manual) { scale = fitScale(); applyZoom(); } });
-
-/* ============================================================
-   八、尺寸标注（悬停查看真实设计像素）
+   七、尺寸标注（悬停查看真实设计像素）
+   鼠标停在屏内任意控件上，就把它的真实尺寸与位置标出来（换算回 854×480 的设计像素，
+   不受页面缩放影响），照抄到陶晶驰 USART HMI 的控件属性里即可。
+   分段选择器里的每个选项按钮算独立控件，悬浮时标的是按钮自身（比如「自动」46 × 22），
+   不是整个选择器。
    ============================================================ */
 const RULER_SEL = [
   '.bar-top', '.mode-btn', '.bar-nav', '.tab', '.body', '.row', '.col', '.panel', '.panel-title',
-  '.gauge-wrap', '.kpi', '.trend', '.kv', '.seg', '.meter', '.thead', '.trow', '.tbl',
-  '.cell', '.bars', '.bar-bot',
+  '.sat-fig', '.kpi', '.kv', '.seg', '.meter', '.cell', '.bars', '.bar-bot', '.m-card', '.m-ico', '.m-txt',
   '.sim-head', '.sim-list', '.sim-row', '.sim-name', '.sim-op', '.sim-state', '.sim-sig',
   '.sim-dbm', '.sim-rate', '.sim-ping', '.fix-fw',
   '.bs-card', '.bs-head', '.bs-name', '.bs-meta', '.bs-id', '.bs-state',
   '.foot-bar', '.foot-group', '.foot-btn',
+  '.blank', '.blank-mark', '.act-row', '.act-btn',
   '.modal-mask', '.modal', '.modal-head', '.modal-title', '.modal-close', '.modal-body', '.ver-notes', '.ver-box',
-  '.bright-body', '.slider', '.bright-val',
-  '.confirm-foot', '.cbtn',
-  '.big-id', '.field', '.half', '.metric', '.big-hint', '.cell-hint', '.empty',
-  '.agg-bar', '.lock', '.tag'
+  '.bright-body', '.slider', '.bright-val', '.edit-inp',
+  '.confirm-foot', '.cbtn', '.confirm-tip',
+  '.big-id', '.field', '.half', '.cell-hint', '.empty', '.state-slot',
+  '.set-grid', '.set-card', '.set-l', '.set-r', '.set-ico', '.set-t1', '.set-t2', '.set-go',
+  '.set-kv', '.bts-state',
+  '.agg-bar', '.inp', '.roll-head', '.rollview', '.tag'
 ].join(', ');
 
 const RULER_NAMES = {
   'screen': '屏幕', 'bar-top': '页眉', 'mode-btn': '模式按钮', 'bar-nav': '页签栏', 'tab': '页签', 'body': '内容区',
-  'row': '行容器', 'col': '列容器', 'panel': '面板', 'panel-title': '面板标题', 'gauge-wrap': '仪表区',
-  'kpi': '大数值', 'num': '数值', 'trend': '速率趋势', 'kv': '键值行', 'seg': '选择器',
-  'meter': '条形仪表', 'thead': '表头', 'trow': '表格行', 'tbl': '表格体', 'cell': '参数字',
+  'row': '行容器', 'col': '列容器', 'panel': '面板', 'panel-title': '面板标题',
+  'kpi': '大数值', 'num': '数值', 'kv': '键值行', 'seg': '选择器',
+  'meter': '条形仪表', 'cell': '参数字',
   'bars': '信号格', 'bar-bot': '底栏', 'agg-bar': '聚合状态条',
-  'big-id': '设备标识', 'field': '字段行', 'half': '半区', 'metric': '指标',
-  'big-hint': '状态文字', 'cell-hint': '容量说明', 'empty': '空状态',
-  'tag': '标签', 'lock': '锁定徽章', 'k': '字段名', 'v': '值', 'u': '单位', 'mono': '文本',
+  'm-card': '指标卡', 'm-ico': '指标图标', 'm-txt': '指标文字区', 'm-name': '指标名',
+  'big-id': '设备标识', 'field': '字段行', 'half': '半区', 'inp': '可编辑值框',
+  'roll-head': '相邻小区表头', 'rollview': '相邻小区文本视窗',
+  'cell-hint': '容量说明', 'empty': '空状态', 'sat-fig': '卫星示意图', 'state-slot': '链路状态徽标',
+  'set-grid': '入口网格', 'set-card': '设置入口卡', 'set-l': '入口卡左栏', 'set-r': '入口卡右栏',
+  'set-ico': '入口图标', 'set-t1': '入口标题', 'set-t2': '入口副标题', 'set-go': '入口箭头',
+  'set-kv': '入口卡指标行', 'bts-state': '基站在线状态',
+  'tag': '标签', 'k': '字段名', 'v': '值', 'u': '单位', 'mono': '文本',
   'sd': '状态点', 'dot': '状态点',
   'sim-head': '链路表头', 'sim-list': '链路列表', 'sim-row': 'SIM 链路行', 'sim-name': 'SIM 名', 'sim-op': '运营商',
   'sim-state': '在线状态', 'sim-sig': '信号强度', 'sim-dbm': '信号值', 'sim-rate': '实时带宽',
   'sim-ping': '时延', 'fix-fw': '等宽数值域', 'bs-card': '基站卡', 'bs-head': '基站卡头', 'bs-name': '基站名',
-  'bs-id': '物理小区 ID', 'bs-num': '连接用户数', 'bs-meta': '基站指标行', 'bs-kv': '基站指标', 'bs-state': '基站状态',
+  'bs-id': '物理小区ID', 'bs-num': '连接用户数', 'bs-meta': '基站指标行', 'bs-kv': '基站指标', 'bs-state': '基站状态',
   'foot-bar': '功能页脚', 'foot-group': '页脚按钮组', 'foot-btn': '页脚按钮',
+  'blank': '留白区', 'blank-mark': '占位水印', 'act-row': '操作按钮组', 'act-btn': '操作按钮',
   'modal-mask': '弹窗遮罩', 'modal': '弹窗', 'modal-head': '弹窗标题栏',
   'modal-title': '弹窗标题', 'modal-close': '关闭按钮', 'modal-body': '弹窗内容', 'ver-notes': '发布说明',
   'ver-box': '发布说明文本框',
-  'bright-body': '亮度调节区', 'slider': '亮度滑块', 'bright-val': '亮度读数',
-  'confirm-foot': '确认按钮组', 'cbtn': '确认按钮'
+  'bright-body': '亮度滑块区', 'slider': '亮度滑块', 'bright-val': '亮度读数',
+  'edit-inp': '编辑输入框',
+  'confirm-foot': '确认按钮组', 'cbtn': '确认按钮', 'confirm-tip': '切换确认提示'
 };
 
 const tip = document.getElementById('rulerTip');
 let rulerOn = true;                       /* 默认开启：悬浮即显示坐标与尺寸 */
 const clearHl = () => document.querySelectorAll('.ruler-hl').forEach(x => x.classList.remove('ruler-hl'));
 
-const RULER_GROUPS = '.bars, .meter, .seg, .trend, svg';   /* 组合图标：内部小块统一标注整体 */
+/* 组合图标：内部小块没有单独意义，统一标注整体。
+   分段选择器 .seg 特意不列在这里 —— 屏上每个选项就是一个独立按钮，
+   要能逐个量出按钮自身的尺寸（见「七、尺寸标注」） */
+const RULER_GROUPS = '.bars, .meter, .inp, .rollview, svg';
 
 /* 标注对象：优先鼠标下的最小元素（文本 / 状态点 / 图标），否则回溯到最近的语义容器 */
 function rulerTarget(el, scr) {
@@ -1456,12 +2422,14 @@ document.addEventListener('mouseover', e => {
   clearHl();
   t.classList.add('ruler-hl');
 
-  /* 换算成 854×480 设计稿坐标（除以当前缩放比例），并给出区域范围 */
+  /* 换算成 854×480 设计稿坐标：缩放系数按屏的实测宽度反推，
+     活屏按窗口宽自适应（--ds），这样量出来的始终是设计像素而不是屏幕像素 */
   const sr = scr.getBoundingClientRect(), tr = t.getBoundingClientRect();
-  const x = Math.round((tr.left - sr.left) / scale);
-  const y = Math.round((tr.top  - sr.top ) / scale);
-  const w = Math.round(tr.width  / scale);
-  const h = Math.round(tr.height / scale);
+  const k = sr.width / 854 || 1;
+  const x = Math.round((tr.left - sr.left) / k);
+  const y = Math.round((tr.top  - sr.top ) / k);
+  const w = Math.round(tr.width  / k);
+  const h = Math.round(tr.height / k);
   const font = t.children.length === 0 ? ' · 字号 ' + getComputedStyle(t).fontSize : '';
 
   tip.innerHTML = '<b>' + rulerName(t) + '</b> · 尺寸 ' + w + ' × ' + h +
@@ -1489,10 +2457,199 @@ document.getElementById('toggleRuler').onclick = function () {
   this.style.color = rulerOn ? '#11111b' : '';
 };
 
-/* 启动 */
-build();
-scale = fitScale();
-applyZoom();
+/* ============================================================
+   八、跳转调试台：把 9 屏装进一块 854×480 活屏，逐屏走一遍真实跳转
+     （顶部页签与右侧「页面清单」都能直达任意一屏，「跳转记录」按顺序记下每一步）
+     屏内可点四类目标（跳转关系与设计稿本身一致，不额外编造）：
+       页眉模式按钮  工程模式 → 屏幕 01（直连模式）、运维模式 → 屏幕 04（设置入口）；
+                      已在聚合 / 卫星传输上时点「工程模式」属于换模式，先弹二级确认
+       入口卡 .set-card  屏幕 04 的设置入口 → 5 张 SIM 卡进屏幕 05（先按卡上的 data-sim
+                      定好屏幕 05 显示哪条链路）、2 张基站卡进屏幕 06 / 07
+       页签栏 .tab   带 data-mode 的是「直连 / 聚合 / 卫星传输」三种工作模式：
+                      点了不直接换屏，先弹二级确认（modeConfirm → modeModal），
+                      点「确定」才跳、点「取消 / ✕ / 遮罩」停在原模式；带 data-sim 的是
+                      「SIM链路」页签：只换屏幕 05 显示的那条链路，
+                      已在屏幕 05 上就就地重渲染，从基站页点过来才整屏跳到屏幕 05；
+                      带 data-go 的是「基站」页签与页脚按钮，跳到对应页
+                      （基站 → 屏幕 06 / 07、屏幕 01 / 02 页脚的「系统设置」→ 屏幕 08）
+       页脚功能按钮  有 data-modal 的打开对应弹窗（点遮罩 / 关闭按钮 / 确认按钮收起），
+                      有 data-back 的退回来源页（屏幕 08 的「返回 / 确定」）
+     右侧「页面清单」可直达任意页，「跳转记录」按发生顺序记下每一步
+   ============================================================ */
+const dbgScreen = document.getElementById('dbgScreen');
+const dbgNow    = document.getElementById('dbgNow');
+const dbgList   = document.getElementById('dbgList');
+const dbgLogEl  = document.getElementById('dbgLog');
+let dbgCur = -1, dbgSeq = 0;
+let dbgSettingsFrom = 0;                 /* 活屏里进入系统设置页前的来源页序号，「返回 / 确定」据此退回 */
+
+/* 活屏可直达的页面 = 设计稿的 9 屏（顶部页签与右侧清单共用这份清单） */
+const dbgPages = SCREENS.map(s => ({ g: s.g, n: s.n, h: s.h }));
+
+const dbgNo   = i => String(i + 1).padStart(2, '0');
+const dbgName = i => dbgNo(i) + ' · ' + dbgPages[i].g + ' · ' + dbgPages[i].n;
+
+/* 记一行：跳转走蓝色，弹窗开合走紫色 */
+function dbgLog(text, modal) {
+  const ph = dbgLogEl.querySelector('.empty');
+  if (ph) ph.remove();
+  dbgSeq++;
+  const row = document.createElement('div');
+  row.className = 'r';
+  row.innerHTML = '<span class="n">' + String(dbgSeq).padStart(2, '0') + '</span>' +
+                  '<span class="' + (modal ? 'w' : 'a') + '">' + text + '</span>';
+  dbgLogEl.appendChild(row);
+  dbgLogEl.scrollTop = dbgLogEl.scrollHeight;
+}
+
+/* 跳到第 i 屏：整屏重渲染（弹窗随之复位），同步顶部页签、右侧清单与顶部读数 */
+function dbgGo(i, why) {
+  if (i < 0 || i >= dbgPages.length || i === dbgCur) return;
+  const from = dbgCur;
+  dbgCur = i;
+  dbgScreen.innerHTML = dbgPages[i].h();
+  dbgNow.textContent = dbgName(i);
+  markTab(i);
+  dbgList.querySelectorAll('.dbg-item').forEach(b => b.classList.toggle('on', +b.dataset.go === i));
+  dbgLog((from < 0 ? '起' : dbgNo(from)) + ' → ' + dbgNo(i) + '　' + why);
+}
+
+dbgList.innerHTML = dbgPages.map((s, i) =>
+  '<button class="dbg-item" data-go="' + i + '"><i>' + dbgNo(i) + '</i>' +
+  '<span class="g' + (s.g === '运维模式' ? ' ops' : '') + '">' + s.g + '</span>' + s.n + '</button>').join('');
+
+dbgLogEl.innerHTML = '<span class="empty">还没有跳转记录</span>';
+
+/* 模式切换的二级确认：把目标页与目标模式名写进弹窗再打开（提示语就一行
+   「确认切换到 xx 模式吗？」，所以只填一个名字；页签「卫星传输」不带「模式」两字，
+   这里补上，免得读成「卫星传输模式」的缺字或「直连模式模式」的重字）。
+   目标页存在遮罩的 data-go 上，点「确定」时才真跳（见下面的派发）。
+   返回 false 表示这一屏没挂那枚弹窗，调用处退回直接跳转 */
+function modeConfirm(go, to, why) {
+  const mask = dbgScreen.querySelector('.modal-mask[data-modal="mode"]');
+  if (!mask) return false;
+  mask.dataset.go = go;
+  mask.querySelector('.tip-to').textContent = /模式$/.test(to) ? to : to + '模式';
+  mask.classList.add('on');
+  dbgLog(dbgNo(dbgCur) + '　' + why + '打开弹窗', true);
+  return true;
+}
+
+/* 活屏内的跳转与弹窗统一在这里派发 */
+document.querySelector('.dbg').addEventListener('click', e => {
+  const item = e.target.closest('.dbg-item');                  /* 右侧页面清单：直达 */
+  if (item) { dbgGo(+item.dataset.go, '页面清单'); return; }
+
+  const mode = e.target.closest('.mode-btn');                  /* 页眉模式按钮：各回各自首屏 */
+  if (mode) {
+    const t = mode.textContent.trim();
+    /* 页眉的「工程模式」落在直连模式（第 01 屏）：已经在聚合 / 卫星传输（第 02 / 03 屏）上时，
+       这同样是一次模式切换，也要先确认；本来就在直连模式上则只是回首页，不拦 */
+    if (t === '工程模式' && dbgCur > 0 && dbgCur < 3) {
+      if (modeConfirm(0, '直连模式', '页眉「工程模式」')) return;
+    }
+    dbgGo(t === '运维模式' ? 3 : 0, '页眉「' + t + '」');
+    return;
+  }
+
+  /* 工程模式页签栏「直连 / 聚合 / 卫星传输」：换模式先弹二级确认，点「确定」才真换屏 */
+  const mTab = e.target.closest('.tab[data-mode]');
+  if (mTab) {
+    const go = +mTab.dataset.go;
+    if (go === dbgCur) return;                       /* 点的就是当前模式：不确认也不跳 */
+    const to = mTab.textContent.trim();
+    if (modeConfirm(go, to, '页签「' + to + '」')) return;
+    dbgGo(go, '页签「' + to + '」');                 /* 兜底：本屏没挂那枚弹窗就直接跳 */
+    return;
+  }
+
+  /* 页签栏左半「SIM链路」：4 家运营商是屏幕 05 这一屏的四种取值，换的是数据不是屏 */
+  const simTab = e.target.closest('.tab[data-sim]');
+  if (simTab) {
+    opsSel = +simTab.dataset.sim;
+    const why = '页签「' + simTab.textContent.trim() + '」';
+    if (dbgCur === SIM_PAGE) {
+      /* 已经在屏幕 05 上：就地重渲染，跳转记录只加一条「切换链路」，不当成换页 */
+      dbgScreen.innerHTML = simPage();
+      dbgLog(dbgNo(SIM_PAGE) + '　' + why + '切换链路');
+    } else {
+      dbgGo(SIM_PAGE, why);        /* 从屏幕 06 / 07 的基站页点过来：整屏跳到屏幕 05 */
+    }
+    return;
+  }
+
+  const tab = e.target.closest('.tab');                        /* 页签栏右半「基站状态」→ 屏幕 06 / 07 */
+  if (tab) { dbgGo(+tab.dataset.go, '页签「' + tab.textContent.trim() + '」'); return; }
+
+  /* 屏幕 04 入口卡 → 二级页（SIM 卡进 05、基站卡进 06 / 07） */
+  const setCard = e.target.closest('.set-card[data-go]');
+  if (setCard) {
+    if (setCard.dataset.sim !== undefined) opsSel = +setCard.dataset.sim;
+    dbgGo(+setCard.dataset.go, '入口卡「' + setCard.querySelector('.set-t1').textContent + '」');
+    return;
+  }
+
+  const fbtn = e.target.closest('.foot-btn[data-modal]');      /* 页脚功能按钮：开合弹窗 */
+  if (fbtn) {
+    const mask = fbtn.closest('.screen')
+      .querySelector('.modal-mask[data-modal="' + fbtn.dataset.modal + '"]');
+    if (mask) {
+      mask.classList.toggle('on');
+      dbgLog(dbgNo(dbgCur) + '　页脚「' + fbtn.textContent.trim() + '」' +
+             (mask.classList.contains('on') ? '打开弹窗' : '收起弹窗'), true);
+    }
+    return;
+  }
+
+  const gbtn = e.target.closest('.foot-btn[data-go]');         /* 页脚跳转按钮：进系统设置页 */
+  if (gbtn) {
+    /* 只有进「系统设置」才记来源页（屏幕 08 的「返回 / 确定」要退回进来之前那一屏）；
+       屏幕 05 页脚的「返回」也是 data-go，别让它把来源页顶掉 */
+    if (+gbtn.dataset.go === SETTINGS_PAGE) dbgSettingsFrom = Math.max(0, dbgCur);
+    dbgGo(+gbtn.dataset.go, '页脚「' + gbtn.textContent.trim() + '」');
+    return;
+  }
+
+  const bbtn = e.target.closest('[data-back]');                /* 设置页按钮：返回 / 确定 → 退回来源页 */
+  if (bbtn) { dbgGo(dbgSettingsFrom, '「' + bbtn.textContent.trim() + '」'); return; }
+
+  /* 模式切换弹窗：点「确定」才真换模式；「取消 / ✕ / 点遮罩」由下面的通用遮罩处理收起，
+     停在原模式不动 */
+  const mOk = e.target.closest('.modal-mask[data-modal="mode"] .cbtn:not(.cancel)');
+  if (mOk) {
+    const mask = mOk.closest('.modal-mask');
+    const go = +mask.dataset.go;
+    mask.classList.remove('on');
+    dbgGo(go, '确认切换模式');
+    return;
+  }
+
+  const mask = e.target.closest('.modal-mask');                /* 弹窗内：收起 */
+  if (!mask) return;
+  if (e.target.closest('.modal-close') || e.target.closest('.cbtn') || e.target === mask) {
+    mask.classList.remove('on');
+    dbgLog(dbgNo(dbgCur) + '　弹窗「' + mask.querySelector('.modal-title').textContent + '」关闭', true);
+  }
+});
+
+document.getElementById('dbgHome').onclick  = () => dbgGo(0, '回首页');
+document.getElementById('dbgClear').onclick = () => {
+  dbgLogEl.innerHTML = '<span class="empty">还没有跳转记录</span>';
+  dbgSeq = 0;
+};
+
+/* 活屏缩放：窗口装得下就 1:1，装不下按比例缩（下限 0.45） */
+function fitDbg() {
+  const fixed = 240 + 18 + 88;      /* 侧栏 + 间距 + 左右内边距 */
+  const ds = Math.min(1, Math.max(.45, (document.documentElement.clientWidth - fixed) / 854));
+  document.documentElement.style.setProperty('--ds', ds);
+}
+fitDbg();
+window.addEventListener('resize', fitDbg);
+
+/* 启动：铺顶部页签 → 活屏落到第 01 屏 */
+buildTabs();
+dbgGo(0, '初始加载');
 </script>
 
 </body>
