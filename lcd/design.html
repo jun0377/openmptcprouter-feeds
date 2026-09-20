@@ -35,6 +35,7 @@
        屏幕 05、06、07、08、09 专用：功能页脚（.foot-bar / .foot-btn）—— 二级设置页共用 editFoot()：
                      两个按钮都靠右下角，左「保存&应用」右「返回」，
                      填充色区分主次：保存蓝实底（.foot-btn.primary）、返回灰实底（.foot-btn.secondary）；
+                     按下时保存转黄、返回转红（.press / :active），素材按这个态导出；
                      05、06、07、09 的「返回」跳回屏幕 04，屏幕 08 的「返回」退回来源页（data-back）
        屏幕 03 专用：指标卡（.m-card / .m-ico / .m-txt / .m-name，横排：图标 + 名称 + 数值，图标与数值同色）
        屏幕 04 专用：设置入口卡（.set-grid / .set-card / .set-l / .set-r / .set-ico / .set-t1 / .set-t2 / .set-go，
@@ -48,7 +49,7 @@
                      「重启设备」→ .modal.confirm 二级确认（取消 / 确认重启）
                      模式页签（直连 / 聚合 / 卫星传输）→ .modal.confirm.mode 二级确认
                      （确定 / 取消 + 一行「确认切换到 xx 模式吗？」提示 .confirm-tip，见 modeModal）
-                     …… 屏幕 05、06、07、09 页脚的「保存&应用」复用同一套 .modal.confirm（取消 / 保存并应用）
+                     …… 屏幕 05、06、07、09 页脚的「保存&应用」复用同一套 .modal.confirm（取消 / 确定）
                      …… 屏幕 06、07 点设置项弹出 .modal.edit（项名 + 输入框 + 确定 / 取消，见 editItemModal）
        通用控件：
          卫星示意图 .sat-fig …… 屏幕 03 左栏（替代原环形仪表）
@@ -65,6 +66,14 @@
                      行尾那支铅笔（.pen）还单独用在屏幕 06、07 的基站标识与参数卡片上
        屏幕 05（SIM 链路详情，设置页）专用：相邻小区两栏：固定表头 + 手动滚动的文本（.roll-head / .rollview / .empty）
        基站参数字卡片（.cells / .cell）…… 屏幕 06、07
+       背景素材导出模式（.bg-export，URL 带 ?bg=1 时挂到 body 上）…… 见 CSS 末尾那段：
+                     藏掉评审外壳与「会和控件重叠的内容」（按钮 / 页签 / 数值 / 状态），
+                     只留面板、边框、分隔线、标题、表头（含单位）、标签这些固定素材，
+                     导出成串口屏的底图（按屏放进 pics/01-… 这类目录）；
+                     加 &keep=1（.bg-keep）则只藏三处按钮、屏内可变内容全留，供临时预览
+       弹窗素材导出（.bg-modal，与 ?bg=1&modal=mode 一起用）…… 见 CSS 末尾那几行：
+                     只出弹窗本体，两个操作按钮留位不画（另有 pics/button/*.png），
+                     遮罩换成纯色键 + 去掉投影，按两底色合成法抠成带 alpha 的 RGBA 素材
      ============================================================ */
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -148,7 +157,12 @@
   .tools button:hover { background: var(--line2); }
 
   /* ======================= 屏幕本体：854 x 480 ======================= */
+  /* position: relative —— 弹窗遮罩（.modal-mask，position: absolute; inset: 0）以本屏为基准定位：
+     评审台里活屏被 .dbg-stage .screen 的 transform 缩放，transform 本身就会建立包含块，
+     所以弹窗一直是对着屏居中的；但导图时把 transform 关掉了，包含块会退回页面（视口），
+     弹窗就跑到屏外面去。这里显式声明定位基准，参数怎么变都稳 */
   .screen {
+    position: relative;
     width: 854px;
     height: 480px;
     background: var(--scr);
@@ -303,6 +317,13 @@
     gap: 10px;
     padding: 0 14px;
   }
+  /* 基站卡右栏整体往右多让 7px（右内边距 14 → 7），左栏图标与基站名不动。
+     这 7px 是补给数值列的余量：数值列锁成 4 位数字宽（28px，见 .set-kv .v），
+     4G 卡的物理小区 ID 只有 3 位（'231'），不锁宽的话这一行的数值区只有 21px，
+     屏上换成 4 位值就会顶到标签上。让位后两卡右栏的落点为 ——
+       4G 卡：标签右缘 382、数值列 387~415（卡右边框内 415）
+       5G 卡：标签右缘 788、数值列 793~821 */
+  .set-card.bts { padding-right: 7px; }
   .set-l { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .set-r { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
   /* 入口图标按入口类型配色：SIM 卡链路蓝、卫星链路青（与屏幕 03 的示意图同色）、基站紫 */
@@ -325,10 +346,15 @@
   .bts-state.on .dot { background: var(--green); box-shadow: 0 0 6px rgba(166, 227, 161, .85); }
   .bts-state.off { color: var(--red); }
   /* 基站卡右栏的物理小区ID / 连接用户数：标签 muted 小字 + 等宽数值，
-     整行贴右边缘，与上面的在线状态右对齐成一列 */
+     整行贴右边缘，与上面的在线状态右对齐成一列。
+     两行等宽 + 行右对齐 = 标签右缘、数值右缘各自对齐成一列：
+     数值列按「最长 4 位数字」定宽预留（12px 等宽字 7px/字 = 28px）并右对齐 ——
+     4G 卡第一行是 3 位的 '231'，不锁宽这一行的行宽就会短 7px，
+     两行的标签右缘错开、屏上换成 4 位值也没有落脚的地方 */
   .set-kv { display: flex; align-items: baseline; gap: 5px; }
   .set-kv .k { font-size: 11px; color: var(--muted); white-space: nowrap; }
-  .set-kv .v { font-family: monospace; font-size: 12px; font-weight: 700; color: var(--txt2); }
+  .set-kv .v { font-family: monospace; font-size: 12px; font-weight: 700; color: var(--txt2);
+               min-width: 28px; text-align: right; }
   /* 卫星链路卡的状态徽标：配色直接套屏幕 03「链路状态」的三态（.state-slot.st-*），
      只有内边距要另给 —— 屏幕 03 那份内边距写在 .kv .v.state-slot 上，卡片里的徽标不在 .kv 内。
      徽标沿用同一个 class，所以它和屏幕 03 那枚归同一个点击循环管（点哪一枚都是三态一起切），
@@ -667,6 +693,15 @@
      实底按钮在串口屏上直接导出成整块按钮素材即可 */
   .foot-btn.primary   { background: var(--blue); border-color: var(--blue); color: #11111b; font-weight: 600; }
   .foot-btn.secondary { background: var(--line); color: var(--txt2); }
+  /* 按下态：用设计稿现有的两个语义色给「按下」一个明确的反馈 ——
+     保存&应用转黄（--yellow，主操作）、返回转红（--red，次操作），
+     底色即边框色，文字与图标转深色 #11111b（与 .seg > span.on、.modal.btn-uni .cbtn.primary 的实底规则同一套）。
+     .press 是状态类：导按钮素材时挂上它（pics/08-系统设置/*-按下.png 就按这个态出图）；
+     :active 让评审台里按住按钮就能看到同一个效果，两处共用这一份声明 */
+  .foot-btn.primary.press,   .foot-btn.primary:active
+    { background: var(--yellow); border-color: var(--yellow); color: #11111b; }
+  .foot-btn.secondary.press, .foot-btn.secondary:active
+    { background: var(--red);    border-color: var(--red);    color: #11111b; }
 
   /* ---- 弹窗（.modal / .modal-mask） → 屏幕 01、02 ---- */
   /*      版本信息：点击页脚「版本信息」弹出（宽度 410）
@@ -763,27 +798,38 @@
   }
   .bright-val { flex: none; width: 36px; text-align: right; font-size: 13px; color: var(--txt); }
 
-  /* 二级确认弹窗 → 屏幕 01、02 的「重启设备」与屏幕 05 的「保存&应用」
-     只有一行按钮，无提示文案；左「确认」右「取消」，两个按钮在弹窗内水平居中，
-     「取消」比确认按钮略大，提供一个更顺手的退出位 */
+  /* 二级确认弹窗 → 屏幕 01、02 的「重启设备」与屏幕 05、08 的「保存&应用」
+     只有一行按钮，无提示文案；左「确认」右「取消」，两个按钮在弹窗内水平居中。
+     重启那枚的「取消」比「确认重启」略大，提供一个更顺手的退出位（见下面的 .cbtn.cancel）；
+     重启是危险操作，主按钮保留自己的红半透样式（.cbtn.danger），不进下面的统一规格 */
   .modal.confirm { width: 340px; }
   .modal.confirm .modal-head svg { color: var(--red); }      /* 危险操作：标题栏图标走红 */
   .modal.confirm.save .modal-head svg { color: var(--green); }  /* 保存并应用不表危险：图标走绿 */
+
+  /* ---- 弹窗按钮统一规格 →「保存并应用 / 模式切换 / 编辑参数」三处共用 ----
+     挂 .btn-uni 的弹窗里，确定与取消完全同尺寸（88×32：height 32 + 左右 30 内边距 + 13px 字），
+     两态填充色也共用一套，与页脚那一对（.foot-btn.primary / .secondary）同源 ——
+     确定＝主操作：未按下蓝实底、按下转黄；取消＝退出：未按下灰实底、按下转红。
+     .press 是状态类（导按钮素材时挂上它），:active 让评审台里按住按钮就能看到，两处共用这一份声明。
+     「重启设备」那枚不带 .btn-uni，不受这里影响 */
+  .modal.btn-uni .cbtn { height: 32px; padding: 0 30px; font-size: 13px; }
+  .modal.btn-uni .cbtn.primary { background: var(--blue); border-color: var(--blue); color: #11111b; font-weight: 600; }
+  .modal.btn-uni .cbtn.cancel  { background: var(--line); border-color: var(--line); color: var(--txt2); }
+  .modal.btn-uni .cbtn.primary.press, .modal.btn-uni .cbtn.primary:active
+    { background: var(--yellow); border-color: var(--yellow); color: #11111b; }
+  .modal.btn-uni .cbtn.cancel.press,  .modal.btn-uni .cbtn.cancel:active
+    { background: var(--red);    border-color: var(--red);    color: #11111b; }
   /* 模式切换二级确认 → 屏幕 01、02、03 页签栏的「直连 / 聚合 / 卫星传输」：
      换模式要重建数据链路并重新拨号，当前连接会短暂中断，先让用户确认一次。
      提示语只有一行「确认切换到 xx 模式吗？」，xx 在点开时填，见 modeConfirm()；
-     一行两个按钮「确定 / 取消」大小一致，靠填充色分主次 ——
-     确定黄实底（.cbtn.warn）、取消灰实底（.cbtn.cancel，与页脚的 .foot-btn.secondary 同色） */
+     两个按钮走上面那套统一规格（.btn-uni），与「保存并应用」同尺寸、同两态 */
   .modal.confirm.mode { width: 340px; }
   .modal.confirm.mode .modal-head svg { color: var(--yellow); }
   .confirm-tip { padding: 8px 14px 0; text-align: center; font-size: 13px; line-height: 19px; color: var(--txt2); }
   .confirm-tip b { color: var(--txt); font-weight: 600; }
-  .modal.confirm.mode .cbtn { height: 32px; padding: 0 30px; font-size: 13px; }   /* 两个按钮同尺寸 */
-  .cbtn.warn { background: var(--yellow); border-color: var(--yellow); color: #11111b; font-weight: 600; }
-  .cbtn.warn:hover { background: #f3d68e; border-color: #f3d68e; color: #11111b; }
-  .modal.confirm.mode .cbtn.cancel { background: var(--line); border-color: var(--line); color: var(--txt2); }
-  .modal.confirm.mode .cbtn.cancel:hover { background: var(--line2); border-color: var(--line2); color: var(--txt); }
   .confirm-foot { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 16px 12px 14px; }
+  /* 弹窗按钮底座：26px 高的小号胶囊。「重启设备」那枚的主按钮（.cbtn.danger）用它，
+     其余弹窗的按钮都走上面的统一规格（.btn-uni），尺寸与配色被整体覆盖 */
   .cbtn {
     display: flex;
     align-items: center;
@@ -802,7 +848,8 @@
   .cbtn.danger:hover { background: rgba(243, 139, 168, .28); }
 
   /* 编辑参数弹窗 → 屏幕 06、07（点设置项弹出）：项名 + 一个输入框 + 确定 / 取消
-     输入框按等宽字体排，宽度撑满弹窗，跟串口屏上文本输入控件的落位一致 */
+     输入框按等宽字体排，宽度撑满弹窗，跟串口屏上文本输入控件的落位一致；
+     两个按钮走上面那套统一规格（.btn-uni），与「保存并应用」同尺寸、同两态 */
   .modal.edit { width: 360px; }
   .modal.edit .modal-head svg { color: var(--mauve); }       /* 编辑用紫色铅笔，与卡片上的笔呼应 */
   .edit-name { font-size: 11px; color: var(--muted); margin-bottom: 5px; }
@@ -817,8 +864,6 @@
     border-radius: 5px;
   }
   .edit-inp:focus { outline: none; border-color: var(--blue); }
-  .cbtn.ok { border-color: rgba(137, 180, 250, .5); background: rgba(137, 180, 250, .16); color: var(--blue); font-weight: 600; }
-  .cbtn.ok:hover { background: rgba(137, 180, 250, .3); }
 
   /* 点了会弹编辑弹窗的设置项（屏幕 06、07 的基站标识，以及「数值 + 铅笔」的参数卡片） */
   .edit-hit { cursor: pointer; }
@@ -932,6 +977,105 @@
   .dbg-log .a { color: var(--blue); }
   .dbg-log .w { color: var(--mauve); }
   .dbg-log .empty { color: var(--muted); font-family: inherit; }
+
+  /* ============ 背景素材导出模式（design.html?bg=1[&s=屏序号]）→ 串口屏底图 ============
+     再加 &keep=1 则只藏页眉 / 页签栏 / 页脚三处按钮，屏内的数值与状态一律原样保留 ——
+     给串口屏上临时预览整屏效果用（不产出底图），见下面 --bg-vis 那两行。
+     屏上的按钮、页签、数值、状态都是控件，运行时会画在底图之上；
+     所以导底图时把这些「会和控件重叠的内容」全部藏掉，只留固定不变的素材：
+     面板与边框、分隔线、面板标题、表头（含单位）、链路名、基站名与两个标签，
+     以及实时带宽列那两支恒色的 ↑ / ↓ 箭头。
+     页眉 / 页签栏 / 页脚三条只留底色与分隔线（这三处的按钮另有 pics/button/*.png，
+     状态圆点与符号另有 pics/misc/*.png），与 pics/background/ 里已导出的两张图一致。
+     一律用 visibility: hidden 而不是 display: none —— 元素照旧占位，
+     屏上控件的落点才能按设计稿坐标原样摆放 */
+  .bg-export .toolbar, .bg-export .dbg-head, .bg-export .dbg-side { display: none; }
+  .bg-export .dbg { padding: 0; background: none; }
+  /* 屏摆到页面左上角 (0,0)、不缩放、不加圆角与投影、页面不滚动：
+     这样整页截图出来的就是干干净净的 854×480 底图，不需要再裁切 */
+  .bg-export { --ds: 1; --bg-vis: hidden; overflow: hidden; }
+  /* ?bg=1&keep=1：把上面那个「藏」开关拨到 visible，下面 ②~⑤ 那些内容的隐藏规则就整体失效，
+     屏内只剩页眉 / 页签栏 / 页脚三处按钮被藏掉（① 用的是写死的 hidden，不受这个开关影响） */
+  .bg-keep { --bg-vis: visible; }
+  .bg-export .dbg-body { padding: 0; justify-content: flex-start; align-items: flex-start; }
+  .bg-export .dbg-stage { border-radius: 0; box-shadow: none; }
+  .bg-export .dbg-stage .screen { transform: none; }     /* 导图要 1:1，别被活屏缩放带偏 */
+  /* ① 页眉的两个模式按钮 + 页签栏的每个页签 + 页脚的四个功能键 */
+  .bg-export .bar-top .mode-btn,
+  .bg-export .bar-nav .tab,
+  .bg-export .foot-bar .foot-btn { visibility: hidden; }
+  /* ② 链路状态列表：运营商（含 logo）、在线状态（含圆点）、信号格 / dBm、时延 */
+  .bg-export .sim-op, .bg-export .sim-state, .bg-export .sim-sig,
+  .bg-export .sim-ping { visibility: var(--bg-vis); }
+  /* 实时带宽列只藏两个数值（.up / .down 里那个 6ch 定宽的数字 span），
+     ↑ / ↓ 两支箭头是固定素材（恒为蓝 / 黄，与有没有流量无关），要留在底图上：
+     数值照旧占位，箭头就落在设计稿的坐标上，串口屏的数值控件叠上去即可 */
+  .bg-export .sim-rate .up > span,
+  .bg-export .sim-rate .down > span { visibility: var(--bg-vis); }
+  /* ③ 基站卡：在线 / 离线文字与圆点、物理小区ID、连接用户数；
+        卡片底色本身跟着在线状态变（淡绿 / 淡红），导图时改回中性底色
+        （底色这条是写死的，没法走 --bg-vis，所以单独用 :not(.bg-keep) 让临时预览模式放行） */
+  .bg-export .bs-state, .bg-export .bs-id, .bg-export .bs-num { visibility: var(--bg-vis); }
+  .bg-export:not(.bg-keep) .bs-card { background: var(--panel2); border-color: var(--line); }
+  /* ④ 屏幕 02 顶部的聚合链路状态条：连接状态与四个大数值都是变量
+        （单位 Mbps / ms / 在线 是固定素材，留着） */
+  .bg-export .agg-bar .st, .bg-export .agg-bar .kpi .num { visibility: var(--bg-vis); }
+
+  /* ⑤ 屏幕 08「平台与上报」：管理平台地址那个 IP 与状态上报频率那组四档按钮都是变量
+        （两行项名、面板标题、分隔线是固定素材，留着）。
+        行尾那支铅笔（.big-id .pen）是「这一项能改」的固定提示图标，跟 ↑↓ 箭头同理：
+        它跟着值一起排在 .big-id 里，藏掉整个 .big-id 再单独放它出来 ——
+        visibility 隐藏仍占位，铅笔正好停在设计稿里那个位置上。
+        .sys-ctl 是屏幕 08 专有的（见上面「设置行」那段），所以这条不会波及 05~07、09 的选择器 */
+  .bg-export .big-id { visibility: var(--bg-vis); }
+  .bg-export .big-id .pen { visibility: visible; }
+  .bg-export .sys-ctl .seg { visibility: var(--bg-vis); }
+
+  /* ⑥ 屏幕 04「首页默认 · 设置入口」：六张入口卡右栏的内容都跟着实时状态走 ——
+        链路卡的在线状态（SIM 走 .sim-state、卫星走 .state-slot）、
+        基站卡的在线 / 离线（.bts-state）、以及物理小区ID 与连接用户数两行的数值（.set-kv 里的 .v）。
+        这张卡的类名是自己一套的（.bts-state / .set-kv），跟屏幕 06、07 基站卡的 .bs-* 不同名，
+        所以 ③ 那条盖不到这里，得单列。
+        运营商 .sim-op 已在 ② 里覆盖；左栏图标与链路名 / 基站名、两行项名是固定素材，留着 */
+  .bg-export .bts-state, .bg-export .state-slot,
+  .bg-export .set-kv .v { visibility: var(--bg-vis); }
+
+  /* ⑦ 运维模式二级页（屏幕 05 SIM 链路详情 / 06·07 基站设置 / 09 卫星链路设置）：
+        这几屏整屏都是「可设置项」，能变的都集中在控件上 ——
+          · 页签栏每枚页签前面那颗状态点（.tab .sd）跟着链路状态换色
+          · 三排分段选择器（.seg）是控件，整块留位不画（屏 06、07 的「工作模式」也在其中）
+          · 可编辑值框 .inp（屏 05 的 APN / 用户名 / 密码、屏 09 的卫星标识）整个藏掉：
+            屏上这行值由运行时自己的控件画，设计稿里那个「底 + 描边」的方框不是固定素材；
+            行尾那支铅笔是固定图标，跟 ⑤ 的 .big-id .pen 同理，单独放出来
+          · 屏 05 锁小区卡与屏 06、07 参数卡里的读数（.field .mono / .cell .v，后者同样留住铅笔）
+          · 屏 06、07 左栏的 UE 个数、负载条填充、容量说明（.kpi .num / .meter i / 卡片下的 .cell-hint）
+          · 屏 05 下半屏相邻小区：标题右边「共 N 个」与可拖动滚动的文本（表头与面板标题留着）
+        注意 .cell-hint 有两种身份：屏 05 锁小区卡那份写在 .panel-title 里、是固定说明，得留着，
+        所以这里只点掉 .panel 直下的那份 —— 屏 06、07 的容量说明才是可变的 */
+  .bg-export .tab .sd,
+  .bg-export .seg { visibility: var(--bg-vis); }
+  .bg-export .inp,
+  .bg-export .cell .v,
+  .bg-export .kpi .num,
+  .bg-export .meter i,
+  .bg-export .field .mono,
+  .bg-export .panel-title .tag,
+  .bg-export .rollview,
+  .bg-export .panel > .cell-hint { visibility: var(--bg-vis); }
+  /* 可编辑值框藏掉整个 .inp（值 + 方框底 + 描边）后，单独把行尾那支铅笔放出来 ——
+     与 ⑤ 的 .big-id .pen 同一手法：藏掉父元素仍占位，铅笔停在设计稿原坐标上 */
+  .bg-export .inp .pen,
+  .bg-export .cell .v .pen { visibility: visible; }
+
+  /* ---------- 弹窗素材导出：design.html?bg=1&s=0&modal=mode[&key=RRGGBB] ----------
+     只出弹窗本体（圆壳 + 标题栏 + ✕ + 提示语），一行两个操作按钮留位不画 ——
+     串口屏上「确定 / 取消」另有 pics/button/*.png，运行时叠在空出来的位置上。
+     遮罩（原为半透明黑）换成一面纯色键 --key，并去掉弹窗投影：
+     同一屏用两种底色各截一张，圆角处那圈半透明像素就能按两底色合成法还原成 alpha，
+     得到与 pics/misc/*弹窗.png 一样带透明通道、且严丝合缝裁到弹窗边框的 RGBA 素材 */
+  .bg-modal .modal-mask { background: var(--key, #ff00ff); }
+  .bg-modal .modal { box-shadow: none; }
+  .bg-modal .cbtn { visibility: hidden; }
 </style>
 </head>
 <body>
@@ -1546,19 +1690,20 @@ function confirmModal() {
 
 /* 模式切换二级确认弹窗：屏幕 01、02、03 页签栏点「直连 / 聚合 / 卫星传输」触发 ——
    换模式要重建数据链路并重新拨号，当前连接会短暂中断，不能一步到位；
-   与「重启设备 / 保存&应用」同一套 .modal.confirm，配色与按钮换成模式切换那一档：
-   一行两个等大的「确定 / 取消」，确定黄实底、取消灰实底。
+   与「重启设备 / 保存&应用」同一套 .modal.confirm，按钮走统一的 .btn-uni 规格：
+   一行两个等大的「确定 / 取消」，确定蓝实底（按下转黄）、取消灰实底（按下转红）。
+   标题栏同样不放右上角的 ✕（与「保存&应用」那枚一致）：
+   一行两个按钮已经覆盖了「切 / 不切」两种结果，点遮罩也能收起。
    一屏只有这一个实例，提示语里的目标模式名在点开时由 modeConfirm() 填 */
 function modeModal() {
   return '<div class="modal-mask" data-modal="mode">' +
-      '<div class="modal confirm mode">' +
+      '<div class="modal confirm mode btn-uni">' +
         '<div class="modal-head">' + ICO_INFO +
           '<span class="modal-title">模式切换</span>' +
-          '<span class="modal-close">' + ICO_CLOSE + '</span>' +
         '</div>' +
         '<div class="confirm-tip">确认切换到<b class="tip-to"></b>吗？</div>' +
         '<div class="confirm-foot">' +
-          '<span class="cbtn warn">确定</span>' +
+          '<span class="cbtn primary">确定</span>' +
           '<span class="cbtn cancel">取消</span>' +
         '</div>' +
       '</div>' +
@@ -1611,18 +1756,21 @@ function editFoot(back) {
     '</div>' + saveModal();
 }
 
-/* 保存&应用二级确认弹窗：屏幕 05、09 页脚的「保存&应用」触发
+/* 保存&应用二级确认弹窗：屏幕 05~09 页脚的「保存&应用」触发
    结构与重启确认那枚一样（.modal.confirm + 一行两个按钮），只是图标走绿不表危险；
-   两个按钮同样都表示「结束本次确认」 */
+   两个按钮同样都表示「结束本次确认」，尺寸完全一致，靠填充色区分主次与按下态 ——
+   确定蓝实底（.cbtn.primary）/ 取消灰实底，按下分别转黄 / 转红；
+   这一套就是 .modal.btn-uni 的统一规格，模式切换与编辑参数两枚也共用它（见 CSS）。
+   标题栏不放右上角的 ✕：这一枚里两个按钮都表示「结束本次确认」，
+   再来一个关闭钮就是第三遍重复；点遮罩仍旧可以收起（见末尾的点击处理） */
 function saveModal() {
   return '<div class="modal-mask" data-modal="save">' +
-      '<div class="modal confirm save">' +
+      '<div class="modal confirm save btn-uni">' +
         '<div class="modal-head">' + ICO_CHECK +
           '<span class="modal-title">保存并应用</span>' +
-          '<span class="modal-close">' + ICO_CLOSE + '</span>' +
         '</div>' +
         '<div class="confirm-foot">' +
-          '<span class="cbtn">保存并应用</span>' +
+          '<span class="cbtn primary">确定</span>' +
           '<span class="cbtn cancel">取消</span>' +
         '</div>' +
       '</div>' +
@@ -1632,10 +1780,11 @@ function saveModal() {
 /* 编辑参数弹窗：屏幕 06、07 上点「基站标识」或任意参数卡片弹出
    一屏只有这一个弹窗实例，标题与输入框在点开时按被点的那一项填（见 .edit-hit 的点击处理），
    所以这里只排静态骨架：标题栏（铅笔图标）+ 项名 + 输入框 + 确定 / 取消。
+   两个按钮走统一的 .btn-uni 规格，与「保存并应用」那枚完全同尺寸、同两态。
    点「确定」把输入框里的值写回数据并重渲染本屏，「取消 / ✕ / 遮罩」只收起不改数据 */
 function editItemModal() {
   return '<div class="modal-mask" data-modal="edit">' +
-      '<div class="modal edit">' +
+      '<div class="modal edit btn-uni">' +
         '<div class="modal-head">' + ICO_PEN +
           '<span class="modal-title">编辑参数</span>' +
           '<span class="modal-close">' + ICO_CLOSE + '</span>' +
@@ -1645,7 +1794,7 @@ function editItemModal() {
           '<input class="edit-inp" type="text" value="" aria-label="参数值">' +
         '</div>' +
         '<div class="confirm-foot">' +
-          '<span class="cbtn ok">确定</span>' +
+          '<span class="cbtn primary">确定</span>' +
           '<span class="cbtn cancel">取消</span>' +
         '</div>' +
       '</div>' +
@@ -2338,7 +2487,7 @@ document.addEventListener('click', e => {
     return;
   }
 
-  const ok = e.target.closest('.modal-mask[data-modal="edit"] .cbtn.ok');
+  const ok = e.target.closest('.modal-mask[data-modal="edit"] .cbtn.primary');
   if (!ok) return;
   const mask = ok.closest('.modal-mask');
   const v = mask.querySelector('.edit-inp').value.trim();
@@ -2366,6 +2515,8 @@ document.addEventListener('keydown', e => {
    不受页面缩放影响），照抄到陶晶驰 USART HMI 的控件属性里即可。
    分段选择器里的每个选项按钮算独立控件，悬浮时标的是按钮自身（比如「自动」46 × 22），
    不是整个选择器。
+   带文字的元素还会标出字号与字高：字号是 font-size（em 框），字高是用 canvas 实量的
+   这段文字墨迹高度（见 ownText / inkHeight）—— 给文本控件留位按字高更准。
    ============================================================ */
 const RULER_SEL = [
   '.bar-top', '.mode-btn', '.bar-nav', '.tab', '.body', '.row', '.col', '.panel', '.panel-title',
@@ -2443,6 +2594,26 @@ function rulerName(el) {
   return el.tagName.toLowerCase() + (cls[0] ? '.' + cls[0] : '');
 }
 
+/* 元素自己那段文字：只看直接子文本节点，跳过子元素里的字。
+   这样「一段文字 + 一个图标」的元素（屏幕 08 的 .big-id 就是「IP + 铅笔」）也能量字号 */
+function ownText(el) {
+  return Array.from(el.childNodes)
+      .filter(n => n.nodeType === 3)
+      .map(n => n.textContent).join('').trim();
+}
+
+/* 字高：按该元素真实的字体设置，把这段文字在 canvas 上量一遍，取墨迹上下边界之差。
+   font-size（字号）是 em 框，字高才是这段字真正占的高度 ——
+   屏上给文本控件留位、挑字体大小按字高来更准（.big-id 是 24px 等宽数字，
+   字高比字号小一截）。量的是设计像素：字体大小用计算值，与活屏缩放无关 */
+function inkHeight(el, txt) {
+  const cs = getComputedStyle(el);
+  const cx = document.createElement('canvas').getContext('2d');
+  cx.font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily;
+  const m = cx.measureText(txt);
+  return Math.round((m.actualBoundingBoxAscent + m.actualBoundingBoxDescent) * 10) / 10;
+}
+
 document.addEventListener('mouseover', e => {
   if (!rulerOn) return;
   const scr = e.target.closest('.screen');
@@ -2460,7 +2631,11 @@ document.addEventListener('mouseover', e => {
   const y = Math.round((tr.top  - sr.top ) / k);
   const w = Math.round(tr.width  / k);
   const h = Math.round(tr.height / k);
-  const font = t.children.length === 0 ? ' · 字号 ' + getComputedStyle(t).fontSize : '';
+  /* 元素自己那段文字（跳过子元素，如 .big-id 里的铅笔）→ 量字号与字高 */
+  const txt = ownText(t);
+  const font = txt
+      ? ' · 字号 ' + getComputedStyle(t).fontSize + ' · 字高 ' + inkHeight(t, txt) + 'px'
+      : '';
 
   tip.innerHTML = '<b>' + rulerName(t) + '</b> · 尺寸 ' + w + ' × ' + h +
                   '<br><span class="pos">位置 x ' + x + ' · y ' + y +
@@ -2677,9 +2852,27 @@ function fitDbg() {
 fitDbg();
 window.addEventListener('resize', fitDbg);
 
-/* 启动：铺顶部页签 → 活屏落到第 01 屏 */
-buildTabs();
-dbgGo(0, '初始加载');
+/* 启动：铺顶部页签 → 活屏落到第 01 屏；
+   带 ?bg=1（可加 &s=屏序号，默认第 01 屏）时改走「背景素材导出模式」：
+   藏掉评审外壳与屏内所有会变的内容，只留固定素材，供截图导出每屏的底图。
+   再加 &keep=1 就是「临时预览模式」：只藏页眉 / 页签栏 / 页脚三处按钮，
+   屏内数值与状态原样留着，用来在串口屏上看整屏效果。
+   再加 &modal=mode 就是「弹窗素材导出」：按「直连 → 聚合模式」把模式切换的
+   二级确认弹窗打开（两个操作按钮留位不画），&key=RRGGBB 换遮罩那面纯色键 */
+const q = new URLSearchParams(location.search);
+if (q.has('bg')) {
+  document.body.classList.add('bg-export');
+  if (q.get('keep')) document.body.classList.add('bg-keep');
+  dbgGo(Math.min(dbgPages.length - 1, Math.max(0, +(q.get('s') || 0))), '背景素材');
+  if (q.get('modal') === 'mode') {
+    document.body.classList.add('bg-modal');
+    if (q.get('key')) document.body.style.setProperty('--key', '#' + q.get('key'));
+    modeConfirm(1, '聚合模式', '弹窗素材');
+  }
+} else {
+  buildTabs();
+  dbgGo(0, '初始加载');
+}
 </script>
 
 </body>
