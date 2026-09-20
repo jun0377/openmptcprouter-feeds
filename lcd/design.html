@@ -41,7 +41,8 @@
        屏幕 04 专用：设置入口卡（.set-grid / .set-card / .set-l / .set-r / .set-ico / .set-t1 / .set-t2 / .set-go，
                      上「链路设置」3 列 × 2 行、下「基站设置」2 列，整卡即触摸热区；
                      两种卡都是左右分栏 —— 链路卡左「链路图标 + 标识」、右竖排「在线状态 + 运营商」；
-                     基站卡左「基站图标 + 基站名」、右竖排三行「在线状态 .bts-state + 物理小区ID / 连接用户数 .set-kv」）
+                     基站卡左「基站图标 + 基站名 + 在线状态 .bs-state」、
+                     右竖排两行「物理小区ID / 连接用户数 .set-kv」）
        屏幕 08 专用：设置卡里的设置行（.sys-row 项名 + .sys-ctl 控件，两行等分卡高）
        弹窗（.modal / .modal-mask）…… 屏幕 01、02、03，由页脚按钮与模式页签触发：
                      「版本信息」→ 版本号 / 构建时间 / commit id / 发布说明
@@ -63,7 +64,8 @@
        速率面板（.row-panel / .half）…… 屏幕 02
        聚合链路状态条（.agg-bar，五列：首列连接状态 + 4 个 KPI）…… 屏幕 02
        可编辑值框（.inp）…… 屏幕 05、09（两屏的参数设置卡）；
-                     行尾那支铅笔（.pen）还单独用在屏幕 06、07 的基站标识与参数卡片上
+                     那支铅笔（.pen）还单独用在屏幕 06、07 的基站标识（行尾）
+                     与能改的参数卡片（卡头左上角）上
        屏幕 05（SIM 链路详情，设置页）专用：相邻小区两栏：固定表头 + 手动滚动的文本（.roll-head / .rollview / .empty）
        基站参数字卡片（.cells / .cell）…… 屏幕 06、07
        背景素材导出模式（.bg-export，URL 带 ?bg=1 时挂到 body 上）…… 见 CSS 末尾那段：
@@ -283,9 +285,10 @@
          （在线状态：SIM 用屏幕 01 / 02 那套 .sim-state，卫星用屏幕 03 的三态 .state-slot；
            运营商：.set-t2 + .sim-op + .op-logo，与屏幕 01 / 02 链路列表共用同一份素材；
            卫星没有运营商，右栏只有状态徽标一行）
-       基站卡 = 左栏 .set-l 是「基站图标 + 基站名」，
-         右栏 .set-r 竖排三行 —— 在线状态 .bts-state、物理小区ID / 连接用户数两行
+       基站卡 = 左栏 .set-l 是「基站图标 + 基站名 + 在线状态」，
+         右栏 .set-r 竖排两行 —— 物理小区ID / 连接用户数
          （各为 .set-kv「标签 + 等宽数值」，与屏幕 01~03 基站卡 .bs-* 同一套信息层级；
+           在线状态直接复用屏幕 01 基站卡头的 .bs-state，摆在基站名后方；
            数值取自 BTS4 / BTS5 的 cardPci / cardUe，4G、5G 图标靠波束弧数区分）
      .set-go 是卡内的右下角箭头，只有挂了 data-go 的卡才渲染，
      详情页还没建的入口不带箭头，避免出现「看着能点、点下去没反应」 */
@@ -318,11 +321,11 @@
     padding: 0 14px;
   }
   /* 基站卡右栏整体往右多让 7px（右内边距 14 → 7），左栏图标与基站名不动。
-     这 7px 是补给数值列的余量：数值列锁成 4 位数字宽（28px，见 .set-kv .v），
-     4G 卡的物理小区 ID 只有 3 位（'231'），不锁宽的话这一行的数值区只有 21px，
+     这 7px 是补给数值列的余量：数值列锁成 4 位数字宽（39px，见 .set-kv .v），
+     4G 卡的物理小区 ID 只有 3 位（'231'），不锁宽的话这一行的数值区只有 29px，
      屏上换成 4 位值就会顶到标签上。让位后两卡右栏的落点为 ——
-       4G 卡：标签右缘 382、数值列 387~415（卡右边框内 415）
-       5G 卡：标签右缘 788、数值列 793~821 */
+       4G 卡：标签右缘 371、数值列 376~415（卡右边框内 415）
+       5G 卡：标签右缘 777、数值列 782~821 */
   .set-card.bts { padding-right: 7px; }
   .set-l { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .set-r { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
@@ -338,23 +341,17 @@
   .set-ico.bts5 { width: 54px; height: 54px; color: var(--mauve); }
   .set-t1 { font-family: monospace; font-size: 17px; font-weight: 700; color: var(--txt); letter-spacing: .5px; }
   .set-t2 { font-size: 11px; color: var(--muted); }
-  /* 基站卡的在线 / 离线：语义与屏幕 01 的 .sim-state 相同，只是名字换成基站的，
-     默认离线（红）、在线（绿 + 呼吸辉光），尺寸对齐链路卡那一行，04 上两种卡的状态行等高 */
-  .bts-state { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
-  .bts-state .dot { width: 6px; height: 6px; background: var(--red); box-shadow: none; }
-  .bts-state.on  { color: var(--green); }
-  .bts-state.on .dot { background: var(--green); box-shadow: 0 0 6px rgba(166, 227, 161, .85); }
-  .bts-state.off { color: var(--red); }
-  /* 基站卡右栏的物理小区ID / 连接用户数：标签 muted 小字 + 等宽数值，
-     整行贴右边缘，与上面的在线状态右对齐成一列。
+  /* 基站卡的在线 / 离线不再另起一套：整块复用屏幕 01 基站卡头里那枚 .bs-state
+     （13px + 9px 圆点 + 绿 / 红），本屏把它摆在左栏基站名的后方，两屏状态长得一模一样 */
+  /* 基站卡右栏的物理小区ID / 连接用户数：标签 muted 小字 + 等宽数值，整行贴右边缘。
      两行等宽 + 行右对齐 = 标签右缘、数值右缘各自对齐成一列：
-     数值列按「最长 4 位数字」定宽预留（12px 等宽字 7px/字 = 28px）并右对齐 ——
-     4G 卡第一行是 3 位的 '231'，不锁宽这一行的行宽就会短 7px，
+     数值列按「最长 4 位数字」定宽预留（16px 等宽字约 9.6px/字 = 39px）并右对齐 ——
+     4G 卡第一行是 3 位的 '231'，不锁宽这一行的行宽就会短 10px，
      两行的标签右缘错开、屏上换成 4 位值也没有落脚的地方 */
   .set-kv { display: flex; align-items: baseline; gap: 5px; }
   .set-kv .k { font-size: 11px; color: var(--muted); white-space: nowrap; }
-  .set-kv .v { font-family: monospace; font-size: 12px; font-weight: 700; color: var(--txt2);
-               min-width: 28px; text-align: right; }
+  .set-kv .v { font-family: monospace; font-size: 16px; font-weight: 700; color: var(--txt2);
+               min-width: 39px; text-align: right; }
   /* 卫星链路卡的状态徽标：配色直接套屏幕 03「链路状态」的三态（.state-slot.st-*），
      只有内边距要另给 —— 屏幕 03 那份内边距写在 .kv .v.state-slot 上，卡片里的徽标不在 .kv 内。
      徽标沿用同一个 class，所以它和屏幕 03 那枚归同一个点击循环管（点哪一枚都是三态一起切），
@@ -452,7 +449,8 @@
   .inp .v { font-family: monospace; font-size: 12px; line-height: 16px; color: var(--txt); }
 
   /* 铅笔 = 「这一项能改」的提示图标 —— 屏幕 05 / 09 的可编辑值框行尾一支，
-     屏幕 06 / 07 的基站标识与每个参数小卡片（.cell）上也各点一支，同一枚图标同一套配色 */
+     屏幕 06 / 07 的基站标识行尾与能改的参数小卡片（.cell）左上角也各点一支，
+     同一枚图标同一套配色 */
   .inp .pen, .cell .pen, .big-id .pen { flex: none; width: 11px; height: 11px; color: var(--muted); }
   .inp .pen svg, .cell .pen svg, .big-id .pen svg { display: block; width: 100%; height: 100%; }
   .big-id .pen { width: 13px; height: 13px; }   /* 标识字大一号（24px），笔跟着大一档 */
@@ -516,12 +514,14 @@
     gap: 3px;
     min-height: 0;
   }
+  /* 卡头（卡片的左上角）：铅笔 + 参数名 —— 能改的卡片把铅笔排在参数名前面，
+     提示整张卡片可点；「工作模式」那张是选择器、没有铅笔，参数名就顶到左边 */
+  .cell-head { display: flex; align-items: center; gap: 5px; }
   .cell .k { font-size: 11px; color: var(--muted); }
-  /* 值这一行排成横向 flex：等宽数值 +（单位 <small>）+ 行尾一支铅笔 —— 屏幕 06、07 的
-     每个参数都是可设置项，铅笔跟可编辑值框用的是同一枚图标 */
+  /* 值这一行排成横向 flex：等宽数值 +（单位 <small>）—— 屏幕 06、07 的
+     每个参数都是可设置项，单位小一号排在数值后面，铅笔在卡头、不进这一行 */
   .cell .v { display: flex; align-items: center;
              font-family: monospace; font-size: 19px; font-weight: 700; color: var(--txt); }
-  .cell .v .pen { margin-left: 6px; }
   .cell .v small { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 4px; }
   /* 卡片里的选择器（屏幕 06、07 的「工作模式」FDD / TDD）：
      卡片是竖排 flex，.seg 作为它的子项会被拉满整格宽；而 .seg 里的按钮是按文字宽度排的，
@@ -1031,13 +1031,12 @@
   .bg-export .big-id .pen { visibility: visible; }
   .bg-export .sys-ctl .seg { visibility: var(--bg-vis); }
 
-  /* ⑥ 屏幕 04「首页默认 · 设置入口」：六张入口卡右栏的内容都跟着实时状态走 ——
+  /* ⑥ 屏幕 04「首页默认 · 设置入口」：入口卡上的内容都跟着实时状态走 ——
         链路卡的在线状态（SIM 走 .sim-state、卫星走 .state-slot）、
-        基站卡的在线 / 离线（.bts-state）、以及物理小区ID 与连接用户数两行的数值（.set-kv 里的 .v）。
-        这张卡的类名是自己一套的（.bts-state / .set-kv），跟屏幕 06、07 基站卡的 .bs-* 不同名，
-        所以 ③ 那条盖不到这里，得单列。
-        运营商 .sim-op 已在 ② 里覆盖；左栏图标与链路名 / 基站名、两行项名是固定素材，留着 */
-  .bg-export .bts-state, .bg-export .state-slot,
+        基站卡的在线 / 离线（复用屏幕 01 的 .bs-state，已被 ③ 覆盖）、
+        以及物理小区ID 与连接用户数两行的数值（.set-kv 里的 .v）。
+        运营商 .sim-op 已在 ② 里覆盖；图标、链路名 / 基站名与两行项名是固定素材，留着 */
+  .bg-export .state-slot,
   .bg-export .set-kv .v { visibility: var(--bg-vis); }
 
   /* ⑦ 运维模式二级页（屏幕 05 SIM 链路详情 / 06·07 基站设置 / 09 卫星链路设置）：
@@ -1047,7 +1046,8 @@
           · 可编辑值框 .inp（屏 05 的 APN / 用户名 / 密码、屏 09 的卫星标识）整个藏掉：
             屏上这行值由运行时自己的控件画，设计稿里那个「底 + 描边」的方框不是固定素材；
             行尾那支铅笔是固定图标，跟 ⑤ 的 .big-id .pen 同理，单独放出来
-          · 屏 05 锁小区卡与屏 06、07 参数卡里的读数（.field .mono / .cell .v，后者同样留住铅笔）
+          · 屏 05 锁小区卡与屏 06、07 参数卡里的读数（.field .mono / .cell .v）；
+            参数卡卡头那支铅笔（.cell-head .pen）是固定图标，留在底图上
           · 屏 06、07 左栏的 UE 个数、负载条填充、容量说明（.kpi .num / .meter i / 卡片下的 .cell-hint）
           · 屏 05 下半屏相邻小区：标题右边「共 N 个」与可拖动滚动的文本（表头与面板标题留着）
         注意 .cell-hint 有两种身份：屏 05 锁小区卡那份写在 .panel-title 里、是固定说明，得留着，
@@ -1063,9 +1063,10 @@
   .bg-export .rollview,
   .bg-export .panel > .cell-hint { visibility: var(--bg-vis); }
   /* 可编辑值框藏掉整个 .inp（值 + 方框底 + 描边）后，单独把行尾那支铅笔放出来 ——
-     与 ⑤ 的 .big-id .pen 同一手法：藏掉父元素仍占位，铅笔停在设计稿原坐标上 */
+     与 ⑤ 的 .big-id .pen 同一手法：藏掉父元素仍占位，铅笔停在设计稿原坐标上。
+     屏幕 06、07 参数卡的铅笔在卡头里（不在 .v 这一行），不受上面的隐藏影响 */
   .bg-export .inp .pen,
-  .bg-export .cell .v .pen { visibility: visible; }
+  .bg-export .cell-head .pen { visibility: visible; }
 
   /* ---------- 弹窗素材导出：design.html?bg=1&s=0&modal=mode[&key=RRGGBB] ----------
      只出弹窗本体（圆壳 + 标题栏 + ✕ + 提示语），一行两个操作按钮留位不画 ——
@@ -1120,9 +1121,11 @@
        屏幕 03  renderSat()               …… 四、九个页面 → 「屏幕 03」
        屏幕 04  renderOpsHome()           …… 运维模式首页：只做设置入口，无页签栏、无底部栏；
                                               两种卡内都是左右分栏 = 左「图标 + 名称」/
-                                              右竖排「在线状态（SIM 用 .sim-state、卫星用 .state-slot、
-                                              基站用 .bts-state）+ 各自的第二、三行」（链路第二行是
-                                              运营商 logo + 名称，基站是物理小区ID / 连接用户数）；
+                                              右竖排「在线状态 + 第二行」（链路卡左栏只有图标与
+                                              标识，右栏在线状态用 .sim-state / .state-slot、
+                                              第二行是运营商 logo + 名称；基站卡把在线状态
+                                              挪到左栏基站名后方、复用屏幕 01 的 .bs-state，
+                                              右栏只剩物理小区ID / 连接用户数两行 .set-kv）；
                                               基站 4G / 5G 图标见 ICO_BTS4 / ICO_BTS5，
                                               这两枚在入口卡上按 54px 走（链路图标的 18px 三倍）；
                                               入口数据见「一、样例数据 → OPS_HOME_LINKS / OPS_HOME_BTS」
@@ -1330,6 +1333,8 @@ let linkIdx = 0;
 
    cells 每项 = [参数名, 当前值, 单位（可省）, 选项表（可省）]：
    前两项是屏上排的文案，值是可改的（点卡片弹输入框，或第 4 项给了选项表时排成两/几个按钮）；
+   单位也可以不单列、直接并进参数名写成「参数名/单位」（屏幕 06 的 LTE带宽/MHz、发射功率/dBm
+   就是这么写的），这样值那一行只剩数字、不再排小一号的单位；
    工作频段只排频段号（B3 / n78），不写中心频率 —— 频点那一项已经有 MHz 量级的读数了；
    工作模式只有 FDD / TDD 两种，故排成两个按钮而不是输入框。
    参数卡片一律一格一张、右边不留空位：5G 有 7 项，最后一行就只有「发射功率」一张（右侧空着） */
@@ -1340,9 +1345,9 @@ const BTS4 = {
     ['物理小区识别码', '231', ''],
     ['LTE频点',       '1825', 'EARFCN'],
     ['工作频段',       'B3',   ''],
-    ['LTE带宽',        '20',   'MHz'],
+    ['LTE带宽/MHz',    '20'],
     ['工作模式',       'FDD',  '', ['FDD', 'TDD']],
-    ['发射功率',       '43',   'dBm']
+    ['发射功率/dBm',   '43']
   ]
 };
 const BTS5 = {
@@ -1461,23 +1466,24 @@ const meter = (pct, color) =>
   '<span class="meter"><i style="width:' + (clamp(pct, 0, 1) * 100).toFixed(0) + '%;background:' + color + '"></i></span>';
 
 /* 参数字卡片 → 屏幕 06、07
-   每张卡片 = 参数名（.k）+ 值（.v）+ 改造口，值分两种排法：
-     ① 默认「数值 + 单位（单位小一号）+ 行尾一支铅笔」：点整张卡片弹出编辑弹窗，
+   每张卡片 = 卡头（.cell-head = 铅笔 + 参数名）+ 控件（值 / 选择器），值分两种排法：
+     ① 默认「等宽数值（可带单位 <small>）」：点整张卡片弹出编辑弹窗，
         靠 data-e / data-p / data-i 三个值（key = BTS4.key / BTS5.key、i = b.cells 的下标）
-        让弹窗知道改哪一项；
+        让弹窗知道改哪一项；能改的卡片在卡片左上角点一支铅笔（排在参数名前面，
+        不跟在可变内容后面），一眼看出整张卡可点；
      ② 数据里给了第 4 项（选项表）时改用分段选择器：如「工作模式」只有 FDD / TDD 两种，
-        排成两个按钮、点哪项切哪项，不弹输入框 —— 此时卡片不再是 .edit-hit，
+        排成两个按钮、点哪项切哪项，不弹输入框 —— 此时卡片不再是 .edit-hit，也没有铅笔，
         点按钮走分段选择器那条路（.seg 的 data-i 指回 b.cells 的第几项）
    参数卡片一格一张、不跨列排版，所以卡片本身不带列宽相关的类 */
 const cell = (c, key, i) => {
   const opts = c[3];
   const ctrl = opts
     ? seg(opts.map(t => [t, t === c[1]]), 'cells', key, i)
-    : '<span class="v">' + c[1] + (c[2] ? '<small>' + c[2] + '</small>' : '') +
-        '<span class="pen">' + ICO_PEN + '</span></span>';
+    : '<span class="v">' + c[1] + (c[2] ? '<small>' + c[2] + '</small>' : '') + '</span>';
   return '<div class="cell' + (opts ? '' : ' edit-hit') + '"' +
       ' data-e="' + key + '" data-p="cells" data-i="' + i + '">' +
-    '<span class="k">' + c[0] + '</span>' + ctrl + '</div>';
+    '<span class="cell-head">' + (opts ? '' : '<span class="pen">' + ICO_PEN + '</span>') +
+      '<span class="k">' + c[0] + '</span></span>' + ctrl + '</div>';
 };
 
 /* 可编辑值框 → 屏幕 05「SIM 参数设置」卡的 APN / 用户名 / 密码三行
@@ -2039,8 +2045,9 @@ function renderSat() {
               右栏竖排两行 —— 上面在线状态、下面运营商（卫星链路没有运营商，右栏只有状态徽标）；
               在线状态：SIM 用屏幕 01 / 02 那套 .sim-state，
                         卫星用屏幕 03 的三态 .state-slot
-     基站卡 = 左栏「基站图标 + 基站名」，
-              右栏竖排三行 —— 在线状态 .bts-state、物理小区ID / 连接用户数两行 .set-kv；
+     基站卡 = 左栏「基站图标 + 基站名 + 在线状态」，
+              右栏竖排两行 —— 物理小区ID / 连接用户数 .set-kv；
+              在线状态复用屏幕 01 基站卡头的 .bs-state，紧跟基站名排在后方；
               4G / 5G 靠图标形状区分（波束弧数不同），状态与数值取自 BTS4 / BTS5
    免得点进二级页之前分不清正在设置哪条链路、也看不出它是通的还是断的。
    点卡片进各自的详情页：5 张 SIM 卡都进屏幕 05（同一个模板，卡上的 data-sim 决定
@@ -2072,11 +2079,11 @@ function renderOpsHome() {
       '<span class="set-l">' +
         '<span class="set-ico ' + it.ico + '">' + (it.ico === 'bts4' ? ICO_BTS4 : ICO_BTS5) + '</span>' +
         '<span class="set-t1">' + it.t1 + '</span>' +
+        '<span class="bs-state ' + (it.online ? 'on' : 'off') + '">' +
+          '<i class="dot' + (it.online ? '' : ' bad') + '"></i>' + (it.online ? '在线' : '离线') +
+        '</span>' +
       '</span>' +
       '<span class="set-r">' +
-        '<span class="bts-state ' + (it.online ? 'on' : 'off') + '">' +
-          '<i class="dot"></i>' + (it.online ? '在线' : '离线') +
-        '</span>' +
         '<span class="set-kv"><span class="k">物理小区ID</span><span class="v">' + it.pci + '</span></span>' +
         '<span class="set-kv"><span class="k">连接用户数</span><span class="v">' + it.ue + '</span></span>' +
       '</span>' +
@@ -2517,6 +2524,8 @@ document.addEventListener('keydown', e => {
    不是整个选择器。
    带文字的元素还会标出字号与字高：字号是 font-size（em 框），字高是用 canvas 实量的
    这段文字墨迹高度（见 ownText / inkHeight）—— 给文本控件留位按字高更准。
+   屏幕 06、07 的参数字卡里，文本与数字分层量：悬浮参数名量参数名、悬浮数值量数字、
+   悬浮单位量单位（数值那一层自带铅笔，ownText 只取数字、跳过单位与铅笔）。
    ============================================================ */
 const RULER_SEL = [
   '.bar-top', '.mode-btn', '.bar-nav', '.tab', '.body', '.row', '.col', '.panel', '.panel-title',
@@ -2530,8 +2539,13 @@ const RULER_SEL = [
   '.bright-body', '.slider', '.bright-val', '.edit-inp',
   '.confirm-foot', '.cbtn', '.confirm-tip',
   '.big-id', '.field', '.half', '.cell-hint', '.empty', '.state-slot',
+  /* .v 要单独列进来：它常是「数字 + 单位 <small> + 铅笔」的组合，自身带子元素，
+     不列的话悬浮数值会回溯到 .cell / .kv 上，量不到数字本身的字号与字高。
+     屏幕 06、07 参数字卡里的可变内容（数值 / 单位 / 模式按钮）都按这一层量，
+     正好照字高挑字库；.inp 里的 .v 不受影响（RULER_GROUPS 先拦成整个值框） */
+  '.v',
   '.set-grid', '.set-card', '.set-l', '.set-r', '.set-ico', '.set-t1', '.set-t2', '.set-go',
-  '.set-kv', '.bts-state',
+  '.set-kv',
   '.agg-bar', '.inp', '.roll-head', '.rollview', '.tag'
 ].join(', ');
 
@@ -2547,7 +2561,7 @@ const RULER_NAMES = {
   'cell-hint': '容量说明', 'empty': '空状态', 'sat-fig': '卫星示意图', 'state-slot': '链路状态徽标',
   'set-grid': '入口网格', 'set-card': '设置入口卡', 'set-l': '入口卡左栏', 'set-r': '入口卡右栏',
   'set-ico': '入口图标', 'set-t1': '入口标题', 'set-t2': '入口副标题', 'set-go': '入口箭头',
-  'set-kv': '入口卡指标行', 'bts-state': '基站在线状态',
+  'set-kv': '入口卡指标行',
   'tag': '标签', 'k': '字段名', 'v': '值', 'u': '单位', 'mono': '文本',
   'sd': '状态点', 'dot': '状态点',
   'sim-head': '链路表头', 'sim-list': '链路列表', 'sim-row': 'SIM 链路行', 'sim-name': 'SIM 名', 'sim-op': '运营商',
