@@ -89,7 +89,7 @@ def handle_frame(fd, frame):
 
 # 屏幕仍在开机动画界面, 进入主界面
 def handle_booting(fd, text):
-	uart_send(fd, "n0.val=1")										# 置位握手变量, 屏下次开机动画结束即上报 Ready 并跳到主界面
+	uart_send(fd, "BootFlag.val=1")										# 置位握手变量, 屏下次开机动画结束即上报 Ready 并跳到主界面
 	mode = uci_get("global.global.mode")
 	if mode == "single":
 		uart_send(fd, "BtnModeDirect.val=1")

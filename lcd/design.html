@@ -14,7 +14,7 @@
        屏幕 04  运维模式 · 首页默认 · 设置入口（无页签栏：内容区上「链路设置」6 条链路
                  SIM1~SIM5 + 卫星链路，下「基站设置」4G / 5G 基站，点卡片进二级页）
        屏幕 05  运维模式 · SIM 链路详情（一屏通吃：04 上 5 张 SIM 卡都进这一屏，
-                 页内靠页签栏在 SIM1~SIM5 之间就地切换，不再一条链路画一屏）
+                 页签栏只把「正在配的是哪条链路」摆出来，换链路要回 04 点对应的卡）
        屏幕 06  运维模式 · 4G基站（基站设置页：标识与小区状态可改、参数卡片可改）
        屏幕 07  运维模式 · 5G基站（同上，共用一个模板、数据不同）
        屏幕 08  系统设置（独立整屏：无页眉模式切换、无页签栏，
@@ -60,7 +60,7 @@
          条形仪表 .meter …… 屏幕 05~07
          分段选择器 .seg …… 屏幕 05~07、09；链路状态徽标 .state-slot …… 屏幕 03（点击循环切换三态）
          在线状态点 .dot / .bs-state、.sim-state（在线 / 拨号中 / 离线 / 未插卡 / 已禁用）…… 屏幕 01、02
-         页签里的链路状态点 .tab .sd（同一套五色，卫星那条取 .state-slot 三色）…… 屏幕 05~07 页签栏
+         页签栏里的链路状态点 .sd（同一套五色）…… 屏幕 05 的「当前链路」
        速率面板（.row-panel / .half）…… 屏幕 02
        聚合链路状态条（.agg-bar，五列：首列连接状态 + 4 个 KPI）…… 屏幕 02
        可编辑值框（.inp）…… 屏幕 05、09（两屏的参数设置卡）；
@@ -230,16 +230,26 @@
     white-space: nowrap;
   }
   .tab.on { color: #11111b; background: var(--blue); border-color: var(--blue); font-weight: 600; }
-  /* 页签里链路标识前的状态点 → 屏幕 05~07 页签栏
-     配色与屏幕 01 / 02 的在线状态点同一套（在线绿 / 拨号中黄 / 离线红 / 未插卡灰 / 已禁用桃）；
-     「卫星链路」那一枚取屏幕 03 的三态徽标配色（无卫星链路红 / 在线绿 / 离线黄）。
-     这几条写在 .tab.on .sd 前面：选中页签是蓝底，点要反成深色才看得见 */
-  .tab .sd { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
-  .tab .sd.off, .tab .sd.st-none { background: var(--red); }
-  .tab .sd.dial, .tab .sd.st-off { background: var(--yellow); }
-  .tab .sd.nosim { background: var(--line2); }
-  .tab .sd.disabled { background: var(--peach); }
-  .tab.on .sd { background: #11111b; }
+  /* 链路状态点 → 屏幕 05 页签栏的「当前链路」
+     配色与屏幕 01 / 02 的在线状态点同一套（在线绿 / 拨号中黄 / 离线红 / 未插卡灰 / 已禁用桃）。
+     只在 .tab-cur 里用，页签（.tab）本身不带点，所以不用再处理「蓝底选中时点要反深」 */
+  .sd { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+  .sd.off, .sd.st-none { background: var(--red); }
+  .sd.dial, .sd.st-off { background: var(--yellow); }
+  .sd.nosim { background: var(--line2); }
+  .sd.disabled { background: var(--peach); }
+  /* 页签栏「当前链路」→ 屏幕 05
+     它是一句状态、不是按钮：在屏上换不了链路，换链路只能回屏幕 04 点对应的 SIM 入口卡，
+     所以不给 .tab 的边框 / 底色 / 悬停态，只留状态点 + 链路名，读起来是个读数而不是可点项 */
+  .tab-cur {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--txt);
+    white-space: nowrap;
+  }
 
   /* ---- 内容区 → 屏幕 01~09 ---- */
   .body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 12px; }
@@ -1041,7 +1051,8 @@
 
   /* ⑦ 运维模式二级页（屏幕 05 SIM 链路详情 / 06·07 基站设置 / 09 卫星链路设置）：
         这几屏整屏都是「可设置项」，能变的都集中在控件上 ——
-          · 页签栏每枚页签前面那颗状态点（.tab .sd）跟着链路状态换色
+          · 页签栏左半「当前链路」那一项（.sd 状态点 + .cur-name 链路名）整条都是可变的：
+            状态点跟着链路状态换色、链路名跟着 opsSel 换，两个都得点掉
           · 三排分段选择器（.seg）是控件，整块留位不画（屏 06、07 的「工作模式」也在其中）
           · 可编辑值框 .inp（屏 05 的 APN / 用户名 / 密码、屏 09 的卫星标识）整个藏掉：
             屏上这行值由运行时自己的控件画，设计稿里那个「底 + 描边」的方框不是固定素材；
@@ -1052,7 +1063,8 @@
           · 屏 05 下半屏相邻小区：标题右边「共 N 个」与可拖动滚动的文本（表头与面板标题留着）
         注意 .cell-hint 有两种身份：屏 05 锁小区卡那份写在 .panel-title 里、是固定说明，得留着，
         所以这里只点掉 .panel 直下的那份 —— 屏 06、07 的容量说明才是可变的 */
-  .bg-export .tab .sd,
+  .bg-export .sd,
+  .bg-export .cur-name,
   .bg-export .seg { visibility: var(--bg-vis); }
   .bg-export .inp,
   .bg-export .cell .v,
@@ -1130,10 +1142,12 @@
                                               这两枚在入口卡上按 54px 走（链路图标的 18px 三倍）；
                                               入口数据见「一、样例数据 → OPS_HOME_LINKS / OPS_HOME_BTS」
        屏幕 05  simPage()                 …… 共用模板 renderOperator()，只有这一屏：
-                                              一屏通吃 5 条 SIM 链路，页签栏点哪条就把本屏
-                                              重渲染成哪条（opsSel），数据源见「一、样例数据 → OPS」；
-                                              页签文案固定 SIM1~SIM5 + 一条卫星链路，
-                                              页签上那颗状态点跟着各自的在线状态配色；
+                                              一屏通吃 5 条 SIM 链路，渲染哪条由 opsSel 定
+                                              （从 04 的哪张 SIM 卡进来就是哪条），
+                                              数据源见「一、样例数据 → OPS」；
+                                              页签栏「当前链路」只把这条摆出来
+                                              （状态点跟着它的在线状态配色），不是按钮，
+                                              换链路要回 04 点另一张卡；
                                               本屏是设置页，上半屏三张卡 = 左上 SIM 参数设置
                                               （链路开关 / 入网方式 / APN / 鉴权方式 / 用户名 / 密码）、
                                               右上 锁LTE小区 + 锁5G小区，
@@ -1178,13 +1192,14 @@
    ============================================================ */
 
 /* 运维模式：5 条 SIM 链路 → 屏幕 05「SIM 链路详情」的五种取值
-   （屏幕 05 一屏通吃，页签栏点哪条就把本屏渲染成哪条，见 OPS[opsSel]）
+   （屏幕 05 一屏通吃，渲染哪条由 opsSel 定：从屏幕 04 的哪张 SIM 卡进来就是哪条，
+   页签栏只是把这条摆出来给用户对一下，换链路得回 04 重进，见 OPS[opsSel]）
    第 i 条就是 SIM(i+1)，顺序与在线状态都严格跟着「工程模式 → SIMS」走，
-   页签文案也只写 SIM1~SIM5、不写运营商名 —— 用户插的是哪家的卡页面无从得知。
+   页签栏也只写 SIM1~SIM5、不写运营商名 —— 用户插的是哪家的卡页面无从得知。
    本屏只做设置，不放速率 / 时延 / 信号读数（那些在屏幕 01 / 02 的链路状态表里），
    所以每条链路只留本屏用得着的字段：
      state    = 在线状态（在线 / 拨号中 / 离线 / 未插卡 / 已禁用这五种之一）：
-                页签上那颗状态点按它查 SIM_STATE 配色，相邻小区的空态文案也按它给
+                「当前链路」那颗状态点按它查 SIM_STATE 配色，相邻小区的空态文案也按它给
      disabled = 链路开关，即「是否禁用该链路」，本屏 SIM 参数设置卡的第一行；
                 只有 SIM5 为 true（state 就是已禁用）；SIM4 未插卡只是插槽里没卡，
                 链路本身没被禁用，所以仍是 false
@@ -1557,25 +1572,34 @@ function engNav(active) {
 }
 
 /* 运维模式页签栏 → 屏幕 05~07（屏幕 04 是入口页，不放页签栏）；
-   左「SIM链路」摆的是屏幕 05 这一屏的五种取值 + 一条卫星链路：前五条不带 data-go，
-   只挂 data-sim = OPS 下标，点它就地把本屏渲染成那条链路，不换屏；
+   两段内容各归各屏，由 opts 决定本屏摆哪段：
+     cur —— 左半「当前链路」只读指示：屏幕 05 摆（本屏就是这条链路的详情页），
+            两块内容都摆的话中间垫一条竖分隔线，只有它一段时不需要；
+     bts —— 右半基站页签：屏幕 06、07 摆，
+            每屏只摆自己那一张（屏幕 06 只留「4G基站」、屏幕 07 只留「5G基站」），
+            该页签即本屏、恒为选中态，挂 data-go = 目标页序号 - 1。
+
+   「当前链路」是一句状态、不是按钮：在屏上换不了链路，
+   换链路只能回屏幕 04 点对应的 SIM 入口卡重进，这里只摆「正在配的是哪条」——
+   在屏幕 05 上就是本屏渲染的那条（op.name），取的是 opsSel（OPS 下标）指向的那条，
+   不再挂 data-sim、也不给 .tab 的按钮样式（早先是把 SIM1~SIM5 连同卫星链路
+   一起排成可点页签、点哪条就地把本屏渲染成哪条，现在收成一条只读指示）；
    页签文案固定写 SIM1~SIM5 —— 卡是哪家运营商的页面无从得知，不写运营商名；
    标识前面那颗状态点按 SIM_STATE[state].cls 配色（在线绿 / 拨号中黄 / 离线红 /
    未插卡灰 / 已禁用桃），与屏幕 01 / 02 的在线状态点同一套语义；
-   末尾「卫星链路」不在这五种取值里（卫星没有 SIM 号、也不走 OPS），
-   而是另有独立的一屏，所以挂 data-go = 屏幕 09（卫星链路设置）；
-   它的状态点取屏幕 03 的三态徽标配色；
-   右「基站」的 4G / 5G 各有独立的一屏，照旧 data-go = 目标页序号 - 1（屏幕 06、07） */
-function opsNav(active) {
-  const links = OPS.map((o, i) =>
-    '<span class="tab' + (o.name === active ? ' on' : '') + '" data-sim="' + i + '">' +
-      '<i class="sd ' + SIM_STATE[o.state].cls + '"></i>' + o.name + '</span>').join('') +
-    '<span class="tab' + ('卫星链路' === active ? ' on' : '') + '" data-go="' + SAT_PAGE + '">' +
-      '<i class="sd ' + LINK_STATES[linkIdx].cls + '"></i>卫星链路</span>';
+   基站这一组不再带「基站」小标签：页签文案本身就写着「基站」二字，标签是重复的 */
+function opsNav(active, opts) {
+  const o = Object.assign({ cur: true, bts: true }, opts);
+  const cur = '<span class="nav-label">当前链路</span>' +
+         '<span class="tab-cur"><i class="sd ' + SIM_STATE[OPS[opsSel].state].cls + '"></i>' +
+           '<span class="cur-name">' + OPS[opsSel].name + '</span></span>';
+  /* 只出与本屏同名的那一张基站页签（active 即 b.label） */
   const bts = ['4G基站', '5G基站'].map((t, i) =>
-    '<span class="tab' + (t === active ? ' on' : '') + '" data-go="' + (SIM_PAGE + 1 + i) + '">' + t + '</span>').join('');
-  return '<span class="nav-label">SIM链路</span>' + links +
-         '<span class="nav-sep"></span><span class="nav-label">基站</span>' + bts;
+    t === active
+      ? '<span class="tab on" data-go="' + (SIM_PAGE + 1 + i) + '">' + t + '</span>'
+      : '').join('');
+  if (o.cur && o.bts) return cur + '<span class="nav-sep"></span>' + bts;
+  return o.cur ? cur : bts;
 }
 
 /* 线性图标（24×24 viewBox，颜色随所在按钮文字） */
@@ -1811,7 +1835,8 @@ function editItemModal() {
    底部三种情况：传 footer 用自定义功能页脚；只传 foot 用提示底栏；都不传则整块不要底部
    页眉整条只有「工程模式 / 运维模式」两个模式按钮，group 传空串就整条不渲染 ——
    屏幕 05 是运维模式下的二级页、屏幕 08 整屏独立，都不给模式切换入口
-   （屏幕 08 连通用的页签栏也不要，nav 也传空串；屏幕 05 保留页签栏，用来在各条链路之间切换） */
+   （屏幕 08 连通用的页签栏也不要，nav 也传空串；屏幕 05 保留页签栏，
+     只用来把「当前配的是哪条链路」摆出来） */
 function shell(o) {
   const ops = o.group === '运维模式';
   const bottom = o.footer ? o.footer
@@ -2106,9 +2131,10 @@ function renderOpsHome() {
 /* ========== 屏幕 05 · 运维模式 · SIM 链路详情 → simPage() ==========
    5 条 SIM 链路的二级页长得一模一样、只是数据不同，所以只画这一屏、不按链路分成多屏。
    看的是哪条链路记在 opsSel（OPS 下标），页面函数只做「取当前链路 + 交给下面的模板渲染」，
-   真正的排版在 renderOperator() 里；两处入口都会先定好 opsSel：
+   真正的排版在 renderOperator() 里；opsSel 只有一处入口会写：
      · 屏幕 04 的 SIM 卡 → 卡上的 data-sim（在 OPS_HOME_LINKS 里按 SIM 序号给好）
-     · 本屏页签栏左半「SIM链路」→ data-sim，点了就地重渲染本屏，不换屏
+   进了本屏就换不了链路 —— 页签栏只把 opsSel 指的那条摆出来（不再挂 data-sim），
+   想换链路回屏幕 04 点另一张 SIM 卡。
    OPS 的第 i 条就是 SIM(i+1)：在线的那条数据最全，拨号中 / 离线 / 未插卡 / 已禁用的
    相邻小区依次变少或为空，两张锁小区卡也就跟着从「已锁定」变成未锁定。
    ================================================================= */
@@ -2132,7 +2158,7 @@ const NB_EMPTY = {
      右上 · 锁LTE小区、锁5G小区 —— 4G、5G 各一张，各自锁自己制式下的那个小区
      下半 · LTE相邻小区信息、NR-5G相邻小区信息 —— 各是一块「固定表头 + 可手动滚动的文本」
             （nbPanel），左右并排占满下半屏
-   在线状态与信号强度不在这屏出现：前者在页签栏的状态点上，后者在屏幕 04 的入口卡上，
+   在线状态与信号强度不在这屏出现：前者在页签栏「当前链路」的状态点上，后者在屏幕 04 的入口卡上，
    本屏只管设置；也不放页脚（底部提示栏那一条），把高度全让给相邻小区 */
 function renderOperator(op) {
   /* 左上「SIM 参数设置」：第一行链路开关（这条链路整体启用 / 禁用），
@@ -2191,7 +2217,7 @@ function renderOperator(op) {
 
   return shell({
     group: '',                 /* 二级页不给模式切换入口，页眉整条不要 */
-    nav: opsNav(op.name),
+    nav: opsNav(op.name, { bts: false }),   /* 本屏只摆「当前链路」，不摆 4G / 5G 基站页签 */
     footer: editFoot(),        /* 底部换成页脚：左「保存&应用」右「返回」 */
     body: body
   });
@@ -2280,7 +2306,7 @@ function renderBase(b) {
      底部除了页脚，还带出本屏的编辑参数弹窗 */
   return shell({
     group: '',
-    nav: opsNav(b.label),
+    nav: opsNav(b.label, { cur: false }),   /* 本屏只摆 4G / 5G 基站页签，不摆「当前链路」 */
     body: body,
     footer: editFoot() + editItemModal()
   });
@@ -2528,7 +2554,7 @@ document.addEventListener('keydown', e => {
    悬浮单位量单位（数值那一层自带铅笔，ownText 只取数字、跳过单位与铅笔）。
    ============================================================ */
 const RULER_SEL = [
-  '.bar-top', '.mode-btn', '.bar-nav', '.tab', '.body', '.row', '.col', '.panel', '.panel-title',
+  '.bar-top', '.mode-btn', '.bar-nav', '.tab', '.tab-cur', '.body', '.row', '.col', '.panel', '.panel-title',
   '.sat-fig', '.kpi', '.kv', '.seg', '.meter', '.cell', '.bars', '.bar-bot', '.m-card', '.m-ico', '.m-txt',
   '.sim-head', '.sim-list', '.sim-row', '.sim-name', '.sim-op', '.sim-state', '.sim-sig',
   '.sim-dbm', '.sim-rate', '.sim-ping', '.fix-fw',
@@ -2550,7 +2576,7 @@ const RULER_SEL = [
 ].join(', ');
 
 const RULER_NAMES = {
-  'screen': '屏幕', 'bar-top': '页眉', 'mode-btn': '模式按钮', 'bar-nav': '页签栏', 'tab': '页签', 'body': '内容区',
+  'screen': '屏幕', 'bar-top': '页眉', 'mode-btn': '模式按钮', 'bar-nav': '页签栏', 'tab': '页签', 'tab-cur': '当前链路', 'body': '内容区',
   'row': '行容器', 'col': '列容器', 'panel': '面板', 'panel-title': '面板标题',
   'kpi': '大数值', 'num': '数值', 'kv': '键值行', 'seg': '选择器',
   'meter': '条形仪表', 'cell': '参数字',
@@ -2686,11 +2712,13 @@ document.getElementById('toggleRuler').onclick = function () {
                       定好屏幕 05 显示哪条链路）、2 张基站卡进屏幕 06 / 07
        页签栏 .tab   带 data-mode 的是「直连 / 聚合 / 卫星传输」三种工作模式：
                       点了不直接换屏，先弹二级确认（modeConfirm → modeModal），
-                      点「确定」才跳、点「取消 / ✕ / 遮罩」停在原模式；带 data-sim 的是
-                      「SIM链路」页签：只换屏幕 05 显示的那条链路，
-                      已在屏幕 05 上就就地重渲染，从基站页点过来才整屏跳到屏幕 05；
-                      带 data-go 的是「基站」页签与页脚按钮，跳到对应页
-                      （基站 → 屏幕 06 / 07、屏幕 01 / 02 页脚的「系统设置」→ 屏幕 08）
+                      点「确定」才跳、点「取消 / ✕ / 遮罩」停在原模式；
+                      带 data-go 的是基站页签与页脚按钮，跳到对应页
+                      （屏幕 06 / 07 各摆自己那一张基站页签 → 本屏，
+                       屏幕 01 / 02 页脚的「系统设置」→ 屏幕 08）；
+                      屏幕 05 页签栏只摆「当前链路」（.tab-cur），它不是按钮，
+                      只是把 opsSel 指的那条链路摆出来，点了没反应；
+                      屏幕 06 / 07 页签栏则只有本屏那一张基站页签，不再摆「当前链路」
        页脚功能按钮  有 data-modal 的打开对应弹窗（点遮罩 / 关闭按钮 / 确认按钮收起），
                       有 data-back 的退回来源页（屏幕 08 的「返回 / 确定」）
      右侧「页面清单」可直达任意页，「跳转记录」按发生顺序记下每一步
@@ -2782,22 +2810,7 @@ document.querySelector('.dbg').addEventListener('click', e => {
     return;
   }
 
-  /* 页签栏左半「SIM链路」：4 家运营商是屏幕 05 这一屏的四种取值，换的是数据不是屏 */
-  const simTab = e.target.closest('.tab[data-sim]');
-  if (simTab) {
-    opsSel = +simTab.dataset.sim;
-    const why = '页签「' + simTab.textContent.trim() + '」';
-    if (dbgCur === SIM_PAGE) {
-      /* 已经在屏幕 05 上：就地重渲染，跳转记录只加一条「切换链路」，不当成换页 */
-      dbgScreen.innerHTML = simPage();
-      dbgLog(dbgNo(SIM_PAGE) + '　' + why + '切换链路');
-    } else {
-      dbgGo(SIM_PAGE, why);        /* 从屏幕 06 / 07 的基站页点过来：整屏跳到屏幕 05 */
-    }
-    return;
-  }
-
-  const tab = e.target.closest('.tab');                        /* 页签栏右半「基站状态」→ 屏幕 06 / 07 */
+  const tab = e.target.closest('.tab');      /* 页签栏右半的 4G / 5G 基站页签 → 屏幕 06 / 07 */
   if (tab) { dbgGo(+tab.dataset.go, '页签「' + tab.textContent.trim() + '」'); return; }
 
   /* 屏幕 04 入口卡 → 二级页（SIM 卡进 05、基站卡进 06 / 07） */
