@@ -4,7 +4,7 @@
 # 日志: 同时输出到 stdout(procd 启动时收进 logd) 与日志文件, 供各模块共用
 #
 # 本模块不引用任何其它私有模块, 是依赖树的叶子;
-# uart/uci/aggregate 等都从这里取 log, 从而避免与 lcd.py 互相 import
+# uart/uci 等都从这里取 log, 从而避免与 lcd.py 互相 import
 # (主程序以 __main__ 名运行, 私有模块里 import lcd 会把主程序再执行一遍)
 #
 

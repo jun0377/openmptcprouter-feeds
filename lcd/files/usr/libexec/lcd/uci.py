@@ -34,6 +34,12 @@ def uci_get(option):
 	return out.strip()												# 去掉结尾换行
 
 
+# 读回整个配置文件的全部内容(每行形如 sim.sim1.enable='true'), 一次取回多项用
+# 用途: 避免为每个配置项单起一个进程, 执行失败或配置不存在返回空串
+def uci_show(config):
+	return _run_uci(["show", config])[1]
+
+
 # 设置 uci 配置项(只写入, 不会提交), 必须调用 uci_commit 后才会真正生效, 成功返回 True
 # 多改几项后再调一次 uci_commit 提交, 避免每改一项提交一次
 def uci_set(option, value):

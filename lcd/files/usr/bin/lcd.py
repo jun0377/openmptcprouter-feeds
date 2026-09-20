@@ -11,10 +11,17 @@
 #   logger.py     日志, 同时输出到 stdout 与 /var/log/lcd.log
 #   uart.py       串口的打开/下发/按结束符切帧
 #   uci.py        uci 配置读写
-#   aggregate.py  聚合模式页面(屏幕02)的状态
+#   modeDirect.py 直连模式页面(屏幕01)的状态
+#   modeAgg.py    聚合模式页面(屏幕02)的状态
+#   ctrl-main.py  运维模式首页(屏幕04 链路设置)的状态
+#   ctrl-simx.py  运维模式 SIMx链路(屏幕05)的状态
+#   reboot.py     页脚「重启设备」的重启动作
+#   systemSettings.py 系统设置页面(页脚)的状态
 #   version.py    版本信息页面(页脚弹窗)的状态
 #
+# 模式切换与状态查询的指令见 docs/018-屏幕.md 第4节
 
+import importlib								# 加载文件名带连字符的页面模块(见下面的页面模块导入)
 import os									# 主循环读串口, 退出时关闭描述符
 import select								# select(): 带超时等待串口可读, 避免 read 阻塞主循环
 import signal								# 注册 SIGINT/SIGTERM/SIGHUP, 实现优雅退出
@@ -26,10 +33,16 @@ import time									# 单调时钟与小步休眠
 LIB_DIR = os.environ.get("LCD_LIB_DIR", "/usr/libexec/lcd")
 sys.path.insert(0, LIB_DIR)					# 必须早于下面 import 私有模块
 
-from aggregate import AggregateStatus					# 聚合模式页面(屏幕02)的状态
+# 页面模块: 文件名里带连字符(ctrl-main.py / ctrl-simx.py)不能写 import 语句, 用 importlib 按名字加载
+CtrlStatus = importlib.import_module("ctrl-main").CtrlStatus		# 运维模式首页(屏幕04 链路设置)的状态
+SimxStatus = importlib.import_module("ctrl-simx").SimxStatus		# 运维模式 SIMx链路(屏幕05)的状态
+from modeAgg import AggregateStatus					# 聚合模式页面(屏幕02)的状态
 from logger import log, open_log						# 日志输出
+from modeDirect import DirectStatus						# 直连模式页面(屏幕01)的状态
+from reboot import reboot_device						# 重启本机
 from uart import FrameParser, open_uart, uart_send		# 串口操作
 from uci import uci_get									# uci 配置读取
+from systemSettings import SystemSettings				# 系统设置页面(页脚)的状态
 from version import VersionStatus						# 版本信息页面(页脚弹窗)的状态
 
 UART_DEV = "/dev/ttyAMA4"					# uart4, 见 docs/018-屏幕.md
@@ -87,20 +100,25 @@ def handle_frame(fd, frame):
 # 指令处理
 # 处理函数签名统一为 (fd, text): fd 为串口描述符, text 为解码后的指令字符串
 
-# 屏幕仍在开机动画界面, 进入主界面
+# 屏幕仍在开机动画界面: 通知屏退出开机动画, 并按当前工作模式进入对应的模式主页
 def handle_booting(fd, text):
-	uart_send(fd, "BootFlag.val=1")										# 置位握手变量, 屏下次开机动画结束即上报 Ready 并跳到主界面
+	uart_send(fd, "BootFlag.val=1")										# 屏收到后退出开机动画
 	mode = uci_get("global.global.mode")
 	if mode == "single":
-		uart_send(fd, "BtnModeDirect.val=1")
+		uart_send(fd, "direct_mode=1")									# 直连模式主页
 	elif mode == "aggregate":
-		uart_send(fd, "BtnModeAggre.val=1")
+		uart_send(fd, "agg_mode=1")										# 聚合模式主页
 	elif mode == "balance":
-		uart_send(fd, "BtnModeSatell.val=1")
+		uart_send(fd, "satellite_mode=1")								# 卫星模式主页
 
 # 开机动画已完成, 即将进入主页面
 def handle_ready_report(fd, text):
 	log("Screen ready, entering main page")
+
+# 在直连模式页面时,获取直连模式页面的所有状态
+def handle_GetDirectModeStatus(fd, text):
+	for command in DirectStatus.collect().commands():			# 采集状态并生成待下发的指令序列
+		uart_send(fd, command)									# 逐条下发
 
 # 在聚合模式页面时,获取聚合模式页面的所有状态
 def handle_GetAggregateStatus(fd, text):
@@ -112,14 +130,48 @@ def handle_GetVersion(fd, text):
 	for command in VersionStatus.collect().commands():			# 采集版本信息并生成待下发的指令序列
 		uart_send(fd, command)									# 逐条下发
 
+# 在系统设置页面时,获取管理平台地址(GetServerAddr)与状态上报频率(GetReportFre)
+# 两个查询下发的是同一份页面状态(地址 + 四个频率按钮), 保证屏上两项始终一致
+def handle_GetSystemSettings(fd, text):
+	for command in SystemSettings.collect().commands():			# 采集配置并生成待下发的指令序列
+		uart_send(fd, command)									# 逐条下发
+
+# 在运维模式->链路设置页面时,获取所有链路与基站的状态
+def handle_GetAllStatus(fd, text):
+	for command in CtrlStatus.collect().commands():				# 采集状态并生成待下发的指令序列
+		uart_send(fd, command)									# 逐条下发
+
+# 在运维模式->链路设置->SIMx链路页面时,获取该链路的设置参数
+# 指令形如 GetSim1Status, 其中的数字就是屏上的卡槽号(与 uci 的 simN 段名一致)
+def handle_GetSimxStatus(fd, text):
+	name = "sim" + text[len("GetSim"):-len("Status")]			# GetSim1Status -> sim1
+	for command in SimxStatus.collect(name).commands():			# 采集该链路的设置并生成待下发的指令序列
+		uart_send(fd, command)									# 逐条下发
+
+# 页脚「重启设备」二级确认后, 重启本机(屏侧随后自行显示重启中的界面)
+def handle_reboot(fd, text):
+	log("Reboot requested by screen")							# 重启前先记一条日志, 便于对照屏上的操作
+	reboot_device()												# 成功时系统随即重启, 失败原因由 reboot.py 记日志
+
 # 指令分发表: 字符串指令 -> 处理函数
 # 新增指令只需在此登记一行并写一个同签名的处理函数, handle_frame 无需改动
 # 注意 prints 无结束符, 屏侧需紧跟一条 printh ff ff ff 才能被 FrameParser 切成帧
 TEXT_HANDLERS = {
-	"Booting": handle_booting,										# 等待 n0.val 握手, 仍在播动画
+	"Booting": handle_booting,										# 等待 BootFlag 握手, 仍在播动画
 	"Ready": handle_ready_report,									# 握手完成, 准备进入主页
-	"GetAggStatus": handle_GetAggregateStatus,						# 在聚合模式页面时,获取聚合模式页面的所有状态
+	"GetDirectModeStatus": handle_GetDirectModeStatus,				# 在直连模式页面时,获取直连模式页面的所有状态
+	"GetAggModeStatus": handle_GetAggregateStatus,					# 在聚合模式页面时,获取聚合模式页面的所有状态
 	"GetVersion": handle_GetVersion,								# 在版本信息页面时,获取版本信息
+	"GetServerAddr": handle_GetSystemSettings,						# 在系统设置页面时,获取管理平台地址与状态上报频率
+	"GetReportFre": handle_GetSystemSettings,						# 同上, 两个查询一并下发整页状态
+	"GetAllStatus": handle_GetAllStatus,							# 在运维模式->链路设置页面时,获取所有链路与基站状态
+	# 运维模式->链路设置->SIMx链路: 5 个卡槽各一条查询指令, 处理函数相同(卡槽号在指令里)
+	"GetSim1Status": handle_GetSimxStatus,
+	"GetSim2Status": handle_GetSimxStatus,
+	"GetSim3Status": handle_GetSimxStatus,
+	"GetSim4Status": handle_GetSimxStatus,
+	"GetSim5Status": handle_GetSimxStatus,
+	"Reboot": handle_reboot,										# 页脚「重启设备」二级确认后, 重启本机
 }
 
 # 可被退出信号打断的定时等待
