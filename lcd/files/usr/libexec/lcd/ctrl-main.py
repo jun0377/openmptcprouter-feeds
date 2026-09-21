@@ -21,8 +21,8 @@
 #   - 本模块无任何串口依赖, 可在开发机上直接 import 验证
 #
 
-from modeDirect import OPERATOR_PICS, STATE_PICS, UNKNOWN_OPERATOR_PIC
-from siminfo import STATE_DISABLED, read_sims
+from modeDirect import OPERATOR_PICS, STATE_PICS
+from siminfo import SimState, read_sims
 
 SIM_SLOTS = 5								# 屏上「链路设置」里的 SIM 卡数(SIM1~SIM5), 需与串口屏工程一致
 
@@ -50,7 +50,7 @@ class SimEntry:
 
 	def __init__(self, operator, state):
 		self.operator = operator			# 运营商, 空串表示读不到(未插卡/已禁用)
-		self.state = state					# 在线状态, 取值见 modeDirect.STATE_PICS
+		self.state = state					# 在线状态, 取值见 siminfo.SimState
 
 
 # 单个基站入口卡的状态(4G / 5G 各一张)
@@ -73,7 +73,7 @@ def _read_entries():
 			sim = configured[index]
 			entries.append(SimEntry(sim.operator, sim.state))
 		else:
-			entries.append(SimEntry("", STATE_DISABLED))
+			entries.append(SimEntry("", SimState.DISABLED))
 	return entries
 
 
@@ -111,7 +111,7 @@ class CtrlStatus:
 		for index, sim in enumerate(self.sims):
 			slot = index + 1
 			commands.append("PicSim%dOp.pic=%d" % (slot,
-				OPERATOR_PICS.get(sim.operator, UNKNOWN_OPERATOR_PIC)))
+				OPERATOR_PICS.get(sim.operator, OPERATOR_PICS[""])))
 			commands.append("PicSim%dOnline.pic=%d" % (slot, STATE_PICS[sim.state]))
 		commands.append("%s.pic=%d" % (SATELLITE_WIDGET, SATELLITE_PICS[self.satellite]))
 		return commands

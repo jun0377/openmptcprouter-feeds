@@ -6,8 +6,9 @@
 # 类结构:
 #   LinkStatus       单条链路的状态
 #   LinkList         全部链路的集合(内部一个数组), 链路侧的聚合口径在这里算
+#   AggLinkStatus    聚合链路状态卡片(页面顶部)的状态
 #   BtsStatus        单张基站卡片的状态
-#   AggregateStatus  页面全部状态 = 一个 LinkList + 一个 TunnelStatus + 一个 BtsStatus 数组, 用 collect() 采集
+#   AggregateStatus  页面全部状态 = 一个 AggLinkStatus + 一个 LinkList + 一个 BtsStatus 数组, 用 collect() 采集
 #
 # 指令见 docs/018-屏幕.md 第4节 3.2
 #
@@ -20,8 +21,7 @@
 #   - 本模块无任何串口依赖, 可在开发机上直接 import 验证
 #
 
-from siminfo import (RateMeter, STATE_DIALING, STATE_DISABLED, STATE_NO_SIM,
-	STATE_OFFLINE, STATE_ONLINE, TunnelStatus, read_sims, read_tunnel)
+from siminfo import RateMeter, SimState, read_sims, read_tunnel
 
 
 LINK_SLOTS = 5								# 屏上预置的链路卡槽数, 需与串口屏工程一致
@@ -44,7 +44,7 @@ LINK_TYPES = ("WAN", "LAN", "SIM")
 #   FloatAggTx.val     聚合上行速率   单位同 FloatSimxTx, 为在线链路之和
 #   FloatAggRx.val     聚合下行速率   单位同 FloatSimxRx, 为在线链路之和
 #   NumAggRtt.val      聚合时延(ms)   聚合隧道的时延, 与网页一致
-#   NumAggChannel.val  聚合链路数量   拨号成功且能上网(能 ping 通服务器)的链路条数
+#   NumAggChannel.val  聚合链路数量   真正在线的链路条数(见 LinkList.online_count)
 
 # 基站状态卡片(页面右侧, 4G / 5G 上下各一张, 控件名不按卡槽编号)的控件:
 #   PicLteOnline.pic  4G 在线状态图标   43 在线 / 42 离线
@@ -62,19 +62,19 @@ OPERATOR_PICS = {
 }
 UNKNOWN_OPERATOR_PIC = 145					# 读不到运营商时用"未知"图标
 
-# 链路状态 -> PicSimxOnline 的图片号(状态字符串由 siminfo 采集, 只有"在线"有速率与时延读数)
+# 链路状态 -> PicSimxOnline 的图片号(状态由 siminfo 采集, 只有在线有速率与时延读数)
 STATE_PICS = {
-	STATE_ONLINE: 30,
-	STATE_DISABLED: 29,
-	STATE_NO_SIM: 28,
-	STATE_OFFLINE: 27,
-	STATE_DIALING: 26,
+	SimState.ONLINE: 30,
+	SimState.DISABLED: 29,
+	SimState.NO_SIM: 28,
+	SimState.OFFLINE: 27,
+	SimState.DIALING: 26,
 }
 
 # 聚合链路状态 -> TextAggSta.pco 的文字颜色(RGB565, 见 docs/018-屏幕.md 3.2)
 AGG_STATE_COLORS = {
-	STATE_ONLINE: 2024,						# 绿
-	STATE_OFFLINE: 63504,					# 红
+	SimState.ONLINE: 2024,					# 绿
+	SimState.OFFLINE: 63504,				# 红
 }
 
 # RSRP 门限(dBm) -> PicRsrpx 的图片号, 由强到弱排列, 取第一个满足 rsrp >= 门限的档位
@@ -114,24 +114,23 @@ def mbps_to_val(mbps):
 
 
 # 单条链路的状态
-# 参数顺序: 链路名, 类型, 运营商, 状态, RSRP(dBm), 上行(Mbps), 下行(Mbps), 时延(ms), 是否拨号成功且能上网
+# 参数顺序: 链路名, 类型, 运营商, 状态, RSRP(dBm), 上行(Mbps), 下行(Mbps), 时延(ms)
 class LinkStatus:
 
-	def __init__(self, name, link_type, operator, state, rsrp, up, down, latency, internet):
+	def __init__(self, name, link_type, operator, state, rsrp, up, down, latency):
 		self.name = name					# 链路名, 如 wan0
 		self.type = link_type				# 链路类型, 取值见 LINK_TYPES(WAN / LAN / SIM)
 		self.operator = operator			# 运营商, 空串表示读不到(未插卡/已禁用)
-		self.state = state					# 链路状态, 取值见 STATE_PICS
+		self.state = state					# 链路状态, 取值见 siminfo.SimState
 		self.rsrp = rsrp					# 信号强度(dBm), None 表示读不到信号
 		self.up = up						# 上行速率(Mbps)
 		self.down = down					# 下行速率(Mbps)
 		self.latency = latency				# 时延(ms)
-		self.internet = internet			# 拨号成功且能上网, 见 siminfo.SimInfo.internet
 
 	# 是否在线: 只有在线链路参与聚合口径, 也只有它在屏上有速率与时延
 	@property
 	def online(self):
-		return self.state == STATE_ONLINE
+		return self.state is SimState.ONLINE
 
 
 # 全部链路的集合: 内部用一个数组保存, 顺序即屏上从上到下的顺序
@@ -170,10 +169,40 @@ class LinkList:
 	def down(self):
 		return sum(link.down for link in self.online_items)
 
-	# 能上网的链路数量: 聚合链路数量就是它
+	# 参与聚合的链路数量: 真正在线的链路才作为一条聚合链路, 与参与速率求和的链路一致
 	@property
-	def internet_count(self):
-		return sum(1 for link in self.items if link.internet)
+	def online_count(self):
+		return len(self.online_items)
+
+
+# 聚合链路状态卡片(页面顶部, 五列: 连接状态/上行/下行/时延/链路数)的状态
+# 是否在线看聚合隧道可达(与网页 ModeAggregate 同一数据源), 时延取隧道时延,
+# 上下行取在线链路速率之和, 链路数取真正在线的链路条数(卡名取自 uci sim 段, 状态取自 tracker-sim 的探测结果)
+class AggLinkStatus:
+
+	def __init__(self, state=SimState.OFFLINE, up=0.0, down=0.0, latency=0, channels=0):
+		self.state = state											# 聚合链路状态, 取值见 AGG_STATE_COLORS
+		self.up = up												# 聚合上行速率(Mbps), 为在线链路之和
+		self.down = down											# 聚合下行速率(Mbps), 单位同上
+		self.latency = latency										# 聚合时延(ms), 取聚合隧道的时延
+		self.channels = channels									# 参与聚合的链路数量
+
+	# 由链路集合与聚合隧道采集: 隧道可达即在线
+	@classmethod
+	def collect(cls, links, tunnel):
+		return cls(SimState.ONLINE if tunnel.reachable else SimState.OFFLINE,
+			links.up, links.down, tunnel.latency, links.online_count)
+
+	# 转成串口屏指令序列(不含 FF FF FF), 顺序即下发顺序
+	def commands(self):
+		return [
+			"TextAggSta.pco=%d" % AGG_STATE_COLORS[self.state],
+			'TextAggSta.txt="%s"' % self.state.value,				# 下发枚举值(中文), 不是枚举本身
+			"FloatAggTx.val=%d" % mbps_to_val(self.up),
+			"FloatAggRx.val=%d" % mbps_to_val(self.down),
+			"NumAggRtt.val=%d" % self.latency,
+			"NumAggChannel.val=%d" % self.channels,
+		]
 
 
 # 单张基站卡片的状态(4G / 5G 各一张)
@@ -200,10 +229,10 @@ def _read_links():
 			sim = sims[index]
 			up, down = _meter.rates(sim.dev)	# 没拨号的链路流量为 0, 速率自然是 0
 			links.append(LinkStatus(sim.name, "SIM", sim.operator, sim.state, sim.rsrp,
-				up, down, 0, sim.internet))		# TODO 时延: 逐链路 uci openmptcprouter.<simN>.latency
+				up, down, 0))				# TODO 时延: 逐链路 uci openmptcprouter.<simN>.latency
 		else:
 			links.append(LinkStatus("sim%d" % (index + 1), "SIM", "",
-				STATE_DISABLED, None, 0.0, 0.0, 0, False))
+				SimState.DISABLED, None, 0.0, 0.0, 0))
 	return links
 
 
@@ -216,12 +245,12 @@ def _read_bts():
 	]
 
 
-# 聚合模式页面的全部状态: 一个链路集合 + 一个隧道状态 + 一个基站卡片数组
+# 聚合模式页面的全部状态: 一个聚合链路状态卡片 + 一个链路集合 + 一个基站卡片数组
 class AggregateStatus:
 
 	def __init__(self):
+		self.agg = AggLinkStatus()			# 顶部聚合链路状态卡片, 口径见 AggLinkStatus
 		self.links = LinkList()				# 所有链路(内部一个数组), 顺序即屏上从上到下的顺序
-		self.tunnel = TunnelStatus(False, 0)	# 聚合隧道的探测结果, 与网页 ModeAggregate 同一数据源
 		self.bts = []						# 所有基站卡片(list[BtsStatus]), 顺序同上
 
 	# 采集当前状态并返回实例
@@ -229,32 +258,18 @@ class AggregateStatus:
 	def collect(cls):
 		status = cls()
 		status.links = LinkList(_read_links())		# 真实数据, 来源见 siminfo.py
-		status.tunnel = read_tunnel()
+		status.agg = AggLinkStatus.collect(status.links, read_tunnel())
 		status.bts = _read_bts()
 		return status
 
 	# 转成串口屏指令序列(不含 FF FF FF), 返回列表, 顺序即下发顺序
 	# 不含切页指令: 进入聚合模式页由 lcd.py 在握手时下发 agg_mode=1 完成, 见 docs/018-屏幕.md 第4节
 	def commands(self):
-		commands = self._agg_commands()				# 顶部的聚合链路状态卡片
+		commands = self.agg.commands()				# 顶部的聚合链路状态卡片
 		for index, link in enumerate(list(self.links)[:LINK_SLOTS]):
 			commands.extend(self._link_commands(index, link))
 		commands.extend(self._bts_commands())		# 右侧的基站状态卡片
 		return commands
-
-	# 生成聚合链路状态卡片(页面顶部)的全部指令
-	# 取值口径: 状态与时延取聚合隧道, 上下行取在线链路之和, 链路数取能上网的链路条数
-	def _agg_commands(self):
-		tunnel = self.tunnel
-		state = STATE_ONLINE if tunnel.reachable else STATE_OFFLINE
-		return [
-			"TextAggSta.pco=%d" % AGG_STATE_COLORS[state],
-			'TextAggSta.txt="%s"' % state,
-			"FloatAggTx.val=%d" % mbps_to_val(self.links.up),
-			"FloatAggRx.val=%d" % mbps_to_val(self.links.down),
-			"NumAggRtt.val=%d" % tunnel.latency,
-			"NumAggChannel.val=%d" % self.links.internet_count,
-		]
 
 	# 生成第 index 个卡槽(从 0 起)的全部指令; 卡槽号从 1 起, 控件名即 "PicSim/TextSim/FloatSim/NumSim + 卡槽号 + 后缀"
 	# 只有在线链路有速率与时延读数, 其余状态一律下发 0

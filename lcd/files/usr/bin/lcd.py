@@ -77,23 +77,23 @@ RETURN_CODES = {
 
 # 解析指令并路由到相应的处理函数
 def handle_frame(fd, frame):
-	if not frame:													# 空帧(只有结束符)直接忽略
+	if not frame:																# 空帧(只有结束符)直接忽略
 		return
 
-	if len(frame) == 1 and frame[0] in RETURN_CODES:				# 单字节帧是屏的回报, 不是指令
+	if len(frame) == 1 and frame[0] in RETURN_CODES:							# 单字节帧是屏的回报, 不是指令
 		log("Screen Return: 0x%02x %s" % (frame[0], RETURN_CODES[frame[0]]))
 		return
 
-	text = frame.decode("utf-8", "replace")							# 整帧就是一条字符串指令
-	log("Recv Cmd: %s" % text)										# 先记录收到的指令, 便于对照屏侧工程排查
-	handler = TEXT_HANDLERS.get(text)								# 查指令分发表(定义见"指令处理"一节)
-	if handler is None:												# 未登记的指令: 连同原始字节记下来
+	text = frame.decode("utf-8", "replace")										# 整帧就是一条字符串指令
+	log("Recv Cmd: %s" % text)													# 先记录收到的指令, 便于对照屏侧工程排查
+	handler = TEXT_HANDLERS.get(text)											# 查指令分发表(定义见"指令处理"一节)
+	if handler is None:															# 未登记的指令: 连同原始字节记下来
 		log("Unknown Cmd: %r len=%d hex=%s" % (text, len(frame), frame.hex()))
 		return
 
 	try:
-		handler(fd, text)											# 统一签名: 处理函数自己解释指令
-	except Exception as err:										# 单条指令出错不应拖垮整个进程
+		handler(fd, text)														# 统一签名: 处理函数自己解释指令
+	except Exception as err:													# 单条指令出错不应拖垮整个进程
 		log("Handle Cmd %s failed: %s" % (text, err))
 
 
@@ -115,7 +115,7 @@ def handle_booting(fd, text):
 def handle_ready_report(fd, text):
 	log("Screen ready, entering main page")
 
-# 在直连模式页面时,获取直连模式页面的所有状态
+# 在直连模式页面时,获取直连模式页面的所有状态,详见modeDirect.py
 def handle_GetDirectModeStatus(fd, text):
 	for command in DirectStatus.collect().commands():			# 采集状态并生成待下发的指令序列
 		uart_send(fd, command)									# 逐条下发
@@ -157,13 +157,19 @@ def handle_reboot(fd, text):
 # 新增指令只需在此登记一行并写一个同签名的处理函数, handle_frame 无需改动
 # 注意 prints 无结束符, 屏侧需紧跟一条 printh ff ff ff 才能被 FrameParser 切成帧
 TEXT_HANDLERS = {
+	# 开机动画页面
 	"Booting": handle_booting,										# 等待 BootFlag 握手, 仍在播动画
 	"Ready": handle_ready_report,									# 握手完成, 准备进入主页
+	# 工程模式->直连模式页面
 	"GetDirectModeStatus": handle_GetDirectModeStatus,				# 在直连模式页面时,获取直连模式页面的所有状态
+	# 工程模式->聚合模式页面
 	"GetAggModeStatus": handle_GetAggregateStatus,					# 在聚合模式页面时,获取聚合模式页面的所有状态
+	# 版本信息页面
 	"GetVersion": handle_GetVersion,								# 在版本信息页面时,获取版本信息
+	# 系统设置页面
 	"GetServerAddr": handle_GetSystemSettings,						# 在系统设置页面时,获取管理平台地址与状态上报频率
 	"GetReportFre": handle_GetSystemSettings,						# 同上, 两个查询一并下发整页状态
+	# 运维模式首页
 	"GetAllStatus": handle_GetAllStatus,							# 在运维模式->链路设置页面时,获取所有链路与基站状态
 	# 运维模式->链路设置->SIMx链路: 5 个卡槽各一条查询指令, 处理函数相同(卡槽号在指令里)
 	"GetSim1Status": handle_GetSimxStatus,
@@ -171,6 +177,7 @@ TEXT_HANDLERS = {
 	"GetSim3Status": handle_GetSimxStatus,
 	"GetSim4Status": handle_GetSimxStatus,
 	"GetSim5Status": handle_GetSimxStatus,
+	# 重启页面
 	"Reboot": handle_reboot,										# 页脚「重启设备」二级确认后, 重启本机
 }
 
@@ -182,7 +189,7 @@ def sleep_until_stopped(seconds):
 
 # 主循环
 def run_loop(fd):
-	parser = FrameParser()											# 每次(重)开串口都用新解析器, 丢弃旧残留
+	parser = FrameParser()											# 每次重开串口都用新解析器, 丢弃旧残留
 
 	while running:													# 收到退出信号后 running=False 即跳出
 		readable, _, _ = select.select([fd], [], [], READ_TIMEOUT)	# 最多等 READ_TIMEOUT 秒
@@ -190,7 +197,7 @@ def run_loop(fd):
 			data = os.read(fd, 4096)								# 一次最多读 4KB
 			if data:												# 有数据才继续解析
 				for frame in parser.feed(data):						# 按 FF FF FF 切帧
-					handle_frame(fd, frame)							# 逐帧处理
+					handle_frame(fd, frame)							# 逐帧处理,每一帧都是一个完整的命令
 
 # 退出进程
 def stop(signum, frame):

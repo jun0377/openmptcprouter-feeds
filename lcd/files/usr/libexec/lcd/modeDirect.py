@@ -18,8 +18,7 @@
 #   - 本模块无任何串口依赖, 可在开发机上直接 import 验证
 #
 
-from siminfo import (RateMeter, STATE_DIALING, STATE_DISABLED, STATE_NO_SIM,
-	STATE_OFFLINE, STATE_ONLINE, read_sims)
+from siminfo import RateMeter, SimState, read_sims
 
 # 直连模式只认 SIM4 / SIM5 两张卡(见 design.html 的 DIRECT_SIMS), 顺序即屏上从上到下的顺序
 # 名字取自 uci 的 sim 段名(sim4 / sim5), 与 /tmp/tracker-sim/<名字> 对应
@@ -29,9 +28,9 @@ SIM_NAMES = ("sim4", "sim5")
 #   PicSim4Op.pic       运营商图标      25 中国移动 / 24 中国联通 / 23 中国电信 / 145 未知
 #   PicSim4Online.pic   在线状态图标    30 在线 / 29 已禁用 / 28 未插卡 / 27 离线 / 26 拨号中
 #   PicSim4Rsrp.pic     信号格图标      36 满格 / 35 四格 / 34 三格 / 33 两格 / 32 一格 / 31 无服务
-#   TextSim4Rsrp.txt    信号强度文本, 有读数时是数值(如 "-101"), 读不到信号时是 "--"
-#   FloatSim4Tx.val     上行带宽, 单位为 0.01Mbps(如 12345 即 123.45Mbps)
-#   FloatSim4Rx.val     下行带宽, 单位同上
+#   TextSim4Rsrp.txt    信号强度文本	有读数时是数值(如 "-101"), 读不到信号时是 "--"
+#   FloatSim4Tx.val     上行带宽		单位为 0.01Mbps(如 12345 即 123.45Mbps)
+#   FloatSim4Rx.val     下行带宽		单位同上
 #   NumSim4Rtt.val      RTT 时延(ms)
 SIM_WIDGETS = {
 	"sim4": "Sim4",
@@ -39,20 +38,21 @@ SIM_WIDGETS = {
 }
 
 # 运营商 -> PicSimxOp 的图片号
+# key 为空串的那一项是"未知"图标: 读不到运营商(未插卡/已禁用)或表里没有的运营商都走它
 OPERATOR_PICS = {
 	"中国移动": 25,
 	"中国联通": 24,
 	"中国电信": 23,
+	"": 145,				# 未知运营商
 }
-UNKNOWN_OPERATOR_PIC = 145					# 读不到运营商时用"未知"图标
 
 # 在线状态 -> PicSimxOnline 的图片号(与聚合页同一套, 状态由 siminfo 采集)
 STATE_PICS = {
-	STATE_ONLINE: 30,
-	STATE_DISABLED: 29,
-	STATE_NO_SIM: 28,
-	STATE_OFFLINE: 27,
-	STATE_DIALING: 26,
+	SimState.ONLINE: 30,
+	SimState.DISABLED: 29,
+	SimState.NO_SIM: 28,
+	SimState.OFFLINE: 27,
+	SimState.DIALING: 26,
 }
 
 # RSRP 门限(dBm) -> PicSimxRsrp 的图片号, 由强到弱排列, 取第一个满足 rsrp >= 门限的档位
@@ -88,7 +88,7 @@ class SimLink:
 	def __init__(self, name, operator, state, rsrp, up, down, latency):
 		self.name = name					# SIM 卡名, 见 SIM_NAMES
 		self.operator = operator			# 运营商, 空串表示读不到(未插卡/已禁用)
-		self.state = state					# 在线状态, 取值见 STATE_PICS
+		self.state = state					# 在线状态, 取值见 siminfo.SimState
 		self.rsrp = rsrp					# 信号强度(dBm), None 表示读不到信号
 		self.up = up						# 上行速率(Mbps)
 		self.down = down					# 下行速率(Mbps)
@@ -97,7 +97,7 @@ class SimLink:
 	# 是否在线: 只有在线链路在屏上有速率与时延读数
 	@property
 	def online(self):
-		return self.state == STATE_ONLINE
+		return self.state is SimState.ONLINE
 
 
 # 速率计: 速率靠两次采样的字节数差分得到, 需跨次调用保存上一次的值, 所以放在模块级
@@ -108,21 +108,20 @@ _meter = RateMeter()
 class DirectStatus:
 
 	def __init__(self, sims=None):
-		self.sims = list(sims) if sims else []		# 所有 SIM 链路(list[SimLink]), 顺序即屏上顺序
+		self.sims = list(sims) if sims else []												# 所有 SIM 链路(list[SimLink]), 顺序即屏上顺序
 
 	# 采集当前状态并返回实例
 	@classmethod
 	def collect(cls):
-		sims = {sim.name: sim for sim in read_sims()}		# 真实数据, 来源见 siminfo.py
+		sims = {sim.name: sim for sim in read_sims()}										# 真实数据, 来源见 siminfo.py
 		links = []
 		for name in SIM_NAMES:
 			sim = sims.get(name)
-			if sim is None:					# 屏上留了卡槽但系统里没配这张卡
-				links.append(SimLink(name, "", STATE_DISABLED, None, 0.0, 0.0, 0))
+			if sim is None:																	# 屏上留了卡槽但系统里没配这张卡
+				links.append(SimLink(name, "", SimState.DISABLED, None, 0.0, 0.0, 0))
 				continue
-			up, down = _meter.rates(sim.dev)	# 没拨号的链路流量为 0, 速率自然是 0
-			links.append(SimLink(name, sim.operator, sim.state, sim.rsrp, up, down,
-				0))							# TODO 时延: uci openmptcprouter.<simN>.latency
+			up, down = _meter.rates(sim.dev)												# 没拨号的链路流量为 0, 速率自然是 0
+			links.append(SimLink(name, sim.operator, sim.state, sim.rsrp, up, down, 0))		# TODO 时延: uci openmptcprouter.<simN>.latency
 		return cls(links)
 
 	# 转成串口屏指令序列(不含 FF FF FF), 返回列表, 顺序即下发顺序
@@ -139,7 +138,7 @@ class DirectStatus:
 		# 信号强度统一走 txt 下发字符串: 有读数是数值, 读不到信号是 "--"
 		rsrp_text = 'Text%sRsrp.txt="%s"' % (prefix, sim.rsrp if sim.rsrp is not None else "--")
 		return [
-			"Pic%sOp.pic=%d" % (prefix, OPERATOR_PICS.get(sim.operator, UNKNOWN_OPERATOR_PIC)),
+			"Pic%sOp.pic=%d" % (prefix, OPERATOR_PICS.get(sim.operator, OPERATOR_PICS[""])),
 			"Pic%sOnline.pic=%d" % (prefix, STATE_PICS[sim.state]),
 			"Pic%sRsrp.pic=%d" % (prefix, rsrp_pic(sim.rsrp)),
 			rsrp_text,

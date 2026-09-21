@@ -22,30 +22,33 @@
 # 本模块不碰串口、不写配置, 能在开发机上直接 import 验证(缺 uci 时读出空数据)
 #
 
-import json									# 解析 tracker-sim / tracker-ovpn 写的 JSON
-import os									# 读状态文件与 sysfs 字节数
-import re									# 过滤 simN 形式的 uci 段名
-import time									# 差分算速率, 判断状态是否过期
+from enum import Enum						                # 链路状态用枚举
+import json									                # 解析 tracker-sim / tracker-ovpn 写的 JSON
+import os									                # 读状态文件与 sysfs 字节数
+import re									                # 过滤 simN 形式的 uci 段名
+import time									                # 差分算速率, 判断状态是否过期
 
-from uci import uci_show					# 一次读回整个 uci 配置
+from uci import uci_show					                # 一次读回整个 uci 配置
 
-SIM_CONFIG = "sim"							# SIM 卡配置所在的 uci 配置文件
-OMR_CONFIG = "openmptcprouter"				# omr-tracker 记录各链路探测结果的 uci 配置文件
-TRACKER_DIR = "/tmp/tracker-sim"			# tracker-sim 的状态目录, 每个卡一个子目录
+SIM_CONFIG = "sim"							                # SIM 卡配置所在的 uci 配置文件
+OMR_CONFIG = "openmptcprouter"				                # omr-tracker 记录各链路探测结果的 uci 配置文件
+TRACKER_DIR = "/tmp/tracker-sim"			                # tracker-sim 的状态目录, 每个卡一个子目录
 TRACKER_TUNNEL = "/tmp/tracker-ovpn/tracker-ovpn.json"		# 聚合隧道的探测结果
-NET_STAT_DIR = "/sys/class/net"				# 网口统计目录, 用于读收发字节数
-STALE_SECONDS = 30							# 状态文件超过该秒数未更新即视为失效(每 5 秒更新一轮)
-OMR_STATE_UP = "up"							# omr-tracker 判定该链路能上网
-TUNNEL_OK = "OK"							# omr-tracker 判定聚合隧道可达
+NET_STAT_DIR = "/sys/class/net"				                # 网口统计目录, 用于读收发字节数
+STALE_SECONDS = 30							                # 状态文件超过该秒数未更新即视为失效(每 5 秒更新一轮)
+OMR_STATE_UP = "up"							                # omr-tracker 判定该链路能上网
+TUNNEL_OK = "OK"							                # omr-tracker 判定聚合隧道可达
 
-SIM_NAME_PATTERN = re.compile(r"^sim\d+$")	# uci 里 SIM 段名形如 sim1 / sim2
+SIM_NAME_PATTERN = re.compile(r"^sim\d+$")	                # uci 里 SIM 段名形如 sim1 / sim2
 
 # 链路状态: 与串口屏上的五张状态图一一对应(见各页面模块的 STATE_PICS)
-STATE_ONLINE = "在线"						# 拨号成功, 有 IP
-STATE_DIALING = "拨号中"					# 卡就绪、有服务, 但还没拿到 IP
-STATE_OFFLINE = "离线"						# 无服务 / 读不到数据 / 模组不在
-STATE_NO_SIM = "未插卡"						# 卡没插好或被移除
-STATE_DISABLED = "已禁用"					# uci 里 enable 未开
+# 枚举值即屏上显示的中文, 需要给屏下发文字时取 state.value(如聚合页的 TextAggSta.txt)
+class SimState(Enum):
+	ONLINE = "在线"							                # 拨号成功, 有 IP
+	DIALING = "拨号中"						                # 卡就绪、有服务, 但还没拿到 IP
+	OFFLINE = "离线"						                # 无服务 / 读不到数据 / 模组不在
+	NO_SIM = "未插卡"						                # 卡没插好或被移除
+	DISABLED = "已禁用"						                # uci 里 enable 未开
 
 # ICCID 前 6 位(IIN) -> 运营商, 与 oui-app-home 的 sim.lua 保持一致(仅中国大陆)
 IIN_OPERATORS = {
@@ -145,26 +148,26 @@ class SimInfo:
 		self.reachable = reachable			# omr-tracker 判定能上网(从该链路 ping 通服务器)
 		self.state = self._resolve_state()
 
-	# 链路状态, 按优先级判定, 取值见 STATE_*
+	# 链路状态, 按优先级判定, 取值见 SimState
 	def _resolve_state(self):
 		if not self.enable:											# 用户关了这张卡
-			return STATE_DISABLED
+			return SimState.DISABLED
 		if not self.module_exist:									# 模组不在(没插或没上电)
-			return STATE_OFFLINE
+			return SimState.OFFLINE
 		if self.stale:												# 数据太久没更新, 不报在线
-			return STATE_OFFLINE
+			return SimState.OFFLINE
 		if "not Inserted" in self.sim_status or "removed" in self.sim_status:
-			return STATE_NO_SIM
+			return SimState.NO_SIM
 		if "Initialized" in self.sim_status or "Ready" in self.sim_status:
 			if self.ipv4:											# 卡就绪且有地址 = 在线
-				return STATE_ONLINE
-			return STATE_DIALING if self.service else STATE_OFFLINE
-		return STATE_OFFLINE										# 初始化中/锁卡/卡错误等
+				return SimState.ONLINE
+			return SimState.DIALING if self.service else SimState.OFFLINE
+		return SimState.OFFLINE										# 初始化/锁卡/卡错误等
 
-	# 是否在线: 各页面按同一口径判断, 不必自己去比字符串
+	# 是否在线: 各页面按同一口径判断, 不必自己去比枚举
 	@property
 	def online(self):
-		return self.state == STATE_ONLINE
+		return self.state is SimState.ONLINE
 
 	# 拨号成功且能上网: 先要在线(拿到 IP), 再要 omr-tracker 判定这条链路能 ping 通服务器
 	@property
@@ -255,7 +258,7 @@ def _read_sim(name, options, omr):
 		rsrp = _rsrp(hcsq, monsc),
 		reachable = omr.get("state", "") == OMR_STATE_UP,
 	)
-	if info.state in (STATE_DISABLED, STATE_NO_SIM) or stale:		# 卡不可用/数据过期时不报信号
+	if info.state in (SimState.DISABLED, SimState.NO_SIM) or stale:	# 卡不可用/数据过期时不报信号
 		info.rsrp = None
 	return info
 
