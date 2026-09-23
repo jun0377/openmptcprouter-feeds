@@ -235,10 +235,19 @@ mwan3_balance_cleanup_masquerade() {
 stop_mode_balance() {
 	mwan3_balance_log "stop balance mode"
 
-# 	mwan3_balance_cleanup_masquerade
+	# mwan3_balance_cleanup_masquerade
 
-	/etc/init.d/mwan3 stop >/dev/null 2>&1
+	# 仅当 mwan3 服务存在且正在运行时才停止, 否则其 stop_service 会照常清空 id<=60 的路由表
+	if [ -x /etc/init.d/mwan3 ] && /etc/init.d/mwan3 running; then
+		/etc/init.d/mwan3 stop >/dev/null 2>&1
+	else
+		mwan3_balance_log "mwan3 not running, skip stop"
+	fi
+
 	mwan3_balance_restore_config
+
+	# bugfix-恢复被误删的路由
+	/etc/init.d/mptcp reload
 }
 
 # 负载均衡模式主入口：停止其他模式，生成配置并重启 mwan3 使其生效。
