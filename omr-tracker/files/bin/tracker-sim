@@ -475,10 +475,12 @@ function atcmd_pci_auto_select_finish
 # 探测参数: 主循环约5秒一轮, 单轮探测总耗时必须受控, 故超时取最小值并逐层短路
 RTNS_PING_TIMEOUT=1          # ping总超时(秒)
 RTNS_PING_COUNT=2            # ping包数, 非100%丢包即视为通(容忍单包丢失)
-RTNS_HTTPING_TIMEOUT=1       # httping超时(秒)
+RTNS_HTTPING_TIMEOUT=3       # httping超时(秒); -t为等待响应的读超时, 响应超过该值即统计为100% failed;
+                             # 蜂窝链路上TLS握手+响应常超过1秒, 取1秒会误判(api unreachable), 故放宽到3秒
 RTNS_TARGET_TRIES=2          # 互联网目标最多尝试几个
 RTNS_DEFAULT_PORT=65500      # VPS服务器默认端口(openmptcprouter.server.port)
 RTNS_API_TEST=1              # VPS API层探测开关, 暂不提供UCI配置, 默认开启
+RTNS_ROUTE_METRIC=42760      # 探测临时主机路由的专用metric, 用于标记并精确增删这条路由, 避免误删其它路由
 
 # 解析ping输出中的平均RTT(ms), 兼容 iputils 与 busybox 两种输出格式
 function rtns_ping_rtt
@@ -502,20 +504,24 @@ function rtns_ping
     [ -z "$dev" ] && return 1
 
     # NCM/3G/QMI 接口走策略路由, 默认路由未必指向本接口, 需临时添加主机路由;
-    # 仅在添加成功时才删除, 避免误删 netifd 已有的路由
+    # 路由只写本链路自己的策略表(见 update_realtime_net_status 的 RTNS_TABLE), 不写主表, 不影响其它链路/业务;
+    # 带专用 metric 做标记, 增删都按这个 metric 精确匹配, 不会误删 netifd 已有的路由
     local src_opt=""
     local table_opt=""
-    local added=0
     [ -n "$src" ] && src_opt="src $src"
     [ -n "$table" ] && [ "$table" != "main" ] && table_opt="table $table"
-    if [ -n "$gw" ]; then
-        ip route add "$host" via "$gw" dev "$dev" $src_opt $table_opt >/dev/null 2>&1 && added=1
+    if [ -n "$gw" ] && [ -n "$table_opt" ]; then
+        # 先按专用 metric 清掉上一轮可能残留的探测路由(如上轮进程被杀的异常场景)
+        ip route del "$host" dev "$dev" $table_opt metric "$RTNS_ROUTE_METRIC" >/dev/null 2>&1
+        ip route add "$host" via "$gw" dev "$dev" $src_opt $table_opt metric "$RTNS_ROUTE_METRIC" >/dev/null 2>&1
     fi
 
     # SIM侧网口不做严格的源地址绑定(-B), 与 omr-tracker 对 3g/qmi/ncm 的处理一致
     local ret=$(ping -I "$dev" -w "$timeout" -c "$count" "$host" 2>&1)
 
-    [ "$added" = "1" ] && ip route del "$host" via "$gw" dev "$dev" $src_opt $table_opt >/dev/null 2>&1
+    # 无条件按专用 metric 清理: 即使上面 add 因残留而 EEXIST 失败, 这里也能把残留清掉,
+    # 避免残留把该主机的流量长期固定在错误链路上
+    [ -n "$table_opt" ] && ip route del "$host" dev "$dev" $table_opt metric "$RTNS_ROUTE_METRIC" >/dev/null 2>&1
 
     # 丢包率: 不能用固定字段位置取值, iputils 为 "2 received, 0% packet loss",
     # busybox 为 "2 packets received, 0% packet loss", 字段数不同, 这里取"%"前的数字
@@ -654,6 +660,7 @@ function rtns_save
     _log "realtime_net_status: ${status} rtt:${rtt}ms loss:${loss}% gw:${RTNS_GW:-none} server:${server:-none}"
 }
 
+# 更新sim卡的实时网络状态
 function update_realtime_net_status
 {
     RTNS_DEV="" RTNS_SRC="" RTNS_GW="" RTNS_TABLE=""
@@ -662,43 +669,47 @@ function update_realtime_net_status
     RTNS_SERVER_ADDR="" RTNS_SERVER_PORT="" RTNS_SERVER_LOSS="" RTNS_SERVER_RTT=""
     RTNS_GW_OK=0 RTNS_INET_OK=0 RTNS_SERVER_OK=0 RTNS_SERVER_CFG=0 RTNS_API_OK=0
 
-    # 1. 前置检查: SIM是否就绪
+    # SIM是否就绪
     echo "${SIM_STATUS}" | grep -qE "SIM Initialized|SIM Ready" || {
         rtns_save "sim not ready"
         return 1
     }
 
-    # 2. 前置检查: 接口是否up, 是否拿到IPv4
+    # 接口状态: ifstatus sim1
     local ifstat=$(ifstatus "$ifname" 2>/dev/null)
 
+    # 获取对应的物理网口
     RTNS_DEV=$(echo "$ifstat" | jsonfilter -q -e '@["l3_device"]' | tr -d '\n')
     [ -z "$RTNS_DEV" ] && RTNS_DEV="$interface"
 
+    # 获取网口IP
     RTNS_SRC=$(echo "$ifstat" | jsonfilter -q -e '@["ipv4-address"][0].address' | tr -d '\n')
     [ -z "$RTNS_SRC" ] && [ -n "$RTNS_DEV" ] && RTNS_SRC=$(ip -4 -br addr ls dev "$RTNS_DEV" 2>/dev/null | awk -F'[ /]+' '{print $3}' | head -n 1)
     [ -z "$RTNS_SRC" ] && RTNS_SRC="$SIM_IPv4"
 
+    # 网口是否up
     if [ "$(echo "$ifstat" | jsonfilter -q -e '@.up')" != "true" ] || [ -z "$RTNS_SRC" ] || [ -z "$RTNS_DEV" ]; then
         rtns_save "no ip"
         return 1
     fi
-
-    # 3. 取接口网关(uci -> 活动路由 -> 非活动路由); 点对点接口可能没有网关, 此时网关层直接视为通过
-    RTNS_GW=$(uci -q get "network.$ifname.gateway")
-    if [ -z "$RTNS_GW" ] || [ "$RTNS_GW" = "0.0.0.0" ]; then
-        RTNS_GW=$(echo "$ifstat" | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d '\n')
-    fi
-    if [ -z "$RTNS_GW" ] || [ "$RTNS_GW" = "0.0.0.0" ]; then
-        RTNS_GW=$(echo "$ifstat" | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d '\n')
-    fi
-    [ "$RTNS_GW" = "0.0.0.0" ] && RTNS_GW=""
 
     # 探测目标需要走本接口的策略路由表, 否则探测包可能从别的接口出去
     RTNS_TABLE=$(uci -q get "network.$ifname.ip4table")
     [ -z "$RTNS_TABLE" ] && RTNS_TABLE=$(uci -q get "network.$ifname.metric")
     [ -z "$RTNS_TABLE" ] && RTNS_TABLE="main"
 
-    # 4. 第一层: 网关(仅用于诊断, 3g/qmi/ncm 的网关通常不回ICMP, 不作为判定依据)
+    # 获取接口网关(活动路由 -> 非活动路由 -> 策略路由表); 点对点接口可能没有网关, 此时网关层直接视为通过
+    RTNS_GW=$(echo "$ifstat" | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d '\n')
+    if [ -z "$RTNS_GW" ] || [ "$RTNS_GW" = "0.0.0.0" ]; then
+        RTNS_GW=$(echo "$ifstat" | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d '\n')
+    fi
+    # ifstatus 里拿不到默认路由时, 从本链路的策略路由表里取(如 ip route show table 22 的 default via)
+    if { [ -z "$RTNS_GW" ] || [ "$RTNS_GW" = "0.0.0.0" ]; } && [ "$RTNS_TABLE" != "main" ]; then
+        RTNS_GW=$(ip route show table "$RTNS_TABLE" 2>/dev/null | awk '/^default via/ {print $3; exit}')
+    fi
+    [ "$RTNS_GW" = "0.0.0.0" ] && RTNS_GW=""
+
+    # 检查网关是否可达(仅用于诊断, 3g/qmi/ncm 的网关通常不回ICMP, 不作为判定依据)
     if [ -n "$RTNS_GW" ]; then
         rtns_ping "$RTNS_GW" "$RTNS_DEV" "" "" "" "$RTNS_PING_TIMEOUT" "$RTNS_PING_COUNT" && {
             RTNS_GW_OK=1
@@ -708,9 +719,12 @@ function update_realtime_net_status
         RTNS_GW_OK=1
     fi
 
-    # 5. 第二层: 互联网目标(取前几个, 任一可达即可)
-    local hosts=$(uci -q get omr-tracker.defaults.hosts)
-    [ -z "$hosts" ] && hosts="223.5.5.5 119.29.29.29"
+    # 互联网目标(取前几个, 任一可达即可); 优先用本卡专属检测地址(专网卡可能需特殊地址)
+    # 本卡与全局均未配置检测目标时, 跳过该层探测(inet_skip=1), 互联网层不参与判定
+    local hosts=$(uci -q get sim.$ifname.detectionHosts)
+    [ -z "$hosts" ] && hosts=$(uci -q get omr-tracker.defaults.hosts)
+    local inet_skip=0
+    [ -z "$hosts" ] && inet_skip=1
     local target
     local n=0
     for target in $hosts; do
@@ -725,31 +739,36 @@ function update_realtime_net_status
         }
     done
 
-    # 6. 判定: 网关和互联网都不通, 根因在本地链路
+    # 网关和互联网都不通, 根因在本地链路
     if [ "$RTNS_GW_OK" != "1" ] && [ "$RTNS_INET_OK" != "1" ]; then
         rtns_save "gateway unreachable"
         return 1
     fi
-    # 互联网目标全不通, 欠费SIM的典型表现
-    if [ "$RTNS_INET_OK" != "1" ]; then
+
+    # 互联网目标全不通, 欠费SIM的典型表现(检测目标未配置时该层已跳过, 不参与判定)
+    if [ "$inet_skip" != "1" ] && [ "$RTNS_INET_OK" != "1" ]; then
         rtns_save "internet unreachable"
         return 1
     fi
 
-    # 7. 第三层: VPS服务器(未配置服务器时该层跳过, 以互联网可达为准)
-    config_load openmptcprouter
-    config_foreach rtns_server_ping server
-    if [ "$RTNS_SERVER_OK" != "1" ] && [ "$RTNS_SERVER_CFG" = "1" ]; then
-        rtns_save "server unreachable"
-        return 1
-    fi
-
-    # 8. 第四层: VPS API(服务端口)
-    if [ "$RTNS_API_TEST" = "1" ] && [ "$RTNS_SERVER_CFG" = "1" ]; then
-        config_foreach rtns_server_httping server
-        if [ "$RTNS_API_OK" != "1" ]; then
-            rtns_save "api unreachable"
+    # VPS服务器/VPS API 仅在聚合模式下探测(单模等其他模式报文不经VPS, 该两层不适用)
+    local mode=$(uci -q get global.global.mode)
+    if [ "$mode" = "aggregate" ]; then
+        # VPS服务器(未配置服务器时该层跳过, 以互联网可达为准)
+        config_load openmptcprouter
+        config_foreach rtns_server_ping server
+        if [ "$RTNS_SERVER_OK" != "1" ] && [ "$RTNS_SERVER_CFG" = "1" ]; then
+            rtns_save "server unreachable"
             return 1
+        fi
+
+        # VPS API(服务端口)
+        if [ "$RTNS_API_TEST" = "1" ] && [ "$RTNS_SERVER_CFG" = "1" ]; then
+            config_foreach rtns_server_httping server
+            if [ "$RTNS_API_OK" != "1" ]; then
+                rtns_save "api unreachable"
+                return 1
+            fi
         fi
     fi
 
