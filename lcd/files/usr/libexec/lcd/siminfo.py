@@ -14,6 +14,7 @@
 #       hcsq        信号强度(JSON, rsrp_dbm 为 RSRP; sysmode 为 NOSERVICE 表示无服务)
 #       monsc       当前驻留小区(hcsq 读不到时用它的 rsrp 兜底)
 #       IPv4        拨号成功后的地址, 非空即认为在线
+#       realtime_net_status 实时探测结果(JSON), rtt_ms 为到服务器的时延, 逐链路时延取这里
 #       timestamp   写入时间, 用于判断这份数据是否已经失效
 #   /sys/class/net/<dev>/statistics/  收发字节数, 两次采样差分算出速率
 #   /tmp/tracker-ovpn/tracker-ovpn.json  聚合隧道(omrvpn)的探测结果, 见 read_tunnel()
@@ -118,6 +119,17 @@ def _rsrp(hcsq, monsc):
 		return None
 
 
+# 逐链路时延(ms): 取自 tracker-sim 的实时探测结果 realtime_net_status.rtt_ms
+# 探测判定这条链路不可用(欠费/服务器不通等)时 rtt_ms 可能是网关的读数, 没有意义, 一律按 0 处理
+def _latency(net):
+	if not net.get("usable"):
+		return 0
+	value = net.get("rtt_ms")
+	if not isinstance(value, (int, float)):
+		return 0
+	return int(value)
+
+
 # 运营商: plmn 里的名称优先, 为空时用 ICCID 前 6 位反推; 都取不到返回空串
 def _operator(plmn, iccid):
 	for key in ("long_name", "short_name", "spn_name"):
@@ -133,7 +145,7 @@ def _operator(plmn, iccid):
 class SimInfo:
 
 	def __init__(self, name, alias, enable, module_exist, dev, sim_status, ipv4,
-			service, stale, operator, rsrp, reachable):
+			service, stale, operator, rsrp, latency, reachable):
 		self.name = name					# uci 段名, 如 sim1
 		self.alias = alias					# 显示名, 如 5G-1
 		self.enable = enable				# uci 里是否启用
@@ -145,6 +157,7 @@ class SimInfo:
 		self.stale = stale					# 状态文件是否已失效
 		self.operator = operator			# 运营商, 空串表示读不到
 		self.rsrp = rsrp					# 信号强度(dBm), None 表示读不到
+		self.latency = latency				# 到服务器的时延(ms), 探测不可用时为 0
 		self.reachable = reachable			# omr-tracker 判定能上网(从该链路 ping 通服务器)
 		self.state = self._resolve_state()
 
@@ -242,6 +255,7 @@ def _read_sim(name, options, omr):
 	lines = _read_file(name, "interface").splitlines()				# 有多个网口时取第一个
 	hcsq = _read_json(name, "hcsq")
 	monsc = _read_json(name, "monsc")
+	net = _read_json(name, "realtime_net_status")
 	stale = _is_stale(_read_file(name, "timestamp"))
 	usb = options.get("usb", "")
 	info = SimInfo(
@@ -256,10 +270,12 @@ def _read_sim(name, options, omr):
 		stale = stale,
 		operator = _operator(_read_json(name, "plmn"), _read_file(name, "iccid")),
 		rsrp = _rsrp(hcsq, monsc),
+		latency = _latency(net),
 		reachable = omr.get("state", "") == OMR_STATE_UP,
 	)
-	if info.state in (SimState.DISABLED, SimState.NO_SIM) or stale:	# 卡不可用/数据过期时不报信号
+	if info.state in (SimState.DISABLED, SimState.NO_SIM) or stale:	# 卡不可用/数据过期时不报读数
 		info.rsrp = None
+		info.latency = 0
 	return info
 
 

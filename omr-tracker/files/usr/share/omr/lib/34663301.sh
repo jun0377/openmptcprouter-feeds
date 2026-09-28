@@ -993,6 +993,35 @@ function atcmd_lte_band_lock()
     return 0
 }
 
+# 优选小区探测文件路径
+# 探测结果仅本次运行有效, 保存在tmpfs中, 不写入UCI配置文件
+function atcmd_auto_pci_select_file()
+{
+    echo "/tmp/tracker-sim/${ifname}/autoPciSelect"
+}
+
+# 读取优选小区探测结果
+# 探测未完成时结果为空, 此时不做任何锁小区动作
+function atcmd_get_auto_pci_result()
+{
+    AUTO_NR_PCID="" AUTO_NR_BAND="" AUTO_NR_FREQ="" AUTO_NR_SCS=""
+    AUTO_LTE_PCID="" AUTO_LTE_BAND="" AUTO_LTE_FREQ=""
+
+    local select_file=$(atcmd_auto_pci_select_file)
+    [ -f "${select_file}" ] || return 0
+
+    AUTO_NR_PCID=$(jq -r '.result.nr.pci // empty' "${select_file}" 2>/dev/null)
+    AUTO_NR_BAND=$(jq -r '.result.nr.band // empty' "${select_file}" 2>/dev/null)
+    AUTO_NR_FREQ=$(jq -r '.result.nr.arfcn // empty' "${select_file}" 2>/dev/null)
+    AUTO_NR_SCS=$(jq -r '.result.nr.scs // empty' "${select_file}" 2>/dev/null)
+
+    AUTO_LTE_PCID=$(jq -r '.result.lte.pci // empty' "${select_file}" 2>/dev/null)
+    AUTO_LTE_BAND=$(jq -r '.result.lte.band // empty' "${select_file}" 2>/dev/null)
+    AUTO_LTE_FREQ=$(jq -r '.result.lte.arfcn // empty' "${select_file}" 2>/dev/null)
+
+    return 0
+}
+
 # 查询LTE 锁频 锁小区设置
 function atcmd_get_lte_lock()
 {
@@ -1673,6 +1702,9 @@ function dial
     local passwd=$(uci -q get sim.$ifname.passwd)
     atcmd_set_auth $1 $auth $user $passwd
 
+    # 优选小区: 探测完成后自动选出的小区, 优先于UCI中的手动锁小区配置
+    atcmd_get_auto_pci_result
+
     # 锁5G频段
     local nrBandLock=$(uci -q get sim.$ifname.nrBandLock)
     # 去掉前导的 n/N（如 n78 → 78）
@@ -1685,7 +1717,10 @@ function dial
     local nrPciScs=$(uci -q get sim.$ifname.nrPciScs)
     local nrPciForbidFlag=$(uci -q get sim.$ifname.nrPciForbidFlag)
 
-    if [ -n "$nrBandLock" ] && [ "$nrBandLock" != "unlocked" ]; then
+    if [ -n "${AUTO_NR_PCID}" ]; then
+        # 优选结果: 锁定自动选出的小区, 禁止切换与重选
+        atcmd_nr_pci_lock $1 1 "${AUTO_NR_BAND}" "${AUTO_NR_FREQ}" "${AUTO_NR_SCS}" "${AUTO_NR_PCID}"
+    elif [ -n "$nrBandLock" ] && [ "$nrBandLock" != "unlocked" ]; then
         atcmd_nr_band_lock $1 "$nrBandLock"
     elif [ -n "$nrPciLockEnable" ] && [ "$nrPciLockEnable" = "locked" ]; then
         atcmd_nr_pci_lock $1 "$nrPciForbidFlag" "$nrPciBand" "$nrPciFreq" "$nrPciScs" "$nrPciPcid"
@@ -1702,7 +1737,10 @@ function dial
     local ltePciForbidFlag=$(uci -q get sim.$ifname.ltePciForbidFlag)
     [ -z "$ltePciForbidFlag" ] && ltePciForbidFlag=0
 
-    if [ -n "$lteBandLock" ] && [ "$lteBandLock" != "unlocked" ]; then
+    if [ -n "${AUTO_LTE_PCID}" ]; then
+        # 优选结果: 锁定自动选出的小区, 禁止切换与重选
+        atcmd_lte_pci_lock $1 1 "${AUTO_LTE_BAND}" "${AUTO_LTE_FREQ}" "${AUTO_LTE_PCID}"
+    elif [ -n "$lteBandLock" ] && [ "$lteBandLock" != "unlocked" ]; then
         atcmd_lte_band_lock $1 "$lteBandLock"
     elif [ -n "$ltePciLockEnable" ] && [ "$ltePciLockEnable" = "locked" ]; then
         local ltePciPcid=$(uci -q get sim.$ifname.ltePciPcid)

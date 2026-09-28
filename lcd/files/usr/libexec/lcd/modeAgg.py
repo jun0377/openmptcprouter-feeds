@@ -229,7 +229,7 @@ def _read_links():
 			sim = sims[index]
 			up, down = _meter.rates(sim.dev)	# 没拨号的链路流量为 0, 速率自然是 0
 			links.append(LinkStatus(sim.name, "SIM", sim.operator, sim.state, sim.rsrp,
-				up, down, 0))				# TODO 时延: 逐链路 uci openmptcprouter.<simN>.latency
+				up, down, sim.latency))		# 时延取 tracker-sim 实时探测到的到服务器时延
 		else:
 			links.append(LinkStatus("sim%d" % (index + 1), "SIM", "",
 				SimState.DISABLED, None, 0.0, 0.0, 0))

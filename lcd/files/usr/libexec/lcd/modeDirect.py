@@ -121,7 +121,7 @@ class DirectStatus:
 				links.append(SimLink(name, "", SimState.DISABLED, None, 0.0, 0.0, 0))
 				continue
 			up, down = _meter.rates(sim.dev)												# 没拨号的链路流量为 0, 速率自然是 0
-			links.append(SimLink(name, sim.operator, sim.state, sim.rsrp, up, down, 0))		# TODO 时延: uci openmptcprouter.<simN>.latency
+			links.append(SimLink(name, sim.operator, sim.state, sim.rsrp, up, down, sim.latency))	# 时延取 tracker-sim 实时探测到的到服务器时延
 		return cls(links)
 
 	# 转成串口屏指令序列(不含 FF FF FF), 返回列表, 顺序即下发顺序

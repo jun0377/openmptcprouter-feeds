@@ -175,6 +175,588 @@ function check_dial
     }
 }
 
+# 优选小区策略, 探测过程中的小区信息保存到/tmp/tracker-sim/simx/autoPciSelect文件中
+# {
+#     "start_timestamp": 1790477989,        // 探测开始时间戳
+#     "stop_timestamp": 1790477389,         // 探测结束时间戳
+#     "timeout": 60,                        // 探测超时时间(秒), 取自UCI pciAutoSelectTimeout
+#     "pci_data": [                         // 保存每次探测结果
+#         {
+#             "timestamp": 1790477989, 
+#             "nr_pci": [{ "arfcn": "627264", "pci": "70", "rsrp": "-92","rsrq": "-10","sinr": "7"}],
+#             "lte_pci": [{ "arfcn": "1750", "pci": "223", "rsrp": "-99", "rsrq": "-11", "rxlev": "-66"}],
+#         },
+#         ...
+#     ],
+#     "result": {                           // 探测结束后的选优结果, 仅本次运行有效, 不写入UCI
+#         "nr": { "arfcn": "627264", "pci": "70", "band": "78", "scs": "1", "rsrp": "-92", "count": 8 },
+#         "lte": { "arfcn": "1750", "pci": "223", "band": "3", "rsrp": "-99", "count": 7 },
+#         "reason": "共探测12轮, 最稳定小区: NR 70(627264/n78) 8次, LTE 223(1750/b3) 7次"
+#     }
+# }
+function atcmd_pci_auto_select
+{
+    local select_file=$(atcmd_auto_pci_select_file)
+
+    # 2. 检查配置文件是否开启pciAutoSelect自动选择PCI, 未开启则复位探测文件并退出
+    local auto_select=$(uci -q get sim.$ifname.pciAutoSelect)
+    if [ "$auto_select" != "1" ] && [ "$auto_select" != "true" ]; then
+        [ -f "${select_file}" ] && {
+            rm -f "${select_file}"
+            _log "pci_auto_select: disabled, remove ${select_file}"
+        }
+        return 0
+    fi
+
+    local timeout=$(uci -q get sim.$ifname.pciAutoSelectTimeout)
+    [ -z "${timeout}" ] && timeout=60
+    local now=$(date +%s)
+
+    # 1. 检查autoPciSelect文件是否存在, 不存在说明是首次执行探测, 创建并开始计时
+    if [ ! -f "${select_file}" ]; then
+        mkdir -p "$(dirname ${select_file})"
+        jq -n --argjson start "${now}" --argjson timeout "${timeout}" \
+            '{start_timestamp:$start, stop_timestamp:0, timeout:$timeout, pci_data:[], result:{}}' \
+            > "${select_file}" || {
+            _log "pci_auto_select: create ${select_file} failed"
+            return 1
+        }
+        _log "pci_auto_select: start probe, timeout:${timeout}s"
+    fi
+
+    # 探测已结束则等待下次复位(重新开启或参数变更), 不再重复探测
+    [ "$(jq -r '.stop_timestamp // 0' ${select_file})" != "0" ] && return 0
+
+    # 3. 用文件中的start_timestamp配合pciAutoSelectTimeout检查是否探测超时
+    local start_ts=$(jq -r '.start_timestamp // 0' ${select_file})
+    local elapsed=$(( now - start_ts ))
+    if [ "${elapsed}" -lt "${timeout}" ]; then
+        # 未超时: 记录本轮探测到的驻留小区与所有相邻小区
+        atcmd_pci_auto_select_record "${now}" || return 1
+        _log "pci_auto_select: probing round $(jq '.pci_data | length' ${select_file}), remain $(( timeout - elapsed ))s"
+        return 0
+    fi
+
+    # 超时: 结束探测, 统计选优并锁小区
+    atcmd_pci_auto_select_finish "${now}" "${select_file}"
+}
+
+# 把每轮的nr_pci/lte_pci数组折叠成一行, 缩短文件长度便于查看(不改变JSON结构)
+function atcmd_pci_auto_select_fold
+{
+    local select_file=$1
+
+    awk '
+        /"(nr_pci|lte_pci)": \[$/ {
+            # 从数组起始行读到以]结尾的行, 去掉行首行尾空白后拼接成一行
+            line = $0
+            while ((getline l) > 0) {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", l)
+                line = line l
+                if (l ~ /^\](,?)$/) break
+            }
+            print line
+            next
+        }
+        { print }
+    ' "${select_file}" > "${select_file}.fold" && mv "${select_file}.fold" "${select_file}"
+}
+
+# 记录本轮探测结果: 当前驻留小区 + 所有相邻小区
+# 轮内按 频点:PCI 去重, PCI统一转成十进制(与UCI中的排除列表pciAutoSelectExclude一致)
+function atcmd_pci_auto_select_record
+{
+    local now=$1
+    local select_file=$(atcmd_auto_pci_select_file)
+
+    local round_data=$(jq -n -c \
+        --argjson ts "${now}" \
+        --argjson monsc "${SIM_MONSC:-null}" \
+        --argjson monnc "${SIM_MONNC:-null}" '
+        def hex2dec:
+            {"0":0,"1":1,"2":2,"3":3,"4":4,"5":5,"6":6,"7":7,"8":8,"9":9,
+             "a":10,"b":11,"c":12,"d":13,"e":14,"f":15} as $m
+            | ascii_downcase
+            | reduce (explode | map([.] | implode))[] as $c (0; . * 16 + ($m[$c] // 0));
+        def pci_dec: if . == null or . == "" then "" else hex2dec end;
+        def nr_cell: {arfcn: (.arfcn // ""), pci: (.pci | pci_dec | tostring), rsrp: (.rsrp // ""), rsrq: (.rsrq // ""), sinr: (.sinr // "")};
+        def lte_cell: {arfcn: (.arfcn // ""), pci: (.pci | pci_dec | tostring), rsrp: (.rsrp // ""), rsrq: (.rsrq // ""), rxlev: ((.rxlev // .rssi) // "")};
+        ($monsc // {}) as $sc | ($monnc // {}) as $nc
+        | {
+            timestamp: $ts,
+            nr_pci: ([(if $sc.rat == "NR/SA" then $sc.cell elif $sc.rat == "NR/NSA" then $sc.nr_cell else null end)] + ($nc.nr // [])
+                     | map(select(. != null and (.arfcn // "") != "")) | map(nr_cell) | unique_by(.arfcn + ":" + .pci)),
+            lte_pci: ([(if $sc.rat == "LTE" then $sc.cell elif $sc.rat == "NR/NSA" then $sc.lte_cell else null end)] + ($nc.lte // [])
+                     | map(select(. != null and (.arfcn // "") != "")) | map(lte_cell) | unique_by(.arfcn + ":" + .pci))
+        }') || {
+        _log "pci_auto_select: build round data failed"
+        return 1
+    }
+
+    jq --argjson round "${round_data}" '.pci_data += [$round]' "${select_file}" > "${select_file}.tmp" \
+        && mv "${select_file}.tmp" "${select_file}" \
+        && atcmd_pci_auto_select_fold "${select_file}"
+
+    return 0
+}
+
+# 统计并选出最稳定的小区
+# 参数: RAT NR/LTE, 排除的PCI列表(空格分隔), 统计文件
+# 输出: 频点 十进制PCI 频段 出现次数 最强RSRP (无可用小区时无输出)
+# 频段映射表按界面可选频段内置, 表外频段跳过
+function atcmd_pci_auto_select_pick
+{
+    local rat=$1
+    local exclude=$2
+    local stat_file=$3
+
+    awk -F'\t' -v rat="${rat}" -v excl="${exclude}" '
+        function arfcn_band(arfcn,   i, r) {
+            if (rat == "NR") {
+                for (i = 1; i <= nr_num; i++) {
+                    split(nr_range[i], r, ":")
+                    if ((arfcn + 0) >= (r[2] + 0) && (arfcn + 0) <= (r[3] + 0)) return r[1]
+                }
+            } else {
+                for (i = 1; i <= lte_num; i++) {
+                    split(lte_range[i], r, ":")
+                    if ((arfcn + 0) >= (r[2] + 0) && (arfcn + 0) <= (r[3] + 0)) return r[1]
+                }
+            }
+            return ""
+        }
+        BEGIN {
+            # 频段:频点下限:频点上限
+            nr_num = split("1:422000:432000 3:361000:376000 5:173800:178800 8:185000:192000 28:151600:160600 41:499200:537999 78:620000:653333", nr_range, " ")
+            lte_num = split("1:0:599 3:1200:1949 5:2400:2649 8:3450:3799 34:36200:36349 39:38250:38649 40:38650:39649 41:39650:41589", lte_range, " ")
+
+            n = split(excl, e, " ")
+            for (i = 1; i <= n; i++) {
+                if (e[i] != "") excl_set[e[i] + 0] = 1
+            }
+        }
+        $1 == rat {
+            # 5. 频段不在映射表内的小区直接跳过
+            if (arfcn_band($2) == "") next
+            key = $2 ":" $3
+            # 4. 出现次数越多说明越稳定
+            count[key]++
+            if ($4 != "" && (best[key] == "" || ($4 + 0) > (best[key] + 0))) best[key] = $4 + 0
+        }
+        END {
+            for (k in count) {
+                split(k, a, ":")
+                if ((a[2] + 0) in excl_set) continue
+                # 6. 取出现次数最多的, 并列时取RSRP最强的
+                if (pick == "" || count[k] > count[pick] || (count[k] == count[pick] && (best[k] + 0) > (best[pick] + 0))) pick = k
+            }
+            if (pick != "") {
+                split(pick, a, ":")
+                printf "%s\t%s\t%s\t%s\t%s\n", a[1], a[2], arfcn_band(a[1]), count[pick], best[pick] + 0
+            }
+        }' "${stat_file}"
+}
+
+# 探测结束: 统计选优, 记录结果并由netifd重拨时按结果锁小区
+function atcmd_pci_auto_select_finish
+{
+    local now=$1
+    local select_file=$2
+    local round_num=$(jq '.pci_data | length' "${select_file}")
+
+    # 5. 从UCI配置中获取被排除的小区pciAutoSelectExclude(十进制列表, 000为占位符)
+    local exclude_raw=""
+    config_get exclude_raw "$ifname" pciAutoSelectExclude
+    local exclude=""
+    local item
+    for item in ${exclude_raw}; do
+        # 000为占位符, 直接跳过
+        [ "${item}" = "000" ] && continue
+        # 去掉前导0(保留至少一位数字, 以免把有效的PCI 0丢掉), 非法值跳过
+        item=$(echo "${item}" | sed 's/^0*\([0-9]\)/\1/')
+        case "${item}" in ''|*[!0-9]*) continue ;; esac
+        exclude="${exclude} ${item}"
+    done
+
+    # 4/6. 统计所有小区在所有探测轮次中出现的次数, 并选出最稳定的小区
+    local stat_file="${select_file}.stat"
+    jq -r '.pci_data[] | (.nr_pci[]? | ["NR", .arfcn, .pci, .rsrp] | @tsv), (.lte_pci[]? | ["LTE", .arfcn, .pci, .rsrp] | @tsv)' \
+        "${select_file}" > "${stat_file}"
+
+    local nr_pick=$(atcmd_pci_auto_select_pick "NR" "${exclude}" "${stat_file}")
+    local lte_pick=$(atcmd_pci_auto_select_pick "LTE" "${exclude}" "${stat_file}")
+    rm -f "${stat_file}"
+
+    # 7. 输出日志
+    _log "pci_auto_select: probe done, rounds:${round_num} exclude:${exclude} nr:${nr_pick:-none} lte:${lte_pick:-none}"
+
+    # 拼装选优结果: 频点/PCI/频段/子载波间隔/RSRP/出现次数
+    local arfcn pci band scs count rsrp
+    local nr_json="null"
+    local lte_json="null"
+    if [ -n "${nr_pick}" ]; then
+        arfcn=$(echo "${nr_pick}" | cut -f1)
+        pci=$(echo "${nr_pick}" | cut -f2)
+        band=$(echo "${nr_pick}" | cut -f3)
+        count=$(echo "${nr_pick}" | cut -f4)
+        rsrp=$(echo "${nr_pick}" | cut -f5)
+        # 子载波间隔: 2400MHz以上(NR-ARFCN>=499200)为30KHz, 其余为15KHz
+        if [ "${arfcn}" -ge 499200 ]; then scs=1; else scs=0; fi
+        nr_json=$(jq -n -c --arg arfcn "${arfcn}" --arg pci "${pci}" --arg band "${band}" --arg scs "${scs}" --arg rsrp "${rsrp}" --argjson count "${count}" \
+            '{arfcn:$arfcn, pci:$pci, band:$band, scs:$scs, rsrp:$rsrp, count:$count}')
+    fi
+    if [ -n "${lte_pick}" ]; then
+        arfcn=$(echo "${lte_pick}" | cut -f1)
+        pci=$(echo "${lte_pick}" | cut -f2)
+        band=$(echo "${lte_pick}" | cut -f3)
+        count=$(echo "${lte_pick}" | cut -f4)
+        rsrp=$(echo "${lte_pick}" | cut -f5)
+        lte_json=$(jq -n -c --arg arfcn "${arfcn}" --arg pci "${pci}" --arg band "${band}" --arg rsrp "${rsrp}" --argjson count "${count}" \
+            '{arfcn:$arfcn, pci:$pci, band:$band, rsrp:$rsrp, count:$count}')
+    fi
+
+    local reason=$(jq -n -r --argjson rounds "${round_num}" --argjson nr "${nr_json}" --argjson lte "${lte_json}" '
+        if $nr == null and $lte == null then
+            "共探测\($rounds)轮, 无可锁定小区(小区均被排除或频段不在支持列表)"
+        else
+            "共探测\($rounds)轮, 最稳定小区: " +
+            ([(if $nr == null then empty else "NR \($nr.pci)(\($nr.arfcn)/n\($nr.band)) \($nr.count)次" end),
+              (if $lte == null then empty else "LTE \($lte.pci)(\($lte.arfcn)/b\($lte.band)) \($lte.count)次" end)] | join(", "))
+        end')
+
+    # 更新探测文件中的stop_timestamp与选优结果
+    jq --argjson stop "${now}" --argjson nr "${nr_json}" --argjson lte "${lte_json}" --arg reason "${reason}" \
+        '.stop_timestamp = $stop | .result = {timestamp:$stop, nr:$nr, lte:$lte, reason:$reason}' \
+        "${select_file}" > "${select_file}.tmp" && mv "${select_file}.tmp" "${select_file}"
+
+    atcmd_pci_auto_select_fold "${select_file}"
+
+    [ "${nr_json}" = "null" ] && [ "${lte_json}" = "null" ] && {
+        _log "pci_auto_select: no cell to lock, skip redial"
+        return 0
+    }
+
+    # 8. 锁小区: 由netifd重拨, dial()会读取本次选优结果后锁小区
+    # 探测期间不切换飞行模式, 超时后立即重拨一次
+    _log "pci_auto_select: redial ${ifname} to apply lock"
+    ( sleep 2; ifdown ${ifname}; sleep 2; ifup ${ifname} ) >/dev/null 2>&1 &
+
+    return 0
+}
+
+# 实时网络探测, 将实时网络状态写入到/tmp/tracker-sim/simx/realtime_net_status
+# 参照 omr-tracker 的分层思路, 按 本地网关 -> 互联网目标 -> VPS服务器 -> VPS API 逐层验证, 任一层失败即短路
+# 用途: 判断 SIM 卡是否"真的能上网"(欠费/限速场景下拨号会成功, 但用户面不通)
+# {
+#     "timestamp": "17:43:31",      // 本次探测时刻(时分秒)
+#     "ts": 1790477989,             // 同上, epoch 秒, 便于前端判断数据新鲜度
+#     "status": "ok",               // 状态, 见下方枚举
+#     "usable": true,               // 是否真实可用, 仅 ok 为 true
+#     "rtt_ms": 23,                 // 到服务器的平均延时(ms), 无服务器时依次退化为互联网目标/网关
+#     "gw_rtt_ms": 3,               // 到网关的平均延时(ms)
+#     "loss": 0,                    // 到探测目标的丢包率(%)
+#     "ifname": "sim1",
+#     "device": "eth2",
+#     "ipv4": "10.130.211.28",
+#     "gateway": "10.130.211.1",
+#     "target": "223.5.5.5",        // 本次探测使用的互联网目标
+#     "server": "1.2.3.4:65500",    // 本次探测使用的VPS服务器
+#     "httping": true               // VPS API层是否通过; null 表示未测试(未配置服务器)
+# }
+# 状态枚举:
+#     sim not ready        SIM未就绪(未插卡/未注册)
+#     no ip                接口未up 或 未拿到IPv4
+#     gateway unreachable  网关不通且互联网目标也不通, 根因在本地链路
+#     internet unreachable 网关通但互联网目标全不通, 欠费SIM的典型表现
+#     server unreachable   互联网通但所有VPS服务器都不可达
+#     api unreachable      服务器ICMP通但VPS服务端口不通
+#     ok                   全部通过
+#
+# 探测参数: 主循环约5秒一轮, 单轮探测总耗时必须受控, 故超时取最小值并逐层短路
+RTNS_PING_TIMEOUT=1          # ping总超时(秒)
+RTNS_PING_COUNT=2            # ping包数, 非100%丢包即视为通(容忍单包丢失)
+RTNS_HTTPING_TIMEOUT=1       # httping超时(秒)
+RTNS_TARGET_TRIES=2          # 互联网目标最多尝试几个
+RTNS_DEFAULT_PORT=65500      # VPS服务器默认端口(openmptcprouter.server.port)
+RTNS_API_TEST=1              # VPS API层探测开关, 暂不提供UCI配置, 默认开启
+
+# 解析ping输出中的平均RTT(ms), 兼容 iputils 与 busybox 两种输出格式
+function rtns_ping_rtt
+{
+    echo "$1" | sed -n 's@.*= *\([0-9.]*\)/\([0-9.]*\)/\([0-9.]*\).*@\2@p' | head -n 1 | cut -d. -f1
+}
+
+# 在指定接口上ping一个主机, 非100%丢包返回0
+# 结果通过 RTNS_LOSS(丢包率%) 与 RTNS_RTT(平均延时ms) 返回
+function rtns_ping
+{
+    local host="$1"
+    local dev="$2"
+    local gw="$3"
+    local src="$4"
+    local table="$5"
+    local timeout="$6"
+    local count="$7"
+
+    [ -z "$host" ] && return 1
+    [ -z "$dev" ] && return 1
+
+    # NCM/3G/QMI 接口走策略路由, 默认路由未必指向本接口, 需临时添加主机路由;
+    # 仅在添加成功时才删除, 避免误删 netifd 已有的路由
+    local src_opt=""
+    local table_opt=""
+    local added=0
+    [ -n "$src" ] && src_opt="src $src"
+    [ -n "$table" ] && [ "$table" != "main" ] && table_opt="table $table"
+    if [ -n "$gw" ]; then
+        ip route add "$host" via "$gw" dev "$dev" $src_opt $table_opt >/dev/null 2>&1 && added=1
+    fi
+
+    # SIM侧网口不做严格的源地址绑定(-B), 与 omr-tracker 对 3g/qmi/ncm 的处理一致
+    local ret=$(ping -I "$dev" -w "$timeout" -c "$count" "$host" 2>&1)
+
+    [ "$added" = "1" ] && ip route del "$host" via "$gw" dev "$dev" $src_opt $table_opt >/dev/null 2>&1
+
+    # 丢包率: 不能用固定字段位置取值, iputils 为 "2 received, 0% packet loss",
+    # busybox 为 "2 packets received, 0% packet loss", 字段数不同, 这里取"%"前的数字
+    RTNS_LOSS=$(echo "$ret" | sed -n 's/.*[^0-9]\([0-9]\+\)% packet loss.*/\1/p' | head -n 1)
+    RTNS_RTT=$(rtns_ping_rtt "$ret")
+
+    # 解析失败(如 ping 输出格式不匹配)时按不可达处理, 避免把异常结果误判为"通"
+    case "$RTNS_LOSS" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$RTNS_LOSS" != "100" ]
+}
+
+# 对目标做 httping 探测(HTTPS模式), 非100%失败返回0, 结果通过 RTNS_LOSS 返回
+function rtns_httping
+{
+    local host="$1"
+    local src="$2"
+
+    [ -z "$host" ] && return 1
+
+    local src_opt=""
+    [ -n "$src" ] && src_opt="-y $src"
+
+    local ret=$(httping -l "$host" $src_opt -t "$RTNS_HTTPING_TIMEOUT" -c 1 2>&1)
+
+    # 源地址绑定失败(接口未拿到地址等)时, 退回不绑定的方式重试一次
+    if [ -n "$src_opt" ] && echo "$ret" | grep -q "Address not available"; then
+        ret=$(httping -l "$host" -t "$RTNS_HTTPING_TIMEOUT" -c 1 2>&1)
+    fi
+
+    RTNS_LOSS=$(echo "$ret" | awk '/failed/ {gsub("%",""); print int($5)}' | tr -d '\n')
+
+    case "$RTNS_LOSS" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$RTNS_LOSS" != "100" ]
+}
+
+# 对单个VPS服务器执行ping探测, 遍历该server配置的所有IP, 任一可达即算通过
+function rtns_server_ping
+{
+    local sec="$1"
+    local disabled=$(uci -q get "openmptcprouter.$sec.disabled")
+    local ips=$(uci -q get "openmptcprouter.$sec.ip")
+    local port=$(uci -q get "openmptcprouter.$sec.port")
+
+    [ "$disabled" = "1" ] && return 0
+    [ -z "$ips" ] && return 0
+
+    [ -z "$port" ] && port="$RTNS_DEFAULT_PORT"
+    RTNS_SERVER_CFG=1
+
+    local ip
+    for ip in $ips; do
+        rtns_ping "$ip" "$RTNS_DEV" "$RTNS_GW" "$RTNS_SRC" "$RTNS_TABLE" "$RTNS_PING_TIMEOUT" "$RTNS_PING_COUNT" && {
+            RTNS_SERVER_OK=1
+            RTNS_SERVER_LOSS="$RTNS_LOSS"
+            RTNS_SERVER_RTT="$RTNS_RTT"
+            RTNS_SERVER_ADDR="$ip"
+            RTNS_SERVER_PORT="$port"
+            break
+        }
+    done
+
+    return 0
+}
+
+# 对单个VPS服务器的服务端口执行httping探测, 用于验证 VPS API 是否可用
+function rtns_server_httping
+{
+    local sec="$1"
+    local disabled=$(uci -q get "openmptcprouter.$sec.disabled")
+    local ips=$(uci -q get "openmptcprouter.$sec.ip")
+    local port=$(uci -q get "openmptcprouter.$sec.port")
+
+    [ "$disabled" = "1" ] && return 0
+    [ -z "$ips" ] && return 0
+
+    [ -z "$port" ] && port="$RTNS_DEFAULT_PORT"
+
+    local ip
+    for ip in $ips; do
+        rtns_httping "${ip}:${port}" "$RTNS_SRC" && {
+            RTNS_API_OK=1
+            break
+        }
+    done
+
+    return 0
+}
+
+# 组装探测结果并原子写入, 避免前端读到写了一半的文件
+function rtns_save
+{
+    local status="$1"
+    local usable="false"
+    [ "$status" = "ok" ] && usable="true"
+
+    # rtt_ms 优先取到服务器的延时, 其次互联网目标, 最后网关
+    local rtt="${RTNS_SERVER_RTT:-${RTNS_INET_RTT:-${RTNS_GW_RTT:-0}}}"
+    local loss="${RTNS_SERVER_LOSS:-${RTNS_INET_LOSS:-0}}"
+    local gw_rtt="${RTNS_GW_RTT:-0}"
+    case "$rtt" in ''|*[!0-9]*) rtt=0 ;; esac
+    case "$loss" in ''|*[!0-9]*) loss=0 ;; esac
+    case "$gw_rtt" in ''|*[!0-9]*) gw_rtt=0 ;; esac
+
+    local server=""
+    [ -n "$RTNS_SERVER_ADDR" ] && server="${RTNS_SERVER_ADDR}:${RTNS_SERVER_PORT}"
+
+    # httping: true-通过 false-不通过 null-未测试(未配置可用的服务器)
+    local httping="null"
+    if [ "$RTNS_API_TEST" = "1" ] && [ "$RTNS_SERVER_CFG" = "1" ]; then
+        if [ "$RTNS_API_OK" = "1" ]; then httping="true"; else httping="false"; fi
+    fi
+
+    local json=$(jq -n -c \
+        --arg timestamp "$(date +%H:%M:%S)" \
+        --argjson ts "$(date +%s)" \
+        --arg status "$status" \
+        --argjson usable "$usable" \
+        --argjson rtt_ms "$rtt" \
+        --argjson gw_rtt_ms "$gw_rtt" \
+        --argjson loss "$loss" \
+        --arg ifname "$ifname" \
+        --arg device "$RTNS_DEV" \
+        --arg ipv4 "$RTNS_SRC" \
+        --arg gateway "$RTNS_GW" \
+        --arg target "$RTNS_TARGET" \
+        --arg server "$server" \
+        --argjson httping "$httping" \
+        '{timestamp:$timestamp, ts:$ts, status:$status, usable:$usable, rtt_ms:$rtt_ms, gw_rtt_ms:$gw_rtt_ms, loss:$loss, ifname:$ifname, device:$device, ipv4:$ipv4, gateway:$gateway, target:$target, server:$server, httping:$httping}')
+
+    local dir="/tmp/tracker-sim/${ifname}"
+    mkdir -p "$dir"
+    printf '%s\n' "$json" > "$dir/.realtime_net_status.$$" \
+        && mv "$dir/.realtime_net_status.$$" "$dir/realtime_net_status" \
+        || rm -f "$dir/.realtime_net_status.$$"
+
+    _log "realtime_net_status: ${status} rtt:${rtt}ms loss:${loss}% gw:${RTNS_GW:-none} server:${server:-none}"
+}
+
+function update_realtime_net_status
+{
+    RTNS_DEV="" RTNS_SRC="" RTNS_GW="" RTNS_TABLE=""
+    RTNS_LOSS="" RTNS_RTT="" RTNS_GW_RTT=""
+    RTNS_TARGET="" RTNS_INET_LOSS="" RTNS_INET_RTT=""
+    RTNS_SERVER_ADDR="" RTNS_SERVER_PORT="" RTNS_SERVER_LOSS="" RTNS_SERVER_RTT=""
+    RTNS_GW_OK=0 RTNS_INET_OK=0 RTNS_SERVER_OK=0 RTNS_SERVER_CFG=0 RTNS_API_OK=0
+
+    # 1. 前置检查: SIM是否就绪
+    echo "${SIM_STATUS}" | grep -qE "SIM Initialized|SIM Ready" || {
+        rtns_save "sim not ready"
+        return 1
+    }
+
+    # 2. 前置检查: 接口是否up, 是否拿到IPv4
+    local ifstat=$(ifstatus "$ifname" 2>/dev/null)
+
+    RTNS_DEV=$(echo "$ifstat" | jsonfilter -q -e '@["l3_device"]' | tr -d '\n')
+    [ -z "$RTNS_DEV" ] && RTNS_DEV="$interface"
+
+    RTNS_SRC=$(echo "$ifstat" | jsonfilter -q -e '@["ipv4-address"][0].address' | tr -d '\n')
+    [ -z "$RTNS_SRC" ] && [ -n "$RTNS_DEV" ] && RTNS_SRC=$(ip -4 -br addr ls dev "$RTNS_DEV" 2>/dev/null | awk -F'[ /]+' '{print $3}' | head -n 1)
+    [ -z "$RTNS_SRC" ] && RTNS_SRC="$SIM_IPv4"
+
+    if [ "$(echo "$ifstat" | jsonfilter -q -e '@.up')" != "true" ] || [ -z "$RTNS_SRC" ] || [ -z "$RTNS_DEV" ]; then
+        rtns_save "no ip"
+        return 1
+    fi
+
+    # 3. 取接口网关(uci -> 活动路由 -> 非活动路由); 点对点接口可能没有网关, 此时网关层直接视为通过
+    RTNS_GW=$(uci -q get "network.$ifname.gateway")
+    if [ -z "$RTNS_GW" ] || [ "$RTNS_GW" = "0.0.0.0" ]; then
+        RTNS_GW=$(echo "$ifstat" | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d '\n')
+    fi
+    if [ -z "$RTNS_GW" ] || [ "$RTNS_GW" = "0.0.0.0" ]; then
+        RTNS_GW=$(echo "$ifstat" | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d '\n')
+    fi
+    [ "$RTNS_GW" = "0.0.0.0" ] && RTNS_GW=""
+
+    # 探测目标需要走本接口的策略路由表, 否则探测包可能从别的接口出去
+    RTNS_TABLE=$(uci -q get "network.$ifname.ip4table")
+    [ -z "$RTNS_TABLE" ] && RTNS_TABLE=$(uci -q get "network.$ifname.metric")
+    [ -z "$RTNS_TABLE" ] && RTNS_TABLE="main"
+
+    # 4. 第一层: 网关(仅用于诊断, 3g/qmi/ncm 的网关通常不回ICMP, 不作为判定依据)
+    if [ -n "$RTNS_GW" ]; then
+        rtns_ping "$RTNS_GW" "$RTNS_DEV" "" "" "" "$RTNS_PING_TIMEOUT" "$RTNS_PING_COUNT" && {
+            RTNS_GW_OK=1
+            RTNS_GW_RTT="$RTNS_RTT"
+        }
+    else
+        RTNS_GW_OK=1
+    fi
+
+    # 5. 第二层: 互联网目标(取前几个, 任一可达即可)
+    local hosts=$(uci -q get omr-tracker.defaults.hosts)
+    [ -z "$hosts" ] && hosts="223.5.5.5 119.29.29.29"
+    local target
+    local n=0
+    for target in $hosts; do
+        n=$((n + 1))
+        [ "$n" -gt "$RTNS_TARGET_TRIES" ] && break
+        rtns_ping "$target" "$RTNS_DEV" "$RTNS_GW" "$RTNS_SRC" "$RTNS_TABLE" "$RTNS_PING_TIMEOUT" "$RTNS_PING_COUNT" && {
+            RTNS_INET_OK=1
+            RTNS_TARGET="$target"
+            RTNS_INET_LOSS="$RTNS_LOSS"
+            RTNS_INET_RTT="$RTNS_RTT"
+            break
+        }
+    done
+
+    # 6. 判定: 网关和互联网都不通, 根因在本地链路
+    if [ "$RTNS_GW_OK" != "1" ] && [ "$RTNS_INET_OK" != "1" ]; then
+        rtns_save "gateway unreachable"
+        return 1
+    fi
+    # 互联网目标全不通, 欠费SIM的典型表现
+    if [ "$RTNS_INET_OK" != "1" ]; then
+        rtns_save "internet unreachable"
+        return 1
+    fi
+
+    # 7. 第三层: VPS服务器(未配置服务器时该层跳过, 以互联网可达为准)
+    config_load openmptcprouter
+    config_foreach rtns_server_ping server
+    if [ "$RTNS_SERVER_OK" != "1" ] && [ "$RTNS_SERVER_CFG" = "1" ]; then
+        rtns_save "server unreachable"
+        return 1
+    fi
+
+    # 8. 第四层: VPS API(服务端口)
+    if [ "$RTNS_API_TEST" = "1" ] && [ "$RTNS_SERVER_CFG" = "1" ]; then
+        config_foreach rtns_server_httping server
+        if [ "$RTNS_API_OK" != "1" ]; then
+            rtns_save "api unreachable"
+            return 1
+        fi
+    fi
+
+    rtns_save "ok"
+    return 0
+}
+
 # 更新实时状态信息
 function update_state
 {
@@ -202,9 +784,15 @@ function update_state
     # 相邻小区信息
     atcmd_get_sim_monnc_realtime $1
 
+    # 优选小区策略
+    # atcmd_pci_auto_select $1
+
     # 查询锁频/锁小区状态
     atcmd_get_lte_lock $1
     atcmd_get_nr_lock $1
+
+    # 实时网络探测
+    update_realtime_net_status $1
 }
 
 # 查询是否使能,未使能则不再继续查询状态
@@ -223,9 +811,6 @@ function _main()
 {
     while true; do
 
-        # 状态更新时间戳
-        atcmd_timestamp
-
         sleep 5
 
         # 检查模组是否已经成功识别了,即sysfs中有相应信息
@@ -242,6 +827,10 @@ function _main()
 
             _log "${ATCMD_FILE}"
             . ${ATCMD_FILE} $ifname
+
+            # 状态更新时间戳
+            # 注意: atcmd_timestamp/_save 都定义在AT指令脚本里, 只能放在加载之后调用
+            atcmd_timestamp
         }
 
         # 获取模组基本信息
