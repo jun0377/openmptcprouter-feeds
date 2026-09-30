@@ -134,7 +134,7 @@ while true; do
 			uci -q set openmptcprouter.omr.v2ray="up"
 			uci -q commit openmptcprouter.omr
 			# 根据状态设置 VPS 防火墙
-			/etc/init.d/openmptcprouter-vps set_vps_firewall
+			# /etc/init.d/openmptcprouter-vps set_vps_firewall
 			# 邮件告警开关
 			mail_alert="$(uci -q get omr-tracker.proxy.mail_alert)"
 			#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
