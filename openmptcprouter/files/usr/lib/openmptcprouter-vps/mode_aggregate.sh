@@ -311,9 +311,44 @@ _config_service() {
 	EOF
 }
 
-# 停止聚合模式
+# 停止聚合模式: 停止聚合隧道(openvpn tun0 / mqvpn mqvpn0), 并删除其对应的策略规则与路由表
 stop_mode_aggregate() {
-	echo ""
+	logger -t "OMR-VPS" "<$FUNCNAME> stop aggregate mode"
+
+	# 聚合模式使用的策略路由表号, 取自 network.omrvpn.ip4table/ip6table(默认 1500/61500)
+	local ip4table="$(uci -q get network.omrvpn.ip4table)"
+	case "$ip4table" in ''|*[!0-9]*) ip4table="1500" ;; esac	# 校验从 uci 读到的表号是不是纯数字，不是就回退到默认值
+	local ip6table="$(uci -q get network.omrvpn.ip6table)"
+	case "$ip6table" in ''|*[!0-9]*) ip6table="61500" ;; esac	# 校验从 uci 读到的表号是不是纯数字，不是就回退到默认值
+
+	# 聚合隧道设备名: openvpn=tun0, mqvpn=mqvpn0
+	local vpnifname="$(uci -q get network.omrvpn.device)"
+	if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ]; then
+		vpnifname="$(uci -q get mqvpn.interface.tun_name)"
+		[ -z "$vpnifname" ] && vpnifname="mqvpn0"
+	fi
+
+	# 1. 停止聚合模式使用的VPN, 否则隧道会重新拉起并重建路由
+	_stop_vpn openvpn
+	_stop_vpn mqvpn
+
+	# 2. 关闭聚合网口
+	ifdown omrvpn >/dev/null 2>&1
+
+	# 3. 删除指向聚合路由表的策略规则
+	#    隧道设备下线后 oif 规则会残留为 [detached], 只能按 table 逐条删除
+	while [ -n "$(ip -4 rule show 2>/dev/null | grep "lookup ${ip4table}$")" ]; do
+		ip -4 rule del table ${ip4table} >/dev/null 2>&1 || break
+	done
+	while [ -n "$(ip -6 rule show 2>/dev/null | grep "lookup ${ip6table}$")" ]; do
+		ip -6 rule del table ${ip6table} >/dev/null 2>&1 || break
+	done
+
+	# 4. 清空聚合路由表
+	ip -4 route flush table ${ip4table} >/dev/null 2>&1
+	ip -6 route flush table ${ip6table} >/dev/null 2>&1
+
+	logger -t "OMR-VPS" "<$FUNCNAME> deleted aggregate routes dev:${vpnifname} table:${ip4table}/${ip6table}"
 }
 
 mode_aggregate_handler() {
