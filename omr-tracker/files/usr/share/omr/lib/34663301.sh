@@ -333,6 +333,7 @@ function atcmd_init_netnum
     local ATCMD="AT^SETNETNUM?"
 
     _exec_at "$ATCMD" $1 || return 1
+    _log "${ATCMD} res: $(echo "${_AT_RES}" | tr '\n' ' ')"
 
     local NETNUM=$(echo "$_AT_RES" | awk '/^[0-9]+$/{print $1}')
     [ "x${NETNUM}" == "x1" ] && return 0
@@ -343,16 +344,19 @@ function atcmd_init_netnum
     return 0
 }
 
-# 设置USB端口形态配置为Linux NCM模式
-function atcmd_init_ncm
+# 设置USB端口形态: 固定使用Linux NCM模式(4)
+function atcmd_init_usbmode
 {
+    local target=4   # Linux NCM模式
+
     local ATCMD="AT^SETMODE?"
     _exec_at "$ATCMD" $1 || return 1
+    _log "${ATCMD} res: $(echo "${_AT_RES}" | tr '\n' ' ')"
 
     local MODE=$(echo "$_AT_RES" | awk '/^[0-9]+$/{print $1}')
-    [ "x${MODE}" == "x4" ] && return 0
+    [ "x${MODE}" == "x${target}" ] && return 0
 
-    ATCMD="AT^SETMODE=4"
+    ATCMD="AT^SETMODE=${target}"
     _exec_at "$ATCMD" $1 || return 1
 
     return 0
@@ -437,29 +441,48 @@ EOF
     spn_name="$spn_name_hex"
 
     # UCS2 hex -> UTF-8 纯 shell 解码 (无 iconv/xxd 依赖)
+    # 逐字节算出八进制值追加到 out, 最后用 %b 一次性输出;
+    # 避免 "\\$(printf '%03o' $(( .. | ( .. ) )))" 这种多层嵌套导致编辑器语法高亮错乱
     _ucs2be_hex_to_utf8() {
         local hex="$1"
-        local i=0 codepoint
+        local i=0 codepoint dec oct out=""
 
         while [ $i -lt ${#hex} ]; do
             # 读取 2 字节 (4 个 hex 字符) = 1 个 UCS-2 码点
             codepoint=$(( 0x${hex:i:4} ))
             i=$(( i + 4 ))
 
+            # 跳过起始的 BOM(U+FEFF), 避免名称前缀多出不可见字符
+            [ "$codepoint" -eq 65279 ] && continue
+
             if [ "$codepoint" -lt 128 ]; then
                 # U+0000 - U+007F: 1 byte UTF-8
-                printf "\\$(printf '%03o' "$codepoint")"
+                dec=$codepoint
+                oct=$(printf '%03o' "$dec")
+                out="$out\\$oct"
             elif [ "$codepoint" -lt 2048 ]; then
                 # U+0080 - U+07FF: 2 byte UTF-8
-                printf "\\$(printf '%03o' $(( 0xC0 | (codepoint >> 6) )))"
-                printf "\\$(printf '%03o' $(( 0x80 | (codepoint & 0x3F) )))"
+                dec=$(( 0xC0 | (codepoint >> 6) ))
+                oct=$(printf '%03o' "$dec")
+                out="$out\\$oct"
+                dec=$(( 0x80 | (codepoint & 0x3F) ))
+                oct=$(printf '%03o' "$dec")
+                out="$out\\$oct"
             else
                 # U+0800 - U+FFFF: 3 byte UTF-8
-                printf "\\$(printf '%03o' $(( 0xE0 | (codepoint >> 12) )))"
-                printf "\\$(printf '%03o' $(( 0x80 | ((codepoint >> 6) & 0x3F) )))"
-                printf "\\$(printf '%03o' $(( 0x80 | (codepoint & 0x3F) )))"
+                dec=$(( 0xE0 | (codepoint >> 12) ))
+                oct=$(printf '%03o' "$dec")
+                out="$out\\$oct"
+                dec=$(( 0x80 | ((codepoint >> 6) & 0x3F) ))
+                oct=$(printf '%03o' "$dec")
+                out="$out\\$oct"
+                dec=$(( 0x80 | (codepoint & 0x3F) ))
+                oct=$(printf '%03o' "$dec")
+                out="$out\\$oct"
             fi
         done
+
+        printf '%b' "$out"
     }
 
     echo "$long_name_hex" | grep -qE '^[0-9A-Fa-f]+$' && [ $(( ${#long_name_hex} % 4 )) -eq 0 ] && \
@@ -1661,16 +1684,245 @@ function atcmd_HCSQ()
     return 0
 }
 
+# 查询E5/stick模式: 1-E5模式, 0-stick模式
+# 模组未就绪时可能查不到有效值, 此时休眠2秒后重试, 最多尝试5次; 结果存入E5STICK_MODE
+# 返回0表示取到有效值(0/1), 非0表示5次均未取到
+function atcmd_get_e5stick
+{
+    E5STICK_MODE=""
+
+    local ATCMD="AT^SETE5STICK?"
+    local tries=0
+    while [ ${tries} -lt 5 ]; do
+        tries=$(( tries + 1 ))
+
+        E5STICK_MODE=""
+        if _exec_at "$ATCMD" $1; then
+            E5STICK_MODE=$(echo "$_AT_RES" | awk '/^[0-9]+$/{print $1}')
+        fi
+        _log "current e5stick mode: [${E5STICK_MODE}] (try ${tries}/5)"
+
+        # 取到 0/1 即为有效结果
+        case "${E5STICK_MODE}" in
+            0|1) return 0 ;;
+        esac
+
+        # 结果既不是0也不是1, 休眠2秒后重新查询
+        sleep 2
+    done
+
+    _log "e5stick mode unknown after ${tries} tries"
+    return 1
+}
+
+# 设置E5模式: AT^SETE5STICK=1
+function atcmd_set_e5
+{
+    # 先查询当前工作模式, 避免重复设置; 5次均取不到有效值时不设置, 避免误判成需切换而反复复位
+    atcmd_get_e5stick $1 || return 0
+
+    [ "x${E5STICK_MODE}" == "x1" ] && return 0
+
+    local ATCMD="AT^SETE5STICK=1"
+    _exec_at "$ATCMD" $1 || return 1
+
+    # 模式发生变化, 复位模组使其生效(AT^RESET后模组重启, 不要求返回OK)
+    ATCMD="AT^RESET"
+    _exec_at "$ATCMD" $1
+    _log "e5stick mode set to 1, AT^RESET sent"
+
+    return 0
+}
+
+# 设置stick模式: AT^SETE5STICK=0
+function atcmd_set_stick
+{
+    # 先查询当前工作模式, 避免重复设置; 5次均取不到有效值时不设置, 避免误判成需切换而反复复位
+    atcmd_get_e5stick $1 || return 0
+
+    [ "x${E5STICK_MODE}" == "x0" ] && return 0
+
+    local ATCMD="AT^SETE5STICK=0"
+    _exec_at "$ATCMD" $1 || return 1
+
+    # 模式发生变化, 复位模组使其生效(AT^RESET后模组重启, 不要求返回OK)
+    ATCMD="AT^RESET"
+    _exec_at "$ATCMD" $1
+    _log "e5stick mode set to 0, AT^RESET sent"
+
+    return 0
+}
+
+# IP地址过滤, E5模式下需要关闭之
+function atcmd_init_ipfilterswitch
+{
+    # 仅E5模式需要关闭IP地址过滤
+    local mode=$(uci -q get sim.${ifname}.mode)
+    [ "x${mode}" == "xe5" ] || return 0
+
+    # 先查询当前开关状态, 避免重复设置
+    local ATCMD="AT^IPFILTERSWITCH?"
+    _exec_at "$ATCMD" $1 || return 1
+
+    local CUR=$(echo "$_AT_RES" | awk '/\^IPFILTERSWITCH/{gsub(/[^0-9]/,""); if ($0 != "") {print; exit}}')
+    [ "x${CUR}" == "x0" ] && return 0
+
+    ATCMD="AT^IPFILTERSWITCH=0"
+    _exec_at "$ATCMD" $1 || return 1
+
+    return 0
+}
+
+# E5模式拨号相关配置
+function atcme_init_e5_tdcfg()
+{
+    local changed=0
+
+    # 1. 先查询拨号配置
+    # AT^TDCFG? 返回示例:
+    # ^TDCFG:
+    # Mode: 2
+    # Dmz: not cfg
+    # PostRoute: 2
+    # LHCM: 192.168.1.1,255.255.255.0,192.168.1.100,192.168.1.200
+    # Share-pdp: 0
+    # OK
+    local ATCMD="AT^TDCFG?"
+    _exec_at "$ATCMD" $1 || return 1
+
+    local cur_mode=$(echo "$_AT_RES" | awk '/^[[:space:]]*Mode:/{gsub(/[^0-9]/,""); print; exit}')
+    local cur_postroute=$(echo "$_AT_RES" | awk '/^[[:space:]]*PostRoute:/{gsub(/[^0-9]/,""); print; exit}')
+    local cur_lhcm=$(echo "$_AT_RES" | awk '/^[[:space:]]*LHCM:/{sub(/^[[:space:]]*LHCM:[[:space:]]*/,""); gsub(/[[:space:]]/,""); print; exit}')
+
+    # 期望的DHCP地址池: 按SIM序号分网段, 如sim1->192.168.101.x, sim2->192.168.102.x
+    local idx=$(echo "${ifname}" | tr -dc '0-9')
+    [ -z "${idx}" ] && idx=1
+    local net=$(( 100 + idx ))
+    local tgt_lhcm="192.168.${net}.1,255.255.255.0,192.168.${net}.100,192.168.${net}.200"
+
+    # 2. 设置接口模式(USB E5 + 网口 E5), 仅当不为2时才设置
+    if [ "x${cur_mode}" != "x2" ]; then
+        ATCMD='AT^TDCFG="infcfg","mode",2'
+        _exec_at "$ATCMD" $1 || return 1
+        changed=1
+    fi
+
+    # 3. 设置后路由模式(2-关闭), 仅当不为2时才设置
+    if [ "x${cur_postroute}" != "x2" ]; then
+        ATCMD='AT^TDCFG="infcfg","PostRoute",2'
+        _exec_at "$ATCMD" $1 || return 1
+        changed=1
+    fi
+
+    # 4. 设置DHCP地址池, 仅当与期望值不一致时才设置
+    if [ "x${cur_lhcm}" != "x${tgt_lhcm}" ]; then
+        ATCMD="AT^TDCFG=\"infcfg\",\"lhcm\",${tgt_lhcm}"
+        _exec_at "$ATCMD" $1 || return 1
+        changed=1
+    fi
+
+    # 5. 配置发生过变化时复位模组使其生效(AT^RESET后模组重启, 不要求返回OK)
+    if [ "${changed}" = "1" ]; then
+        ATCMD="AT^RESET"
+        _exec_at "$ATCMD" $1
+    fi
+
+    return 0
+}
+
+# stick模式拨号相关配置
+function atcme_init_stick_tdcfg()
+{
+    # 1. 先查询拨号配置, 避免重复设置
+    # AT^TDCFG? 返回示例:
+    # ^TDCFG:
+    # Mode: 1
+    # Dmz: not cfg
+    # PostRoute: 2
+    # LHCM: 192.168.1.1,255.255.255.0,192.168.1.100,192.168.1.200
+    # Share-pdp: 0
+    # OK
+    local ATCMD="AT^TDCFG?"
+    _exec_at "$ATCMD" $1 || return 1
+    _log "${ATCMD} res: $(echo "${_AT_RES}" | tr '\n' '|')"
+
+    local cur_mode=$(echo "$_AT_RES" | awk '/^[[:space:]]*Mode:/{gsub(/[^0-9]/,""); print; exit}')
+
+    # 2. 设置接口模式(USB Stick + 网口 E5), 仅当不为1时才设置
+    [ "x${cur_mode}" == "x1" ] && return 0
+
+    ATCMD='AT^TDCFG="infcfg","mode",1'
+    _exec_at "$ATCMD" $1 || return 1
+
+    return 0
+}
+
+# 初始化E5模式
+function atcmd_init_e5()
+{
+    # E5模式: AT^SETE5STICK=1
+    atcmd_set_e5 $1
+
+    # IP地址过滤, E5模式下需要关闭之
+    atcmd_init_ipfilterswitch "$1"
+
+    # E5模式拨号相关配置
+    atcme_init_e5_tdcfg "$1"
+}
+
+# 初始化stick模式
+function atcmd_init_stick()
+{
+    # stick模式: AT^SETE5STICK=0
+    atcmd_set_stick $1
+
+    # 关闭自动拨号, stick模式由主机侧拨号(AT^NDISDUP)
+    # 先查询当前开关状态, 避免重复设置
+    local ATCMD="AT^SETAUTODIAL?"
+    _exec_at "$ATCMD" $1 || return 1
+
+    # 返回: ^SETAUTODIAL:<enable>,... , 第一个字段为开关状态
+    local CUR=$(echo "$_AT_RES" | awk -F'[,:]+' '/\^SETAUTODIAL:/{gsub(/[^0-9]/,"",$2); print $2; exit}')
+    [ "x${CUR}" == "x0" ] && return 0
+
+    ATCMD="AT^SETAUTODIAL=0"
+    _exec_at "$ATCMD" $1 || return 1
+
+    # stick模式拨号相关配置
+    atcme_init_stick_tdcfg "$1"
+
+    return 0
+}
+
+# 设置 stick/E5 模式
+function atcmd_init_e5stick
+{
+    # UCI配置: stick-数据卡模式, e5-路由模式
+    local mode=$(uci -q get sim.${ifname}.mode)
+
+    case "${mode}" in
+        e5) atcmd_init_e5 $1 ;;       # E5模式
+        *)  atcmd_init_stick $1 ;;    # stick模式/未配置, 默认stick
+    esac
+}
+
 # 初始化
 function atcmd_init
 {
     logger -t "NCM" "ifname:${ifname} atcmd_init $1"
+
     # 打开回显
     atcmd_init_echo $1
+
+    # 设置 stick/E5 模式
+    atcmd_init_e5stick $1
+
     # 初始化网卡数量为1
     atcmd_init_netnum $1
-    # 设置USB端口形态配置为Linux NCM模式
-    atcmd_init_ncm $1
+
+    # 设置USB端口形态: 固定Linux NCM模式
+    atcmd_init_usbmode $1
+
     # 开启SIM卡热插拔
     atcmd_init_hotplug $1
 
@@ -1764,6 +2016,36 @@ function dial
     return 1
 }
 
+# E5模式设置自动拨号
+function atcmd_e5_autodial()
+{
+    # UCI配置: APN/用户名/密码/鉴权
+    local apn=$(uci -q get sim.${ifname}.apn)
+    local user=$(uci -q get sim.${ifname}.user)
+    local passwd=$(uci -q get sim.${ifname}.passwd)
+
+    # 鉴权类型: 0-不使用握手协议, 1-PAP, 2-CHAP
+    local auth=$(echo "$(uci -q get sim.${ifname}.auth)" | tr 'a-z' 'A-Z')
+    local auth_type=0
+    [ "PAP" == "${auth}" ] && auth_type=1
+    [ "CHAP" == "${auth}" ] && auth_type=2
+
+    # 1. 先关闭自动拨号
+    local ATCMD="AT^SETAUTODIAL=0"
+    _exec_at "$ATCMD" $1 || return 1
+
+    # 2. 重新开启自动拨号, 同时设置APN/用户名/密码/鉴权
+    ATCMD="AT^SETAUTODIAL=1,1,\"IP\",\"${apn}\",\"${user}\",\"${passwd}\",${auth_type}"
+    _exec_at "$ATCMD" $1 || return 1
+
+    # 3. 切换一次飞行模式, 使自动拨号配置生效
+    atcmd_set_airplane_on $1
+    sleep 3
+    atcmd_set_airplane_off $1
+
+    return 0
+}
+
 # 拨号
 function atcmd_dial
 {
@@ -1780,6 +2062,13 @@ function atcmd_dial
 
     # 获取imsi
     atcmd_get_imsi $1
+
+    # E5模式由模组自动拨号: 配置自动拨号参数后交由模组拨号, 主机侧无需检查地址/重新拨号
+    local mode=$(uci -q get sim.${ifname}.mode)
+    if [ "x${mode}" == "xe5" ]; then
+        atcmd_e5_autodial $1 || return 1
+        return 0
+    fi
 
     # 检查是否需要重新拨号
     atcmd_get_addr $1

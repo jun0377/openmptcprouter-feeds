@@ -139,6 +139,15 @@ function dial
     return 0
 }
 
+# 清除SIM卡相关状态文件, 拔卡后避免前端仍展示残留的运营商/频段/信号/小区信息
+function clear_sim_state
+{
+    local dir="/tmp/tracker-sim/${ifname}"
+    [ -d "$dir" ] || return 0
+    rm -f "$dir/plmn" "$dir/iccid" "$dir/imsi" "$dir/freq" \
+          "$dir/monsc" "$dir/monnc" "$dir/IPv4" "$dir/IPv6"
+}
+
 # 检查拨号
 function check_dial
 {
@@ -148,6 +157,8 @@ function check_dial
     # 判断SIM_STATUS中是否包含: "SIM Initialized" 或 "SIM Ready"
     if ! echo "${SIM_STATUS}" | grep -qE "SIM Initialized|SIM Ready"; then
         _log "SIM not ready! status: ${SIM_STATUS}"
+        # 明确为卡不在位/被移除时, 清除SIM相关残留状态文件
+        echo "${SIM_STATUS}" | grep -qE "not Inserted|SIM removed" && clear_sim_state
         return 1
     fi
 
