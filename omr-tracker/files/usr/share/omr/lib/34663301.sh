@@ -1693,22 +1693,23 @@ function atcmd_get_e5stick
 
     local ATCMD="AT^SETE5STICK?"
     local tries=0
-    while [ ${tries} -lt 5 ]; do
+    while [ ${tries} -lt 10 ]; do
         tries=$(( tries + 1 ))
 
         E5STICK_MODE=""
         if _exec_at "$ATCMD" $1; then
             E5STICK_MODE=$(echo "$_AT_RES" | awk '/^[0-9]+$/{print $1}')
         fi
-        _log "current e5stick mode: [${E5STICK_MODE}] (try ${tries}/5)"
+        _log "res: $(echo " $_AT_RES " | tr '\n' '|' | cut -c1-200) "
+        _log "current e5stick mode: [${E5STICK_MODE}] (try ${tries}/10)"
 
         # 取到 0/1 即为有效结果
         case "${E5STICK_MODE}" in
             0|1) return 0 ;;
         esac
 
-        # 结果既不是0也不是1, 休眠2秒后重新查询
-        sleep 2
+        # 休眠3秒后重新查询
+        sleep 3
     done
 
     _log "e5stick mode unknown after ${tries} tries"
@@ -1906,6 +1907,16 @@ function atcmd_init_e5stick
     esac
 }
 
+# 关闭CURC自动上报, 避免影响AT指令解析
+function atcmd_init_report()
+{
+    # 直接关闭(不做查询比对): 查询本身也会被URC干扰, 重复设置无副作用
+    local ATCMD="AT^CURC=0"
+    _exec_at "$ATCMD" $1 || return 1
+
+    return 0
+}
+
 # 初始化
 function atcmd_init
 {
@@ -1913,6 +1924,9 @@ function atcmd_init
 
     # 打开回显
     atcmd_init_echo $1
+
+    # 关闭CURC自动上报, 避免影响AT指令解析
+    atcmd_init_report $1
 
     # 设置 stick/E5 模式
     atcmd_init_e5stick $1
@@ -2033,6 +2047,8 @@ function atcmd_e5_autodial()
     # 1. 先关闭自动拨号
     local ATCMD="AT^SETAUTODIAL=0"
     _exec_at "$ATCMD" $1 || return 1
+
+    sleep 3
 
     # 2. 重新开启自动拨号, 同时设置APN/用户名/密码/鉴权
     ATCMD="AT^SETAUTODIAL=1,1,\"IP\",\"${apn}\",\"${user}\",\"${passwd}\",${auth_type}"
