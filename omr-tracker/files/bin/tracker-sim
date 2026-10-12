@@ -793,6 +793,15 @@ function update_state
     # SIM卡状态
     atcmd_get_sim_status_realtime $1
 
+    # 卡不在位/未就绪: 跳过所有依赖SIM/注册的探测, 仅保留模组级配置查询
+    if ! echo "${SIM_STATUS}" | grep -qE "SIM Initialized|SIM Ready"; then
+        echo "${SIM_STATUS}" | grep -qE "not Inserted|SIM removed" && clear_sim_state
+        atcmd_get_lte_lock $1
+        atcmd_get_nr_lock $1
+        update_realtime_net_status $1
+        return
+    fi
+
     # 运营商信息
     atcmd_get_plmn $1
 
