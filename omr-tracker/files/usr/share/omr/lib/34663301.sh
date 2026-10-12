@@ -2065,6 +2065,13 @@ function atcmd_e5_autodial()
 # 拨号
 function atcmd_dial
 {
+    # E5模式由模组自动拨号: 配置自动拨号参数后交由模组拨号, 主机侧无需检查地址/重新拨号
+    local mode=$(uci -q get sim.${ifname}.mode)
+    if [ "x${mode}" == "xe5" ]; then
+        atcmd_e5_autodial $1 || return 1
+        return 0
+    fi
+
     # 检查是否插卡
     atcmd_get_sim_status_realtime $1
 
@@ -2078,13 +2085,6 @@ function atcmd_dial
 
     # 获取imsi
     atcmd_get_imsi $1
-
-    # E5模式由模组自动拨号: 配置自动拨号参数后交由模组拨号, 主机侧无需检查地址/重新拨号
-    local mode=$(uci -q get sim.${ifname}.mode)
-    if [ "x${mode}" == "xe5" ]; then
-        atcmd_e5_autodial $1 || return 1
-        return 0
-    fi
 
     # 检查是否需要重新拨号
     atcmd_get_addr $1
