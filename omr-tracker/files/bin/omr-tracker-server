@@ -96,74 +96,13 @@ _save_openvpn() {
 	json_dump > "$tmpfile" && mv "$tmpfile" "$outfile" || rm -f "$tmpfile"
 }
 
-# openvpn延时探测
-# _ping_openvpn() {
-
-# 	# 重置状态
-# 	OMR_OPENVPN_TRACKER_STATUS="ERROR"
-# 	OMR_OPENVPN_TRACKER_STATUS_MSG=""
-# 	OMR_OPENVPN_TRACKER_LATENCY=""
-# 	OMR_OPENVPN_TRACKER_LOSS=""
-
-# 	# 仅当openvpn启用时才探测
-# 	[ "$(uci -q get openvpn.omr.enabled)" != "1" ] && {
-# 		OMR_OPENVPN_TRACKER_STATUS_MSG="OpenVPN disabled"
-# 		_save_openvpn
-# 		return
-# 	}
-
-# 	# 获取tun设备名，默认为tun0
-# 	tun_device="$(uci -q get openvpn.omr.dev)"
-# 	[ -z "$tun_device" ] && tun_device="tun0"
-
-# 	# 检查tun设备是否存在且已启动
-# 	tun_local_ip=$(ip -4 -br addr ls dev "$tun_device" 2>/dev/null | awk -F'[ /]+' '{print $3}')
-# 	[ -z "$tun_local_ip" ] && {
-# 		OMR_OPENVPN_TRACKER_STATUS_MSG="tun device ${tun_device} not ready"
-# 		_save_openvpn
-# 		return
-# 	}
-
-# 	# 获取服务端tun口IP（即隧道的网关地址）
-# 	tun_gateway=$(ip route show dev "$tun_device" 2>/dev/null | awk '/^default/ {print $3}')
-# 	if [ -z "$tun_gateway" ]; then
-# 		tun_gateway=$(ip route show dev "$tun_device" 2>/dev/null | awk '/via/ {print $3}' | head -n1)
-# 	fi
-# 	[ -z "$tun_gateway" ] && {
-# 		OMR_OPENVPN_TRACKER_STATUS_MSG="gateway not found for ${tun_device}"
-# 		_save_openvpn
-# 		return
-# 	}
-
-# 	# ping命令探测
-# 	local k=0
-# 	while [ "$k" -le "$retry" ]; do
-# 		ret=$(ping -w "$OMR_TRACKER_TIMEOUT" -c 1 -q "$tun_gateway" 2>&1)
-# 		loss=$(echo "$ret" | awk '/packet loss/ {gsub("%","");print $6}' | tr -d '\n')
-# 		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
-# 			latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
-# 			[ -n "$latency" ] && OMR_OPENVPN_TRACKER_LATENCY="$latency"
-# 			OMR_OPENVPN_TRACKER_STATUS="OK"
-# 			OMR_OPENVPN_TRACKER_LOSS="$loss"
-# 			logger -t "OMR" "<$basename> openvpn tun:${tun_device} local:${tun_local_ip} gw:${tun_gateway} rtt:${latency:-0}ms loss:${loss}%"
-# 			break
-# 		fi
-
-# 		k=$((k+1))
-# 		sleep "${intervaltries}"
-# 	done
-
-# 	[ "$OMR_OPENVPN_TRACKER_STATUS" != "OK" ] && {
-# 		OMR_OPENVPN_TRACKER_STATUS_MSG="OpenVPN ${tun_gateway} unreachable!"
-# 		logger -t "OMR" "<$basename> openvpn ${tun_gateway} unreachable!"
-# 	}
-
-# 	_save_openvpn
-# }
-
 # 聚合模式下使用multipath命令返回的interface进行测试
 _ping_server_intf_in_mode_aggregate() {
 	local host=$1
+	# ret/loss/latency 仅在本函数内有效, 避免残留
+	local ret=""
+	local loss=""
+	local latency=""
 
 	# 遍历具备默认路径的接口
 	for intf in $(multipath 2>/dev/null | awk '/default/ {print $1}'); do
@@ -184,9 +123,8 @@ _ping_server_intf_in_mode_aggregate() {
 				break
 			fi
 
-			# 丢包率100%
+			# 丢包率100%: 只记录原因, 不覆盖其它接口已成功的状态
 			if [ -z "$loss" ] || [ "$loss" = "100" ]; then
-				OMR_TRACKER_STATUS="ERROR"
 				OMR_TRACKER_STATUS_MSG="${host} unreachable!"
 			fi
 
@@ -197,18 +135,26 @@ _ping_server_intf_in_mode_aggregate() {
 		done
 	done
 
-	# 保存状态
-	_save
+	# 所有接口都不可达(含multipath无接口)时, 确保有明确原因
+	[ "$OMR_TRACKER_STATUS" != "OK" ] && OMR_TRACKER_STATUS_MSG="${host} unreachable!"
+
 }
 
 # 单卡模式下检查管理平台连通性
 _ping_server_intf_in_mode_single()
 {
 	local host=$1
-	local interface=$(uci -q get global.single.channel)
-	local device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.device')
-	[ -z "${device}" ] && device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.l3_device')
-	[ -z "${device}" ] && logger -t "OMR" "<$basename> unknown interface: ${interface}-${device}"
+	# 单卡链路/物理网口: 每轮只解析一次, 为空时才重新解析
+	[ -z "${interface}" ] && interface=$(uci -q get global.single.channel)
+	[ -z "${device}" ] && {
+		device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.device')
+		[ -z "${device}" ] && device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.l3_device')
+		[ -z "${device}" ] && {
+			local sysfs=$(uci -q get sim.${interface}.usb)
+			[ -n "$sysfs" ] && [ -d "$sysfs" ] && device=$(ls "$sysfs"/*/net/ 2>/dev/null | head -n 1)
+		}
+		[ -z "${device}" ] && logger -t "OMR" "<$basename> unknown interface: ${interface}-${device}"
+	}
 
 	local k=0
 	while [ "$k" -le "$retry" ]; do
@@ -238,7 +184,6 @@ _ping_server_intf_in_mode_single()
 	[ "$OMR_TRACKER_STATUS" != "OK" ] && OMR_TRACKER_STATUS_MSG="${host} unreachable!" && logger -t "OMR" "<$basename> ${host} unreachable !"
 	[ "$OMR_TRACKER_STATUS" = "OK" ] && logger -t "OMR" "<$basename> server:${host} local:${device} rtt:${OMR_TRACKER_LATENCY}ms loss:${OMR_TRACKER_LOSS}% "
 
-	_save
 }
 
 # 负载均衡模式下检查管理平台连通性
@@ -273,7 +218,6 @@ _ping_server_intf_in_mode_balance()
 	[ "$OMR_TRACKER_STATUS" != "OK" ] && OMR_TRACKER_STATUS_MSG="${host} unreachable!" && logger -t "OMR" "<$basename> ${host} unreachable !"
 	[ "$OMR_TRACKER_STATUS" = "OK" ] && logger -t "OMR" "<$basename> server:${host} local:${device} rtt:${OMR_TRACKER_LATENCY}ms loss:${OMR_TRACKER_LOSS}% "
 
-	_save
 }
 
 # 不同工作模式下使用不同的接口进行检测
@@ -300,6 +244,10 @@ _ping_server_intf()
 _check_server_api_in_mode_aggregate() {
 	local host=$1
 	local valid_ip6=$(valid_subnet6 "$host")
+	# ret/ok 仅在本函数内有效, 避免复用全局ret导致残留误判
+	local ret=""
+	local ok=""
+
 	for intf in $(multipath 2>/dev/null | awk '/default/ {print $1}'); do
 		local k=0
 		while [ "$k" -le "$retry" ]; do
@@ -309,23 +257,20 @@ _check_server_api_in_mode_aggregate() {
 				ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "https://[${host}%${intf}]:${port}/")
 			fi
 
-			[ -n "$ret" ] && break
+			# 任一接口成功即视为可用
+			[ -n "$ret" ] && { ok=1; break 2; }
 
 			k=$((k+1))
 			sleep "${intervaltries}"
 		done
 	done
 
-	[ -z "$ret" ] && {
+	[ -n "$ok" ] && OMR_TRACKER_STATUS="OK"
+	[ -z "$ok" ] && {
 		OMR_TRACKER_STATUS="ERROR"
 		OMR_TRACKER_STATUS_MSG="${host} API test failed!"
 	}
-	[ -n "$ret" ] && {
-		OMR_TRACKER_STATUS="OK"
-	}
 
-	# 保存状态
-	_save
 }
 
 # 单卡模式下进行API检测
@@ -335,10 +280,17 @@ _check_server_api_in_mode_single()
 
 	local host=$1
 	local valid_ip6=$(valid_subnet6 "$host")
-	local interface=$(uci -q get global.single.channel)
-	local device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.device')
-	[ -z "${device}" ] && device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.l3_device')
-	[ -z "${device}" ] && logger -t "OMR" "<$basename> unknown interface: ${interface}-${device}"
+	# 单卡链路/物理网口: 每轮只解析一次, 为空时才重新解析
+	[ -z "${interface}" ] && interface=$(uci -q get global.single.channel)
+	[ -z "${device}" ] && {
+		device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.device')
+		[ -z "${device}" ] && device=$(ubus call network.interface.${interface} status | jsonfilter -e '@.l3_device')
+		[ -z "${device}" ] && {
+			local sysfs=$(uci -q get sim.${interface}.usb)
+			[ -n "$sysfs" ] && [ -d "$sysfs" ] && device=$(ls "$sysfs"/*/net/ 2>/dev/null | head -n 1)
+		}
+		[ -z "${device}" ] && logger -t "OMR" "<$basename> unknown interface: ${interface}-${device}"
+	}
 
 	local k=0
 	while [ "$k" -le "$retry" ]; do
@@ -360,8 +312,6 @@ _check_server_api_in_mode_single()
 	}
 	[ -n "$ret" ] && OMR_TRACKER_STATUS="OK"
 
-	# 保存状态
-	_save
 }
 
 # 负载均衡模式下进行API检测
@@ -392,8 +342,6 @@ _check_server_api_in_mode_balance()
 	}
 	[ -n "$ret" ] && OMR_TRACKER_STATUS="OK"
 
-	# 保存状态
-	_save
 }
 
 # 不同工作模式下使用不同的接口进行API检测
@@ -424,6 +372,14 @@ _check_server() {
 	config_get port $1 port
 	serverip=""
 
+	# 重置本轮探测状态, 避免沿用上一轮导致状态抖动
+	OMR_TRACKER_STATUS="ERROR"
+	OMR_TRACKER_STATUS_MSG=""
+	OMR_TRACKER_LATENCY=""
+	OMR_TRACKER_LOSS=""
+	interface=""
+	device=""
+
 	# logger -t "OMR" "<$basename> master:${master} ip:${ip} port:${port}"
 
 	# 针对每个 IP/域名条目进行探测
@@ -438,7 +394,7 @@ _check_server() {
 		[ -n "$ip6resolve" ] && serverip="$ip6resolve"
 		
 		# IP解析失败
-		[ -z "$serverip" ] && logger -t "OMR" "<$basename> unknown vps ip!" && return
+		[ -z "$serverip" ] && OMR_TRACKER_STATUS_MSG="unknown vps ip!" && logger -t "OMR" "<$basename> unknown vps ip!" && return
 
 		# ping测试（判断网络连通性）
 		_ping_server_intf $serverip
@@ -449,6 +405,9 @@ _check_server() {
 	# uci配置文件中的服务器ip是一个list, 逐个进行判断
 	config_load openmptcprouter
 	config_list_foreach $1 ip check_ip
+
+	# 本轮探测结束: 只在此处落盘一次(即使check_ip中途return也会执行), 避免一轮多次写导致状态抖动
+	_save
 
 	return
 	
