@@ -22,15 +22,11 @@ _log "ifname=$ifname"
 # 基本配置检查: 检查uci配置是否正确
 function check_base
 {
-    _log ">>>>>> ifname:${ifname}"
-
     # 检查sysfs中是否已有模组对应信息
     config_load sim
     config_get sysfs "$ifname" usb
     [ -z "$sysfs" ] && _log "sysfs is not defined! (uci get sim.$ifname.usb)" && return 1
     [ ! -d "$sysfs" ] && _log "sysfs is not exist! sysfs:${sysfs}" && return 1
-
-    _log "sysfs:${sysfs}"
 
     # 获取拨号所需的/dev/ttyUSB节点
     config_get ttyUSB "$ifname" ttyUSB
@@ -43,6 +39,10 @@ function check_base
     # 获取对应的真实物理网口（sysfs下的usb接口目录包含net子目录，其中即为网口名）
     interface=$(ls "$sysfs"/*/net/ 2>/dev/null)
     [ -z "$interface" ] && _log "can not find interface in ${sysfs}" && return 1
+
+    # 解析完成后开始记录(此后 _log 前缀含 interface/ttyUSB)
+    _log " ifname:${ifname}"
+    _log "sysfs:${sysfs}"
 
     # 获取模组的VID:PID
     VID=$(cat /sys/bus/usb/devices/$(basename $sysfs)/idVendor)

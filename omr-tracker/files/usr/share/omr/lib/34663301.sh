@@ -306,6 +306,9 @@ function _exec_at
 
     at_log "${ttyUSB}" "${ATCMD}" "${_AT_RES}"
 
+    # 记录返回内容(所有AT指令统一在此输出, 含各查询指令)
+    _log "${ATCMD} res: $(echo "${_AT_RES}" | tr '\n' ' ')"
+
     if [ -z "$_AT_RES" ] || ! echo "$_AT_RES" | grep -q "OK"; then
         _log "failed to execute $1 by ${ttyUSB}! res=${_AT_RES}"
         # logger -t "NCM" "ifname:${ifname} failed to execute $1 by ${ttyUSB}! res=${_AT_RES}"
@@ -333,7 +336,7 @@ function atcmd_init_netnum
     local ATCMD="AT^SETNETNUM?"
 
     _exec_at "$ATCMD" $1 || return 1
-    _log "${ATCMD} res: $(echo "${_AT_RES}" | tr '\n' ' ')"
+    # _log "${ATCMD} res: $(echo "${_AT_RES}" | tr '\n' ' ')"   # 已由 _exec_at 统一记录
 
     local NETNUM=$(echo "$_AT_RES" | awk '/^[0-9]+$/{print $1}')
     [ "x${NETNUM}" == "x1" ] && return 0
@@ -351,7 +354,7 @@ function atcmd_init_usbmode
 
     local ATCMD="AT^SETMODE?"
     _exec_at "$ATCMD" $1 || return 1
-    _log "${ATCMD} res: $(echo "${_AT_RES}" | tr '\n' ' ')"
+    # _log "${ATCMD} res: $(echo "${_AT_RES}" | tr '\n' ' ')"   # 已由 _exec_at 统一记录
 
     local MODE=$(echo "$_AT_RES" | awk '/^[0-9]+$/{print $1}')
     [ "x${MODE}" == "x${target}" ] && return 0
@@ -783,7 +786,7 @@ function atcmd_get_nr_lock()
 {
     local ATCMD="AT^NRFREQLOCK?"
     _exec_at "$ATCMD" $1 || return 1
-    _log $_AT_RES
+    # _log $_AT_RES   # 已由 _exec_at 统一记录
 
     # 返回格式 (多行):
     # ^NRFREQLOCK: <operatetype>
@@ -1050,7 +1053,7 @@ function atcmd_get_lte_lock()
 {
     local ATCMD="AT^LTEFREQLOCK?"
     _exec_at "$ATCMD" $1 || return 1
-    _log $_AT_RES
+    # _log $_AT_RES   # 已由 _exec_at 统一记录
 
     # 返回格式 (多行, 同 NR):
     # ^LTEFREQLOCK: <operatetype>
@@ -1700,7 +1703,7 @@ function atcmd_get_e5stick
         if _exec_at "$ATCMD" $1; then
             E5STICK_MODE=$(echo "$_AT_RES" | awk '/^[0-9]+$/{print $1}')
         fi
-        _log "res: $(echo " $_AT_RES " | tr '\n' '|' | cut -c1-200) "
+        # _log "res: $(echo " $_AT_RES " | tr '\n' '|' | cut -c1-200) "   # 已由 _exec_at 统一记录
         _log "current e5stick mode: [${E5STICK_MODE}] (try ${tries}/10)"
 
         # 取到 0/1 即为有效结果
@@ -1801,6 +1804,13 @@ function atcme_init_e5_tdcfg()
     local net=$(( 100 + idx ))
     local tgt_lhcm="192.168.${net}.1,255.255.255.0,192.168.${net}.100,192.168.${net}.200"
 
+    # 仅在需要修改配置时停拨并切飞，避免带连接修改后路由或DHCP配置
+    if [ "x${cur_mode}" != "x2" ] || [ "x${cur_postroute}" != "x2" ] || [ "x${cur_lhcm}" != "x${tgt_lhcm}" ]; then
+        ATCMD="AT^SETAUTODIAL=0"
+        _exec_at "$ATCMD" "$1"
+        atcmd_set_airplane_on "$1"
+    fi
+
     # 2. 设置接口模式(USB E5 + 网口 E5), 仅当不为2时才设置
     if [ "x${cur_mode}" != "x2" ]; then
         ATCMD='AT^TDCFG="infcfg","mode",2'
@@ -1845,7 +1855,7 @@ function atcme_init_stick_tdcfg()
     # OK
     local ATCMD="AT^TDCFG?"
     _exec_at "$ATCMD" $1 || return 1
-    _log "${ATCMD} res: $(echo "${_AT_RES}" | tr '\n' '|')"
+    # _log "${ATCMD} res: $(echo "${_AT_RES}" | tr '\n' '|')"   # 已由 _exec_at 统一记录
 
     local cur_mode=$(echo "$_AT_RES" | awk '/^[[:space:]]*Mode:/{gsub(/[^0-9]/,""); print; exit}')
 
