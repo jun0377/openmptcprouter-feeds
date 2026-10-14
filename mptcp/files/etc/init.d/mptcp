@@ -288,8 +288,8 @@ interface_multipath_settings() {
 	#[ "$config" = "omrvpn" ] && return 0
 	[ "$config" = "omrvpn" ] && mode="off"
 	#[ -n "$(ifconfig | grep $iface)" ] || return 0
-	# 确保接口存在
-	[ -n "$(ip link show dev $iface)" ] || return 0
+	# 确保接口存在(设备不存在时 ip 会输出报错, 这里屏蔽 stderr, 仅用于判断接口是否可用)
+	[ -n "$(ip link show dev $iface 2>/dev/null)" ] || return 0
 	# 忽略特定类型的接口 (如 _dev, if*, lo)
 	[ "$(echo $iface | grep _dev)" != "" ] && return 0
 	[ "$(echo $iface | grep '^if')" != "" ] && return 0
