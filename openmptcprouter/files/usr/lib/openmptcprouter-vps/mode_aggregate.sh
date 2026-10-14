@@ -126,6 +126,8 @@ _set_mqvpn_vps() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
 	[ -z "$vps_config" ] && logger -t "OMR-VPS" "<$FUNCNAME> vps_config is empty! return now..." && return
 	
+	logger -t "OMR-VPS" "<$FUNCNAME> vps_config mqvpn: $(echo "$vps_config" | jsonfilter -q -e '@.mqvpn')"
+
 	# 从服务器检索到的端口号
 	local current_port="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.port')"
 	logger -t "OMR-VPS" "<$FUNCNAME> local port:${port} vps port:${current_port}"
@@ -133,6 +135,12 @@ _set_mqvpn_vps() {
 	
 	# 本地key
 	local key="$(uci -q get mqvpn.auth.key)"
+	local vps_key="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.key')"
+	if [ -n "$vps_key" ] && [ "$vps_key" != "$key" ]; then
+		logger -t "OMR-VPS" "<$FUNCNAME> mqvpn key differ from VPS, update local key"
+		key="$vps_key"
+		uci -q set mqvpn.auth.key="$key"
+	fi
 	[ -z "$key" ] && logger -t "OMR-VPS" "<$FUNCNAME> MQVPN key not set, return now..." && echo "MQVPN key not set" && return
 	
 	# 调度策略
@@ -160,11 +168,14 @@ _set_mqvpn_vps() {
 	local settings='{"key": "'$key'", "port": '$port', "scheduler": "'$scheduler'", "cc": "'$cc'", "fec_enable": '$fec_enable', "fec_scheme": "'$fec_scheme'", "reinjection_control": '$reinjection_control', "reinjection_mode": "'$reinjection_mode'"}'
 	logger -t "OMR-VPS" "<$FUNCNAME> set VPS mqvpn:${settings}"
 
-	local result=$(_set_json "mqvpn" "$settings")
-	logger -t "OMR-VPS" "<$FUNCNAME> result:${result}"
+	# local result=$(_set_json "mqvpn" "$settings")
+	# logger -t "OMR-VPS" "<$FUNCNAME> result:${result}"
 
 	[ -n "$result" ] && uci -q set openmptcprouter.${servername}.get_config="1"
-	
+
+	# 所有 mqvpn 配置(port/key 等)都更新完毕, 统一提交一次
+	[ -n "$(uci -q changes mqvpn)" ] && uci -q commit mqvpn
+
 	/etc/init.d/mqvpn restart >/dev/null 2>&1
 	
 	echo $result
