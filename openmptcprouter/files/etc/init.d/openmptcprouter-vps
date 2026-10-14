@@ -28,12 +28,6 @@ else
 	IP6TABLESSAVE="/usr/sbin/ip6tables-save"
 fi
 
-# # 解析JSON格式的数据中的result字段
-# _parse_result() {
-# 	result=$("echo $1 | jsonfilter -q -e '@.result'")
-# 	echo $result
-# }
-
 # VPS服务器的认证登录
 _login() {
 	local username password auth

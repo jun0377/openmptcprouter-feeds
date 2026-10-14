@@ -10,7 +10,9 @@ if [ "$(uci -q get openmptcprouter.settings.version)" = "" ]; then
 			set unbound.@unbound[-1].protocol="ip4_only"
 			set unbound.@unbound[-1].enabled=1
 			set unbound.@unbound[-1].recursion="aggressive"
-			set unbound.@unbound[-1].validator='1'
+			# 默认上游 fwd_chinadns 是普通 UDP 转发, 无法满足 DNSSEC 校验要求,
+			# 开启 validator 会导致所有域名解析失败(SERVFAIL), 因此默认关闭
+			set unbound.@unbound[-1].validator='0'
 			set unbound.@unbound[-1].validator_ntp='1'
 			del unbound.@unbound[-1].dns64_prefix
 			del unbound.@unbound[-1].iface_wan
@@ -117,6 +119,8 @@ fi
 
 # 预置了 unbound 的 权威区（auth_zone）和 转发区（forward_zone）, 
 # 让用户可以在 LuCI 界面中一键切换 DNS 上游
+# 逐个 zone 单独判断是否已存在, 避免用某一个 zone 当"整块守卫",
+# 否则后续版本新增的 zone 在已有设备上永远不会被创建
 if [ -z "$(uci -q show unbound.auth_icann)" ]; then
 	uci -q batch <<-EOF >/dev/null
 		del unbound.auth_icann
@@ -131,6 +135,11 @@ if [ -z "$(uci -q show unbound.auth_icann)" ]; then
 		add_list unbound.auth_icann.zone_name='in-addr.arpa.'
 		add_list unbound.auth_icann.zone_name='ip6.arpa.'
 		set unbound.auth_icann.enabled='0'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_isp)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		del unbound.fwd_isp
 		set unbound.fwd_isp=zone
 		set unbound.fwd_isp.enabled='0'
@@ -139,6 +148,11 @@ if [ -z "$(uci -q show unbound.auth_icann)" ]; then
 		set unbound.fwd_isp.zone_type='forward_zone'
 		add_list unbound.fwd_isp.zone_name='isp-bill.example.com.'
 		add_list unbound.fwd_isp.zone_name='isp-mail.example.net.'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_google)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		del unbound.fwd_google
 		set unbound.fwd_google=zone
 		set unbound.fwd_google.enabled='0'
@@ -150,7 +164,12 @@ if [ -z "$(uci -q show unbound.auth_icann)" ]; then
 		add_list unbound.fwd_google.server='8.8.8.8'
 		add_list unbound.fwd_google.server='2001:4860:4860::8844'
 		add_list unbound.fwd_google.server='2001:4860:4860::8888'
-		set unbound.fwd_google.zone_name='.'
+		add_list unbound.fwd_google.zone_name='.'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_cloudflare)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		del unbound.fwd_cloudflare
 		set unbound.fwd_cloudflare=zone
 		set unbound.fwd_cloudflare.enabled='0'
@@ -162,16 +181,22 @@ if [ -z "$(uci -q show unbound.auth_icann)" ]; then
 		add_list unbound.fwd_cloudflare.server='1.0.0.1'
 		add_list unbound.fwd_cloudflare.server='2606:4700:4700::1111'
 		add_list unbound.fwd_cloudflare.server='2606:4700:4700::1001'
-		set unbound.fwd_cloudflare.zone_name='.'
+		add_list unbound.fwd_cloudflare.zone_name='.'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_chinadns)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		del unbound.fwd_chinadns
 		set unbound.fwd_chinadns=zone
 		set unbound.fwd_chinadns.enabled='1'
-		set unbound.fwd_chinadns.fallback='1'
+		# fallback=0 -> forward-first: no, 转发失败直接返回, 不再退回根服务器递归
+		set unbound.fwd_chinadns.fallback='0'
 		set unbound.fwd_chinadns.zone_type='forward_zone'
 		add_list unbound.fwd_chinadns.server='223.5.5.5'
 		add_list unbound.fwd_chinadns.server='223.6.6.6'
 		add_list unbound.fwd_chinadns.server='119.29.29.29'
-		set unbound.fwd_chinadns.zone_name='.'
+		add_list unbound.fwd_chinadns.zone_name='.'
 	EOF
 fi
 
@@ -199,7 +224,12 @@ if [ -z "$(uci -q get unbound.fwd_adguard_family)" ]; then
 		set unbound.fwd_adguard_family.zone_type='forward_zone'
 		add_list unbound.fwd_adguard_family.server='176.103.130.132'
 		add_list unbound.fwd_adguard_family.server='176.103.130.134'
-		set unbound.fwd_adguard_family.zone_name='.'
+		add_list unbound.fwd_adguard_family.zone_name='.'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_adguard_standard)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		set unbound.fwd_adguard_standard=zone
 		set unbound.fwd_adguard_standard.enabled='0'
 		set unbound.fwd_adguard_standard.fallback='1'
@@ -208,7 +238,12 @@ if [ -z "$(uci -q get unbound.fwd_adguard_family)" ]; then
 		set unbound.fwd_adguard_standard.zone_type='forward_zone'
 		add_list unbound.fwd_adguard_standard.server='176.103.130.130'
 		add_list unbound.fwd_adguard_standard.server='176.103.130.131'
-		set unbound.fwd_adguard_standard.zone_name='.'
+		add_list unbound.fwd_adguard_standard.zone_name='.'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_cloudflare_family)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		set unbound.fwd_cloudflare_family=zone
 		set unbound.fwd_cloudflare_family.enabled='0'
 		set unbound.fwd_cloudflare_family.fallback='1'
@@ -217,7 +252,12 @@ if [ -z "$(uci -q get unbound.fwd_adguard_family)" ]; then
 		set unbound.fwd_cloudflare_family.zone_type='forward_zone'
 		add_list unbound.fwd_cloudflare_family.server='1.1.1.3'
 		add_list unbound.fwd_cloudflare_family.server='1.0.0.3'
-		set unbound.fwd_cloudflare_family.zone_name='.'
+		add_list unbound.fwd_cloudflare_family.zone_name='.'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_cloudflare_malware)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		set unbound.fwd_cloudflare_malware=zone
 		set unbound.fwd_cloudflare_malware.enabled='0'
 		set unbound.fwd_cloudflare_malware.fallback='1'
@@ -226,7 +266,12 @@ if [ -z "$(uci -q get unbound.fwd_adguard_family)" ]; then
 		set unbound.fwd_cloudflare_malware.zone_type='forward_zone'
 		add_list unbound.fwd_cloudflare_malware.server='1.1.1.2'
 		add_list unbound.fwd_cloudflare_malware.server='1.0.0.2'
-		set unbound.fwd_cloudflare_malware.zone_name='.'
+		add_list unbound.fwd_cloudflare_malware.zone_name='.'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_odvr)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		set unbound.fwd_odvr=zone
 		set unbound.fwd_odvr.enabled='0'
 		set unbound.fwd_odvr.fallback='1'
@@ -235,7 +280,12 @@ if [ -z "$(uci -q get unbound.fwd_adguard_family)" ]; then
 		set unbound.fwd_odvr.zone_type='forward_zone'
 		add_list unbound.fwd_odvr.server='193.17.47.1'
 		add_list unbound.fwd_odvr.server='185.43.135.1'
-		set unbound.fwd_odvr.zone_name='.'
+		add_list unbound.fwd_odvr.zone_name='.'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_libredns)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		set unbound.fwd_libredns=zone
 		set unbound.fwd_libredns.enabled='0'
 		set unbound.fwd_libredns.fallback='1'
@@ -243,7 +293,12 @@ if [ -z "$(uci -q get unbound.fwd_adguard_family)" ]; then
 		set unbound.fwd_libredns.tls_upstream='1'
 		set unbound.fwd_libredns.zone_type='forward_zone'
 		add_list unbound.fwd_libredns.server='116.202.176.26'
-		set unbound.fwd_libredns.zone_name='.'
+		add_list unbound.fwd_libredns.zone_name='.'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_quad9_recommended)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		set unbound.fwd_quad9_recommended=zone
 		set unbound.fwd_quad9_recommended.enabled='0'
 		set unbound.fwd_quad9_recommended.fallback='1'
@@ -252,7 +307,12 @@ if [ -z "$(uci -q get unbound.fwd_adguard_family)" ]; then
 		set unbound.fwd_quad9_recommended.zone_type='forward_zone'
 		add_list unbound.fwd_quad9_recommended.server='9.9.9.9'
 		add_list unbound.fwd_quad9_recommended.server='149.112.112.112'
-		set unbound.fwd_quad9_recommended.zone_name='.'
+		add_list unbound.fwd_quad9_recommended.zone_name='.'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_quad9_unsecured)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		set unbound.fwd_quad9_unsecured=zone
 		set unbound.fwd_quad9_unsecured.enabled='0'
 		set unbound.fwd_quad9_unsecured.fallback='1'
@@ -261,7 +321,12 @@ if [ -z "$(uci -q get unbound.fwd_adguard_family)" ]; then
 		set unbound.fwd_quad9_unsecured.zone_type='forward_zone'
 		add_list unbound.fwd_quad9_unsecured.server='9.9.9.10'
 		add_list unbound.fwd_quad9_unsecured.server='149.112.112.10'
-		set unbound.fwd_quad9_unsecured.zone_name='.'
+		add_list unbound.fwd_quad9_unsecured.zone_name='.'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_quad9_ecs)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		set unbound.fwd_quad9_ecs=zone
 		set unbound.fwd_quad9_ecs.enabled='0'
 		set unbound.fwd_quad9_ecs.fallback='1'
@@ -270,7 +335,12 @@ if [ -z "$(uci -q get unbound.fwd_adguard_family)" ]; then
 		set unbound.fwd_quad9_ecs.zone_type='forward_zone'
 		add_list unbound.fwd_quad9_ecs.server='9.9.9.11'
 		add_list unbound.fwd_quad9_ecs.server='149.112.112.11'
-		set unbound.fwd_quad9_ecs.zone_name='.'
+		add_list unbound.fwd_quad9_ecs.zone_name='.'
+	EOF
+fi
+
+if [ -z "$(uci -q get unbound.fwd_quad9_secured)" ]; then
+	uci -q batch <<-EOF >/dev/null
 		set unbound.fwd_quad9_secured=zone
 		set unbound.fwd_quad9_secured.enabled='0'
 		set unbound.fwd_quad9_secured.fallback='1'
@@ -279,7 +349,7 @@ if [ -z "$(uci -q get unbound.fwd_adguard_family)" ]; then
 		set unbound.fwd_quad9_secured.zone_type='forward_zone'
 		add_list unbound.fwd_quad9_secured.server='9.9.9.9'
 		add_list unbound.fwd_quad9_secured.server='149.112.112.9'
-		set unbound.fwd_quad9_secured.zone_name='.'
+		add_list unbound.fwd_quad9_secured.zone_name='.'
 	EOF
 fi
 
