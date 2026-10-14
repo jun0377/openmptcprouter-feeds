@@ -92,6 +92,11 @@ nft_snat() {
 	local wan_dev="$(ifstatus "$channel" 2>/dev/null | jsonfilter -q -e '@.l3_device')"
 	[ -z "$wan_dev" ] && wan_dev="$(ifstatus "$channel" 2>/dev/null | jsonfilter -q -e '@.device')"
 	[ -z "$wan_dev" ] && {
+		local sysfs="$(uci -q get sim.${channel}.usb)"
+		[ -n "$sysfs" ] && [ -d "$sysfs" ] && wan_dev="$(ls "$sysfs"/*/net/ 2>/dev/null | head -n 1)"
+	}
+	
+	[ -z "$wan_dev" ] && {
 		logger -t "OMR-VPS" "<$FUNCNAME> unknown wan_dev! return now..."
 		return 
 	}
