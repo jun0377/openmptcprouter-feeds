@@ -1163,11 +1163,39 @@ function atcmd_set_airplane_off()
 }
 
 # 拨号
-function atcmd_connect()
+function atcmd_stick_connect()
 {
-    local ATCMD="AT^NDISDUP=1,1"
+    # 等待附网成功后才能进行拨号
+    local tries=0
+    local max=30
+    local stat=""
+    local ATCMD="AT+CGATT?"
+
+    while [ "$tries" -lt "$max" ]; do
+        # +CGATT: <state>  1-已附着(PS域可用), 0-未附着
+        if _exec_at "$ATCMD" $1; then
+            stat=$(echo "$_AT_RES" | awk -F'[^0-9]+' '/\+CGATT:/{print $2; exit}')
+            [ "x${stat}" == "x1" ] && break
+        else
+            # 模组不支持CGATT查询时无法判断附网状态, 跳过等待直接拨号
+            _log "CGATT query unsupported, skip attach wait"
+            stat="1"
+            break
+        fi
+
+        tries=$((tries+1))
+        sleep 1
+    done
+
+    case "$stat" in
+        1)  _log "attached after ${tries}s, start to dial" ;;
+        *)  _log "not attached after ${max}s, abort dial"
+            return 1 ;;
+    esac
+
+    ATCMD="AT^NDISDUP=1,1"
     _exec_at "$ATCMD" $1 || return 1
-    
+
     return 0
 }
 
@@ -1177,6 +1205,43 @@ function atcmd_disconnect()
     local ATCMD="AT^NDISDUP=1,0"
     _exec_at "$ATCMD" $1 || return 1
     logger -t "NCM" "ifname:${ifname} ${ATCMD}"
+
+    return 0
+}
+
+# 使用PDP上下文8拨号
+function atcmd_connect_cid8()
+{
+    # 等待附网成功后才能进行拨号
+    local tries=0
+    local max=30
+    local stat=""
+    local ATCMD="AT+CGATT?"
+
+    while [ "$tries" -lt "$max" ]; do
+        # +CGATT: <state>  1-已附着(PS域可用), 0-未附着
+        if _exec_at "$ATCMD" $1; then
+            stat=$(echo "$_AT_RES" | awk -F'[^0-9]+' '/\+CGATT:/{print $2; exit}')
+            [ "x${stat}" == "x1" ] && break
+        else
+            # 模组不支持CGATT查询时无法判断附网状态, 跳过等待直接拨号
+            _log "CGATT query unsupported, skip attach wait"
+            stat="1"
+            break
+        fi
+
+        tries=$((tries+1))
+        sleep 1
+    done
+
+    case "$stat" in
+        1)  _log "attached after ${tries}s, start to dial" ;;
+        *)  _log "not attached after ${max}s, abort dial"
+            return 1 ;;
+    esac
+
+    ATCMD="AT^NDISDUP=8,1"
+    _exec_at "$ATCMD" $1 || return 1
 
     return 0
 }
@@ -1927,6 +1992,15 @@ function atcmd_init_report()
     return 0
 }
 
+# 打开PCIE控制器
+function atcmd_init_pcie
+{
+    local ATCMD="AT^TDPMCFG=1,0,0,0"
+    _exec_at "$ATCMD" $1 || return 1
+
+    return 0
+}
+
 # 初始化
 function atcmd_init
 {
@@ -1949,6 +2023,9 @@ function atcmd_init
 
     # 开启SIM卡热插拔
     atcmd_init_hotplug $1
+
+    # 打开PCIE控制器
+    atcmd_init_pcie $1
 
     return 0
 }
@@ -2033,7 +2110,7 @@ function dial
     atcmd_set_airplane_off $1
 
     # 拨号
-    if atcmd_connect $1; then
+    if atcmd_stick_connect $1; then
         return 0
     fi
 
@@ -2068,6 +2145,9 @@ function atcmd_e5_autodial()
     atcmd_set_airplane_on $1
     sleep 3
     atcmd_set_airplane_off $1
+
+    # 使用PDP上下文8
+    atcmd_connect_cid8 $1 || return 1
 
     return 0
 }
