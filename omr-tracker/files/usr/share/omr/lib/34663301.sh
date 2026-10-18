@@ -1241,7 +1241,8 @@ function atcmd_connect_cid8()
     esac
 
     ATCMD="AT^NDISDUP=8,1"
-    _exec_at "$ATCMD" $1 || return 1
+    # _exec_at "$ATCMD" $1 || return 1
+    _exec_at "$ATCMD" $1
 
     return 0
 }
