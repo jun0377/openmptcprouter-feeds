@@ -1,0 +1,25 @@
+config remote 'remote'
+	# 预置私钥路径, 公钥认证使用
+	option key '/root/.ssh/id_dropbear'
+	# 远端 SSH 端口
+	option port '22'
+	# 单次执行超时(秒)
+	option timeout '10'
+	# 输出上限(字节), 防止 pty 无限读取
+	option max_output '65536'
+	# 两条命令执行间隔
+	option interval_sec '10'
+	# 默认远端主机mac地址
+	option mac ''
+	# 默认远端主机地址, 留空表示由调用方显式传入
+	option host ''
+	# 默认远端用户名, 留空表示由调用方显式传入
+	option user 'root'
+	# 备选密码, 仅在公钥认证失败时使用
+	option password 'root'
+
+config log 'log'
+	# 日志文件路径
+	option file '/var/log/basestation.log'
+	# 日志文件大小
+	option max_size_MB '1' 

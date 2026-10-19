@@ -1,0 +1,42 @@
+# -*- coding: utf-8 -*-
+# vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
+
+import subprocess							# 调用 uci 命令读写系统配置
+
+UCI_TIMEOUT = 5								# 单条 uci 命令的超时(秒), 防止 uci 卡住阻塞主循环
+
+
+# 执行一条 uci 命令: args 为不含 "uci" 的参数列表, 返回 (是否成功, 标准输出)
+def _run_uci(args):
+	try:
+		proc = subprocess.run(["uci"] + args, capture_output=True, text=True, timeout=UCI_TIMEOUT)
+	except (OSError, subprocess.SubprocessError):					# uci 不存在、超时、被信号杀掉等
+		return False, ""
+	if proc.returncode != 0:										# uci 自身报错(如配置项不存在)
+		return False, ""
+	return True, proc.stdout										# 成功: 读配置时结果在 stdout
+
+
+# 读取 uci 配置项(如 remote.remote.timeout), 不存在或执行失败返回 None
+def uci_get(option):
+	ok, out = _run_uci(["get", option])
+	if not ok:
+		return None
+	return out.strip()												# 去掉结尾换行
+
+
+# 读回整个配置文件的全部内容(每行形如 remote.remote.timeout='10'), 一次取回多项用
+# 用途: 避免为每个配置项单起一个进程, 执行失败或配置不存在返回空串
+def uci_show(config):
+	return _run_uci(["show", config])[1]
+
+
+# 设置 uci 配置项(只写入, 不会提交), 必须调用 uci_commit 后才会真正生效, 成功返回 True
+# 多改几项后再调一次 uci_commit 提交, 避免每改一项提交一次
+def uci_set(option, value):
+	return _run_uci(["set", "%s=%s" % (option, value)])[0]
+
+
+# 提交 uci 修改使配置持久化, config 为配置文件路径或名称(如 basestation), 成功返回 True
+def uci_commit(config):
+	return _run_uci(["commit", config])[0]
