@@ -1,10 +1,13 @@
 #!/bin/sh
 
-# 隧道设备名随 VPN 类型: mqvpn 由 mqvpn.interface.tun_name 决定(默认 mqvpn0), 其余(openvpn)为 tun0
+# 隧道设备名随 VPN 类型: mqvpn 由 mqvpn.interface.tun_name 决定(默认 mqvpn0), selfvpn 由 selfvpn.selfvpn.interface 决定(默认 stun), 其余(openvpn)为 tun0
 omrvpn_device="tun0"
 if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ]; then
 	omrvpn_device="$(uci -q get mqvpn.interface.tun_name)"
 	[ -z "$omrvpn_device" ] && omrvpn_device="mqvpn0"
+elif [ "$(uci -q get openmptcprouter.settings.vpn)" = "selfvpn" ]; then
+	omrvpn_device="$(uci -q get selfvpn.selfvpn.interface)"
+	[ -z "$omrvpn_device" ] && omrvpn_device="stun"
 fi
 
 if [ "$(uci -q get network.omrvpn)" = "" ]; then
@@ -190,7 +193,8 @@ if [ "$NBCPU" -gt 1 ] && [ -z "$(uci -q get openvpn.omr2)" ]; then
 			set openvpn.omr$c.ping_restart=60
 			set openvpn.omr$c.tun_mtu=1420
 		EOF
-		[ -z "$(uci -q get firewall.zone_vpn.device | grep tun$((c-1)))" ] && add_list firewall.zone_vpn.device=tun$((c-1))
+
+		uci -q get firewall.zone_vpn.device | grep -qw "tun$((c-1))" || uci -q add_list firewall.zone_vpn.device="tun$((c-1))"
 
 	done
 	uci -q commit openvpn

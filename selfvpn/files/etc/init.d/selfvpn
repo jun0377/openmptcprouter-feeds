@@ -14,6 +14,10 @@ PROG=/usr/sbin/selfvpn
 # selfvpn 读取的配置文件
 CONF_FILE="/var/etc/selfvpn.ini"
 
+# 聚合模式使用的策略路由接口与表号, 与 OMR 的 omrvpn/1500 约定保持一致
+OMRVPN_IFACE="omrvpn"
+OMRVPN_TABLE="1500"
+
 # UCI 配置段中需要写入 ini 的选项
 SELFVPN_OPTIONS="sn interface mtu authentication logLevel logFile logSize \
 	remoteAddr remotePort bufferCapacity queueCapacity ringCapacity \
@@ -50,11 +54,52 @@ generate_ini() {
 	done
 }
 
+# 将 omrvpn 绑定到 selfvpn 的隧道设备, 让 netifd/omr-tracker 接管主表默认路由
+bind_omrvpn() {
+	local dev="$1"
+	local changed=0
+
+	# 只有 selfvpn 被选为聚合模式的 VPN 时才接管 omrvpn, 避免影响 openvpn/mqvpn
+	[ "$(uci -q get openmptcprouter.settings.vpn)" = "selfvpn" ] || return 0
+	[ -n "$(uci -q get network.${OMRVPN_IFACE})" ] || return 0
+	[ -n "$dev" ] || dev="stun"
+
+	[ "$(uci -q get network.${OMRVPN_IFACE}.device)" = "$dev" ] || {
+		uci -q set network.${OMRVPN_IFACE}.device="$dev"
+		changed=1
+	}
+	# selfvpn 自己配置 tun 地址, netifd 不能再用 dhcp
+	[ "$(uci -q get network.${OMRVPN_IFACE}.proto)" = "none" ] || {
+		uci -q set network.${OMRVPN_IFACE}.proto="none"
+		changed=1
+	}
+	[ "$(uci -q get network.${OMRVPN_IFACE}.ip4table)" = "$OMRVPN_TABLE" ] || {
+		uci -q set network.${OMRVPN_IFACE}.ip4table="$OMRVPN_TABLE"
+		changed=1
+	}
+	[ "$(uci -q get network.${OMRVPN_IFACE}.metric)" = "$OMRVPN_TABLE" ] || {
+		uci -q set network.${OMRVPN_IFACE}.metric="$OMRVPN_TABLE"
+		changed=1
+	}
+
+	if [ "$changed" = "1" ]; then
+		uci -q commit network
+		# 让 netifd 重新读取 network 配置, 否则 ifup 仍使用旧的 device
+		/etc/init.d/network reload >/dev/null 2>&1
+	fi
+
+	ifup "$OMRVPN_IFACE" >/dev/null 2>&1
+}
+
 # 启动 selfvpn 实例
 start_selfvpn() {
 	local s="$1"
+	local dev
 
 	generate_ini "$s"
+
+	config_get dev "$s" interface
+	bind_omrvpn "$dev"
 
 	procd_open_instance "$s"
 	# 以客户端模式启动，读取生成的 ini 配置
@@ -89,4 +134,19 @@ start_service() {
 service_triggers() {
 	# 当 /etc/config/selfvpn 发生变化时重新加载
 	procd_add_reload_trigger selfvpn
+}
+
+# 停止服务: 只有 omrvpn 当前绑定在 selfvpn 的隧道设备上时才关闭它
+stop_service() {
+	local dev
+
+	config_load 'selfvpn'
+	config_get dev 'selfvpn' 'interface'
+	[ -n "$dev" ] || dev="stun"
+
+	if [ "$(uci -q get network.${OMRVPN_IFACE}.device)" = "$dev" ]; then
+		ifdown "$OMRVPN_IFACE" >/dev/null 2>&1
+	fi
+
+	rm -f "$CONF_FILE"
 }

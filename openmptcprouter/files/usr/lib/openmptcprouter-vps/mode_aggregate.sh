@@ -32,6 +32,10 @@ _set_vpn_ip() {
 	if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ]; then
 		vpnifname="$(uci -q get mqvpn.interface.tun_name)"
 		[ -z "$vpnifname" ] && vpnifname="mqvpn0"
+	elif [ "$(uci -q get openmptcprouter.settings.vpn)" = "selfvpn" ]; then
+		# selfvpn 的隧道设备由 selfvpn.selfvpn.interface 决定(默认 stun)
+		vpnifname="$(uci -q get selfvpn.selfvpn.interface)"
+		[ -z "$vpnifname" ] && vpnifname="stun"
 	fi
 	# 从服务器获取到的vpn本地IP，服务器的remoteip就是设备的local ip
 	vpnip_local_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.remoteip')"
@@ -75,6 +79,13 @@ _stop_vpn() {
 	case "$name" in
 		openvpn) section="openvpn.omr"; flag="openvpn.omr.enabled" ;;
 		mqvpn)   section="mqvpn.settings"; flag="mqvpn.settings.enable" ;;
+		selfvpn)
+			# selfvpn 没有独立的 enable 开关, 直接停掉 procd 实例
+			[ -f /etc/init.d/selfvpn ] || return 0
+			/etc/init.d/selfvpn stop >/dev/null 2>&1
+			logger -t "OMR-VPS" "<$FUNCNAME> stop ${name}"
+			return 0
+			;;
 		*)       return 0 ;;
 	esac
 	[ -f /etc/init.d/${name} ] && [ -n "$(uci -q get ${section})" ] || return 0
@@ -293,6 +304,13 @@ _config_service() {
 			_stop_vpn openvpn
 			[ -z "$(_set_mqvpn_vps)" ] && error=1 && logger -t "OMR-VPS" "<$FUNCNAME> _set_mqvpn_vps error!"
 			;;
+		selfvpn)
+			_stop_vpn openvpn
+			_stop_vpn mqvpn
+			# selfvpn 的隧道参数由自身 UCI 配置维护, 这里只保证 procd 实例已启动
+			[ -x /etc/init.d/selfvpn ] && [ -n "$(uci -q get selfvpn.selfvpn)" ] && \
+				/etc/init.d/selfvpn start >/dev/null 2>&1
+			;;
 		*)
 			logger -t "OMR-VPS" "<$FUNCNAME> aggregate vpn:${vpn_type} not supported, skip!"
 			;;
@@ -332,16 +350,20 @@ stop_mode_aggregate() {
 	local ip6table="$(uci -q get network.omrvpn.ip6table)"
 	case "$ip6table" in ''|*[!0-9]*) ip6table="61500" ;; esac	# 校验从 uci 读到的表号是不是纯数字，不是就回退到默认值
 
-	# 聚合隧道设备名: openvpn=tun0, mqvpn=mqvpn0
+	# 聚合隧道设备名: openvpn=tun0, mqvpn=mqvpn0, selfvpn=stun
 	local vpnifname="$(uci -q get network.omrvpn.device)"
 	if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ]; then
 		vpnifname="$(uci -q get mqvpn.interface.tun_name)"
 		[ -z "$vpnifname" ] && vpnifname="mqvpn0"
+	elif [ "$(uci -q get openmptcprouter.settings.vpn)" = "selfvpn" ]; then
+		vpnifname="$(uci -q get selfvpn.selfvpn.interface)"
+		[ -z "$vpnifname" ] && vpnifname="stun"
 	fi
 
 	# 1. 停止聚合模式使用的VPN, 否则隧道会重新拉起并重建路由
 	_stop_vpn openvpn
 	_stop_vpn mqvpn
+	_stop_vpn selfvpn
 
 	# 2. 关闭聚合网口
 	ifdown omrvpn >/dev/null 2>&1

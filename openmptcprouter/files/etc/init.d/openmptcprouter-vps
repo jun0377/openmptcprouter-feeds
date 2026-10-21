@@ -457,7 +457,7 @@ _set_vpn_vps() {
 	vpn_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
 	vpn="$(uci -q get openmptcprouter.settings.vpn)"
 
-	logger -t "OMR-VPS" "<$FUNCNAME> vpn:${vpn}"
+	logger -t "OMR-VPS" "<$FUNCNAME> vpn:${vpn} vpn_current:${vpn_current}"
 	
 	if [ "$vpn_current" != "$vpn" ]; then
 		local settings='{"vpn" : "'$vpn'"}'
@@ -899,10 +899,12 @@ _set_config_from_vps() {
 	fi
 
 	# Set current VPN
+	# 本地已有非空值时以本地为准: VPS 只负责在本地未配置时提供默认值。
+	# 否则 VPS 侧 lastchange 更新(或两端时钟偏差)时会把用户手动切换的 VPN 撤销。
 	logger -t "OMR-VPS" "<$FUNCNAME> current_vpn..."
 	current_vpn="$(uci -q get openmptcprouter.settings.vpn)"
 	logger -t "OMR-VPS" "<$FUNCNAME> current_vpn:${current_vpn}"
-	if [ -z "$current_vpn" ] || ([ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$lastchange" ]); then
+	if [ -z "$current_vpn" ]; then
 		current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
 		if [ -n "$current_vpn" ]; then
 

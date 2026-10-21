@@ -3,8 +3,8 @@ config selfvpn 'selfvpn'
 	option sn 'test123456'
 	# tun设备名称
 	option interface 'stun'
-	# MTU
-	option mtu '1500'
+	# MTU, 与 OpenVPN tun_mtu 保持一致, 避免 TCP 封装后分片
+	option mtu '1420'
 	# 鉴权字符串
 	option authentication 'authentication'
 	# 日志等级: debug / info / warn / error

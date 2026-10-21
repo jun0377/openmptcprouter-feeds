@@ -9,7 +9,7 @@ SETROUTE=false
 
 . /usr/share/omr/lib/common-post-tracking.sh
 
-# 取隧道(VPN)接口实际对应的设备名: openvpn 是 tun0, mqvpn 由 mqvpn.interface.tun_name 决定(默认 mqvpn0)
+# 取隧道(VPN)接口实际对应的设备名: openvpn 是 tun0, mqvpn 由 mqvpn.interface.tun_name 决定(默认 mqvpn0), selfvpn 由 selfvpn.selfvpn.interface 决定(默认 stun)
 _omrvpn_device() {
 	local dev
 	
@@ -17,6 +17,14 @@ _omrvpn_device() {
 	if [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ]; then
 		dev="$(uci -q get mqvpn.interface.tun_name)"
 		[ -z "$dev" ] && dev="mqvpn0"
+		echo "$dev"
+		return
+	fi
+
+	# selfvpn
+	if [ "$(uci -q get openmptcprouter.settings.vpn)" = "selfvpn" ]; then
+		dev="$(uci -q get selfvpn.selfvpn.interface)"
+		[ -z "$dev" ] && dev="stun"
 		echo "$dev"
 		return
 	fi

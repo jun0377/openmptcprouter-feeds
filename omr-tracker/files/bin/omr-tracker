@@ -490,7 +490,7 @@ while true; do
 		vpn_gate=""
 		# 决定聚合模式用哪种VPN
 		case "$(uci -q get openmptcprouter.settings.vpn)" in
-			openvpn|mqvpn) vpn_gate="$(uci -q get openmptcprouter.settings.vpn)" ;;
+			openvpn|mqvpn|selfvpn) vpn_gate="$(uci -q get openmptcprouter.settings.vpn)" ;;
 		esac
 		if [ -n "$vpn_gate" ] && ! pidof "$vpn_gate" > /dev/null 2>&1; then
 			OMR_TRACKER_STATUS="ERROR"

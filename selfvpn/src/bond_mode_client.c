@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 
 #include "bond_mode.h"
+#include "bond_route.h"
 #include "bond_runtime.h"
 #include "bond_session.h"
 #include "bond_trans_tool.h"
@@ -63,6 +64,7 @@ static void *bond_client_connect_thread(void *arg)
                 continue;
             }
 
+            bond_route_remove();
             bond_session_detach_conn(s);
             atomic_store_explicit(&s->state, BOND_SESSION_CONNECTING, memory_order_release);
         }
@@ -125,6 +127,16 @@ static void *bond_client_connect_thread(void *arg)
         conn->local_tun_ip = auth.assigned_ip;
         conn->peer_tun_ip = peer_ip;
 
+        /*
+         * 参考 OpenVPN 的路由模型: 隧道地址就绪后立即安装服务器直连路由和 1500 表策略路由,
+         * 保证 omr-tracker 把主表默认路由切到隧道前外层连接已有独立路径。
+         * 主表默认路由由 omr-tracker 的 003-up 负责, 避免两处同时覆盖。
+         */
+        if (0 != bond_route_setup(bond_tun_name(s->runtime->tun), auth.assigned_ip,
+                                  peer_ip, s->cfg.client.server_ip)) {
+            bt_log_warn(LOG_ALL_OUT, "sn:%s install tunnel routes failed!\n", s->cfg.sn);
+        }
+
         /* 用服务端下发的 peer tun ip 刷新统计槽位描述 */
         char peer_str[BOND_IP_STR_LEN] = {0};
         bond_ip_format(peer_ip, peer_str, sizeof(peer_str));
@@ -141,6 +153,7 @@ static void *bond_client_connect_thread(void *arg)
 
         if (0 != bond_session_attach(s)) {
             atomic_store_explicit(&s->state, BOND_SESSION_CONNECTING, memory_order_release);
+            bond_route_remove();
             bond_session_detach_conn(s);
             if (!bond_client_wait(s, BOND_CLIENT_RETRY_MS))
                 break;
@@ -157,8 +170,10 @@ static void *bond_client_connect_thread(void *arg)
                     (peer_ip >> 8) & 0xFF, peer_ip & 0xFF);
     }
 
-    if (conn->fd >= 0)
+    if (conn->fd >= 0) {
+        bond_route_remove();
         bond_session_detach_conn(s);
+    }
 
     return NULL;
 }
@@ -191,6 +206,9 @@ static void bond_client_session_stop(bond_session_t *s)
         pthread_join(s->conn.thread, NULL);
         s->conn.thread = 0;
     }
+
+    /* 兜底清理: 防止进程被停止时残留 oif 规则和 1500 表默认路由 */
+    bond_route_remove();
 }
 
 /* client 只有一条会话, 固定落在 0 号桶 */

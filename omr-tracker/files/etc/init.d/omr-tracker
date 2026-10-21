@@ -124,6 +124,11 @@ _launch_tracker() {
 				ifname="$(uci -q get mqvpn.interface.tun_name)"
 				[ -z "$ifname" ] && ifname="mqvpn0"
 				;;
+			selfvpn)
+				# selfvpn 的隧道设备, 默认 stun
+				ifname="$(uci -q get selfvpn.selfvpn.interface)"
+				[ -z "$ifname" ] && ifname="stun"
+				;;
 		esac
 	fi
 
