@@ -1,0 +1,92 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2008-2013 OpenWrt.org
+# Copyright (C) 2008 Jo-Philipp Wich
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+
+START=90
+STOP=10
+
+# 启用procd进程管理
+USE_PROCD=1
+PROG=/usr/sbin/selfvpn
+
+# selfvpn 读取的配置文件
+CONF_FILE="/var/etc/selfvpn.ini"
+
+# UCI 配置段中需要写入 ini 的选项
+SELFVPN_OPTIONS="sn interface mtu authentication logLevel logFile logSize \
+	remoteAddr remotePort bufferCapacity queueCapacity ringCapacity \
+	ringTotalCapacity socketSendBuffer socketRecvBuffer"
+
+# 创建临时配置文件，仅root用户可读写
+create_temp_file() {
+	mkdir -p "$(dirname "$1")"
+	rm -f "$1"
+	touch "$1"
+	chown root "$1"
+	chmod 0600 "$1"
+}
+
+# 将单个配置项按 key=value 格式写入 ini 文件
+append_option() {
+	local key="$1"
+	local value="$2"
+
+	[ -n "$value" ] || return 0
+	echo "${key}=${value}" >> "$CONF_FILE"
+}
+
+# 根据 UCI 配置段生成 /var/etc/selfvpn.ini
+generate_ini() {
+	local s="$1"
+	local key value
+
+	create_temp_file "$CONF_FILE"
+
+	for key in $SELFVPN_OPTIONS; do
+		config_get value "$s" "$key"
+		append_option "$key" "$value"
+	done
+}
+
+# 启动 selfvpn 实例
+start_selfvpn() {
+	local s="$1"
+
+	generate_ini "$s"
+
+	procd_open_instance "$s"
+	# 以客户端模式启动，读取生成的 ini 配置
+	procd_set_param command "$PROG" -c --conf "$CONF_FILE"
+	# 监控配置文件变化
+	procd_set_param file "$CONF_FILE"
+	# 设置进程优先级为10
+	procd_set_param nice 10
+	# 设置终止超时为15秒
+	procd_set_param term_timeout 15
+	# 启用进程重启
+	procd_set_param respawn
+	# 最短重启间隔：3600秒
+	procd_append_param respawn 3600
+	# 重启阈值：5次
+	procd_append_param respawn 5
+	# 重启时间窗口：无限制
+	procd_append_param respawn -1
+	# 完成实例配置
+	procd_close_instance
+}
+
+# 主服务启动函数
+start_service() {
+	# 加载 /etc/config/selfvpn
+	config_load 'selfvpn'
+	# 遍历所有 selfvpn 配置段启动实例
+	config_foreach start_selfvpn 'selfvpn'
+}
+
+# 服务触发器
+service_triggers() {
+	# 当 /etc/config/selfvpn 发生变化时重新加载
+	procd_add_reload_trigger selfvpn
+}

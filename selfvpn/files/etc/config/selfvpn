@@ -1,0 +1,31 @@
+config selfvpn 'selfvpn'
+    # 序列号
+	option sn 'test123456'
+	# tun设备名称
+	option interface 'stun'
+	# MTU
+	option mtu '1500'
+	# 鉴权字符串
+	option authentication 'authentication'
+	# 日志等级: debug / info / warn / error
+	option logLevel 'info'
+    # 日志文件
+    option logFile '/var/log/selfvpn.log'
+    # 日志文件大小, MB
+    option logSize '1'
+	# 服务器地址
+	option remoteAddr '127.0.0.1'
+	# 服务器端口
+	option remotePort '65520'
+	# 缓冲区大小, MB
+	option bufferCapacity '10'
+	# 数据转发队列大小, MB
+	option queueCapacity '5'
+	# 每会话 ring 缓冲区大小, MB
+	option ringCapacity '5'
+	# 所有会话 ring 的总预算, MB
+	option ringTotalCapacity '512'
+	# 每连接 socket 发送缓冲区, KB; 0 表示内核自动调优
+	option socketSendBuffer '0'
+	# 每连接 socket 接收缓冲区, KB; 0 表示内核自动调优
+	option socketRecvBuffer '0'
