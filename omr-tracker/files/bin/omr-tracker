@@ -502,6 +502,26 @@ while true; do
 		fi
 	fi
 
+	# omrvpn: 设备名以 settings.vpn 为准。
+	# netifd 里可能残留上一个 VPN 的 device(例如从 openvpn 切到 selfvpn 后仍是 tun0),
+	# 若继续按 ifstatus 解析, 会把探测打到已经停用的隧道上。
+	if [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
+		case "$(uci -q get openmptcprouter.settings.vpn)" in
+			openvpn)
+				OMR_TRACKER_DEVICE="$(uci -q get openvpn.omr.dev)"
+				[ -z "$OMR_TRACKER_DEVICE" ] && OMR_TRACKER_DEVICE="tun0"
+				;;
+			mqvpn)
+				OMR_TRACKER_DEVICE="$(uci -q get mqvpn.interface.tun_name)"
+				[ -z "$OMR_TRACKER_DEVICE" ] && OMR_TRACKER_DEVICE="mqvpn0"
+				;;
+			selfvpn)
+				OMR_TRACKER_DEVICE="$(uci -q get selfvpn.selfvpn.interface)"
+				[ -z "$OMR_TRACKER_DEVICE" ] && OMR_TRACKER_DEVICE="stun"
+				;;
+		esac
+	fi
+
 	# 如果设备变量为空, 或设备在 sysfs 中仍然存在，则尝试重新获取设备名
 	# 注意：若设备已从系统中消失（如拔网卡），则跳过此块，保留上次的设备名
 	[ -z "$OMR_TRACKER_DEVICE" ] || [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ] && {
@@ -577,8 +597,8 @@ while true; do
 				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 					OMR_TRACKER_DEVICE_GATEWAY=$(ip -4 r list dev "$OMR_TRACKER_DEVICE" | awk '/via/ {print $3;exit}' | tr -d "\n")
 				fi
-				# 如果仍未获取到且是启用 OpenVPN 的 omrvpn，使用特定 IP
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] && [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && [ "$(uci -q get openvpn.omr.enabled)" = "1" ]; then
+				# 如果仍未获取到且当前确实使用 OpenVPN 的 omrvpn，使用特定 IP
+				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] && [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" = "openvpn" ] && [ "$(uci -q get openvpn.omr.enabled)" = "1" ]; then
 					OMR_TRACKER_DEVICE_GATEWAY="10.255.252.1"
 				fi
 

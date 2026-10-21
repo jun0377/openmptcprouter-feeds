@@ -17,6 +17,12 @@ export OMR_TRACKER_DNS_MSG          # 状态信息
 
 interval="${OMR_TRACKER_INTERVAL:-15}"
 
+# DNS 自愈参数: 连续失败达到阈值后清理缓存并重启相关服务, 冷却期内不重复动作
+RECOVER_THRESHOLD=2			# 连续失败轮数(约 30 秒)
+RECOVER_COOLDOWN=300		# 两次自愈动作的最小间隔(秒)
+dns_fail_count=0
+last_recover_ts=0
+
 # 保持探测信息到/tmp/tracker-dns/tracker-dns.json文件
 _save() {
 	json_init
@@ -77,7 +83,12 @@ _dig_test() {
 	domains="www.baidu.com www.taobao.com www.qq.com www.aliyun.com www.google.com"
 
 	for domain in $domains; do
-		answer="$(resolveip -t 2 "$domain" 2>/dev/null | head -n 1 | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+		if command -v dig >/dev/null 2>&1; then
+			# 显式查询 127.0.0.1, 不依赖可能为空的 /etc/resolv.conf; 跳过 +short 输出里的 CNAME 行
+			answer="$(dig @127.0.0.1 +timeout=2 +tries=1 +short "$domain" 2>/dev/null | grep -v '\.$' | head -n 1 | tr -d '\r\n')"
+		else
+			answer="$(resolveip -t 2 "$domain" 2>/dev/null | head -n 1 | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+		fi
 		if [ -n "$answer" ]; then
 			OMR_TRACKER_DNS_RESOLVED=1
 			OMR_TRACKER_DNS_QUERY="$domain"
@@ -93,6 +104,37 @@ _dig_test() {
 	return 1
 }
 
+# 自愈: 先清 unbound 缓存并重启 dnsmasq(清掉两级的负缓存), 仍失败再重启 unbound
+# 过程按冷却时间限流, 避免每个探测周期都重启服务
+_recover_dns() {
+	local now
+
+	now="$(date +%s)"
+	[ $((now - last_recover_ts)) -lt "$RECOVER_COOLDOWN" ] && return 0
+
+	logger -t "OMR" "<$basename> DNS failed ${dns_fail_count} times, recovering..."
+
+	if command -v unbound-control >/dev/null 2>&1; then
+		unbound-control -c /var/lib/unbound/unbound.conf flush_zone . >/dev/null 2>&1
+		unbound-control -c /var/lib/unbound/unbound.conf flush_infra all >/dev/null 2>&1
+		logger -t "OMR" "<$basename> flush unbound cache"
+	fi
+	/etc/init.d/dnsmasq restart >/dev/null 2>&1
+	logger -t "OMR" "<$basename> restart dnsmasq"
+
+	# 清缓存后仍不能解析, 说明 unbound 状态已损坏, 直接重启它
+	sleep 3
+	if _dig_test; then
+		logger -t "OMR" "<$basename> DNS recovered"
+	else
+		/etc/init.d/unbound restart >/dev/null 2>&1
+		logger -t "OMR" "<$basename> still failed, restart unbound"
+	fi
+
+	last_recover_ts="$now"
+	return 0
+}
+
 # 主循环
 while true; do
 
@@ -103,8 +145,17 @@ while true; do
 	OMR_TRACKER_DNS_ANSWER=""
 	OMR_TRACKER_DNS_MSG="DNS service not running"
 
+	# 只在解析器进程存在时才自愈: 进程整体挂掉由 omr-schedule 负责拉起
 	if _check_dns_pid; then
-		_dig_test
+		if _dig_test; then
+			dns_fail_count=0
+		else
+			dns_fail_count=$((dns_fail_count + 1))
+			if [ "$dns_fail_count" -ge "$RECOVER_THRESHOLD" ]; then
+				_recover_dns
+				dns_fail_count=0
+			fi
+		fi
 	fi
 
 	_save

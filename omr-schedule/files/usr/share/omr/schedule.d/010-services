@@ -188,7 +188,7 @@ if [ -n "$(uci show openmptcprouter | awk -F= '/password/ { gsub("\047","",$2);p
 fi
 
 # 检查 Unbound DNS 解析器是否正常运行
-if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ] && [ -n "$(uci -q get dhcp.dnsmasq1.server | grep 127.0.0.1#5353)" ]; then
+if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.ub_main.enabled)" = "1" ] && [ -n "$(uci -q get 'dhcp.@dnsmasq[0].server' | grep 127.0.0.1#5353)" ]; then
 	# 如果 Unbound 进程不存在，重启它
 	if [ "$(pgrep -f unbound)" = "" ]; then
 		_log "Can't find unbound, restart it..."
@@ -197,7 +197,7 @@ if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" =
 		logger -t "OMR" "<omr-schedule> /etc/init.d/unbound restart >/dev/null 2>&1"
 		sleep 5
 	# 如果启用了外部检查，且 Unbound 监听在 5353 端口，但无法解析域名，则重启
-	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ "$(uci -q get unbound.ub_main.listen_port)" = "5353" ] && [ -n "$(dig +timeout=4 +tries=2 openmptcprouter.com -p 5353 | grep 'ANSWER: 0')" ]; then
+	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ "$(uci -q get unbound.ub_main.listen_port)" = "5353" ] && [ -z "$(dig @127.0.0.1 -p 5353 +timeout=4 +tries=2 +short openmptcprouter.com 2>/dev/null)" ]; then
 		_log "Can't resolve via unbound, restart it..."
 		logger -t "OMR" "<omr-schedule> Can't resolve via unbound, restart it..."
 		/etc/init.d/unbound restart >/dev/null 2>&1
@@ -206,32 +206,13 @@ if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" =
 	fi
 fi
 
-# 检查 dnsmasq 是否正常运行
-# if [ -f /etc/init.d/dnsmasq ]; then
-# 	# 如果 dnsmasq 进程不存在，重启它
-# 	if [ "$(pgrep -f dnsmasq)" = "" ]; then
-# 		_log "Can't find dnsmasq, restart it..."
-# 		logger -t "OMR" "<omr-schedule> Can't find dnsmasq, restart it..."
-# 		/etc/init.d/dnsmasq restart >/dev/null 2>&1
-# 		logger -t "OMR" "<omr-schedule> /etc/init.d/dnsmasq restart >/dev/null 2>&1"
-# 		sleep 5
-# 	# 如果启用额外检查，且 dnsmasq 拒绝连接，则重启
-# 	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ -z "$(dig +timeout=4 +tries=2 +short @127.0.0.1 www.baidu.com 2>/dev/null | head -n 1)" ]; then
-# 		logger -t "OMR" "<omr-schedule> Can't resolve via dnsmasq, restart it..."
-# 		_log "Can't resolve via dnsmasq, restart it..."
-# 		/etc/init.d/dnsmasq restart >/dev/null 2>&1
-# 		logger -t "OMR" "<omr-schedule> /etc/init.d/dnsmasq restart >/dev/null 2>&1"
-# 		sleep 5
-# 	fi
-# fi
-
-如果 dnsmasq 存在但未配置上游 DNS 服务器，则添加默认配置（将请求转发到 127.0.0.1:5353 的 Unbound）
-if [ -f /etc/init.d/dnsmasq ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server)" ]; then
+# 如果 dnsmasq 存在但未配置上游 DNS 服务器，则添加默认配置（将请求转发到 127.0.0.1:5353 的 Unbound）
+if [ -f /etc/init.d/dnsmasq ] && [ -z "$(uci -q get 'dhcp.@dnsmasq[0].server')" ]; then
 	logger -t "OMR" "<omr-schedule> dnsmasq"
 	uci -q batch <<-EOF >/dev/null
-		add_list dhcp.dnsmasq1.server='127.0.0.1#5353'
-		add_list dhcp.dnsmasq1.server='/lan/'
-		add_list dhcp.dnsmasq1.server='/use-application-dns.net/'
+		add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+		add_list dhcp.@dnsmasq[0].server='/lan/'
+		add_list dhcp.@dnsmasq[0].server='/use-application-dns.net/'
 		commit dhcp
 	EOF
 fi

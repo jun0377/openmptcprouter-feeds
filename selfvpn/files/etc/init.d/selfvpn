@@ -23,35 +23,29 @@ SELFVPN_OPTIONS="sn interface mtu authentication logLevel logFile logSize \
 	remoteAddr remotePort bufferCapacity queueCapacity ringCapacity \
 	ringTotalCapacity socketSendBuffer socketRecvBuffer"
 
-# 创建临时配置文件，仅root用户可读写
-create_temp_file() {
-	mkdir -p "$(dirname "$1")"
-	rm -f "$1"
-	touch "$1"
-	chown root "$1"
-	chmod 0600 "$1"
-}
-
-# 将单个配置项按 key=value 格式写入 ini 文件
-append_option() {
-	local key="$1"
-	local value="$2"
-
-	[ -n "$value" ] || return 0
-	echo "${key}=${value}" >> "$CONF_FILE"
-}
-
 # 根据 UCI 配置段生成 /var/etc/selfvpn.ini
+# 内容没变化时不动文件: procd 通过 ini 的 mtime 判断是否需要重启实例,
+# 而实例重启会销毁并重建 tun 设备, 连带清掉主表里指向隧道的默认路由。
 generate_ini() {
 	local s="$1"
 	local key value
+	local tmp="${CONF_FILE}.tmp.$$"
 
-	create_temp_file "$CONF_FILE"
+	mkdir -p "$(dirname "$CONF_FILE")"
+	: > "$tmp"
 
 	for key in $SELFVPN_OPTIONS; do
 		config_get value "$s" "$key"
-		append_option "$key" "$value"
+		[ -n "$value" ] && echo "${key}=${value}" >> "$tmp"
 	done
+
+	if [ -f "$CONF_FILE" ] && cmp -s "$tmp" "$CONF_FILE"; then
+		rm -f "$tmp"
+		return 0
+	fi
+
+	chmod 0600 "$tmp"
+	mv -f "$tmp" "$CONF_FILE"
 }
 
 # 将 omrvpn 绑定到 selfvpn 的隧道设备, 让 netifd/omr-tracker 接管主表默认路由
@@ -86,9 +80,12 @@ bind_omrvpn() {
 		uci -q commit network
 		# 让 netifd 重新读取 network 配置, 否则 ifup 仍使用旧的 device
 		/etc/init.d/network reload >/dev/null 2>&1
+		ifup "$OMRVPN_IFACE" >/dev/null 2>&1
+	elif [ "$(ifstatus "$OMRVPN_IFACE" 2>/dev/null | jsonfilter -q -e '@.up')" != "true" ]; then
+		# 只在接口确实没起来时才 ifup: 每次 ifup 都会触发 hotplug 并让 omr-tracker 重载,
+		# 而 openmptcprouter-vps 每个周期都会调用一次 selfvpn start。
+		ifup "$OMRVPN_IFACE" >/dev/null 2>&1
 	fi
-
-	ifup "$OMRVPN_IFACE" >/dev/null 2>&1
 }
 
 # 启动 selfvpn 实例
