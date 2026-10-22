@@ -35,9 +35,11 @@ LTE_LOCK_BAND=""        # LTE频段
 LTE_LOCK_FREQ=""        # LTE频点
 LTE_FREQLOCK_JSON="{}"  # JSON格式的LTE锁频/锁小区信息
 
+. /usr/share/omr/lib/sim_log.sh
+
 function _log()
 {
-    logger -t "tracker-sim ${ifname}" "<${interface} ${ttyUSB}>" "$@"
+    sim_log "$*"
 }
 
 # 保存到tmpfs
@@ -322,7 +324,7 @@ function _exec_at
 # 打开回显
 function atcmd_init_echo
 {
-    logger -t "NCM" "ifname:${ifname} atcmd_init_echo $1"
+    _log "ifname:${ifname} atcmd_init_echo $1"
 
     local ATCMD="ATE1"
     _exec_at "$ATCMD" $1 || return 1
@@ -1204,7 +1206,7 @@ function atcmd_disconnect()
 {
     local ATCMD="AT^NDISDUP=1,0"
     _exec_at "$ATCMD" $1 || return 1
-    logger -t "NCM" "ifname:${ifname} ${ATCMD}"
+    _log "ifname:${ifname} ${ATCMD}"
 
     return 0
 }
@@ -2005,7 +2007,7 @@ function atcmd_init_pcie
 # 初始化
 function atcmd_init
 {
-    logger -t "NCM" "ifname:${ifname} atcmd_init $1"
+    _log "ifname:${ifname} atcmd_init $1"
 
     # 打开回显
     atcmd_init_echo $1

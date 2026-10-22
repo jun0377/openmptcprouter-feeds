@@ -4,17 +4,22 @@
 # 由 /etc/init.d/tracker-sim 通过procd调用，参数为sim名称（如sim1）
 
 . /lib/functions.sh
+. /usr/share/omr/lib/sim_log.sh
 
 ifname=$1
 
-[ -n "$ifname" ] || {
-	logger -t "tracker-sim" "ifname is empty, exit"
-	exit 1
-}
+if [ -n "$ifname" ]; then
+    sim_log_init "$ifname"
+else
+    # 没有卡名时写一份公共日志, 便于排查启动参数问题
+    sim_log_init "tracker-sim"
+    sim_log "ifname is empty, exit"
+    exit 1
+fi
 
 function _log()
 {
-    logger -t "tracker-sim ${ifname}" "<${interface} ${ttyUSB}>" "$@"
+    sim_log "$*"
 }
 
 _log "ifname=$ifname"
