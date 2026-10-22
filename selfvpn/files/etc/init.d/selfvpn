@@ -121,6 +121,10 @@ start_selfvpn() {
 
 # 主服务启动函数
 start_service() {
+	# 只有聚合模式选中 selfvpn 时才启动: 该服务可能被 enable 成开机自启,
+	# 但当前使用 openvpn/mqvpn 时不应额外拉出一条隧道
+	[ "$(uci -q get openmptcprouter.settings.vpn)" = "selfvpn" ] || return 0
+
 	# 加载 /etc/config/selfvpn
 	config_load 'selfvpn'
 	# 遍历所有 selfvpn 配置段启动实例

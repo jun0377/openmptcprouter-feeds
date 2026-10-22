@@ -141,11 +141,23 @@ fi
 # Set the default VPN
 if [ "$(uci -q get openmptcprouter.settings.vpn)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
-		set openmptcprouter.settings.vpn='openvpn'
-		set glorytun.vpn.enable='1'
-		commit glorytun
+		set openmptcprouter.settings.vpn='selfvpn'
 		commit openmptcprouter
 	EOF
+	# 默认使用 selfvpn 时关掉其它 VPN 后端, 避免开机时抢占 omrvpn
+	[ -n "$(uci -q get openvpn.omr)" ] && {
+		uci -q set openvpn.omr.enabled='0'
+		uci -q commit openvpn
+	}
+	[ -n "$(uci -q get mqvpn.settings)" ] && {
+		uci -q set mqvpn.settings.enable='0'
+		uci -q commit mqvpn
+	}
+fi
+
+# selfvpn 作为默认 VPN 时随开机自启(其 init 内部会再校验 settings.vpn)
+if [ "$(uci -q get openmptcprouter.settings.vpn)" = "selfvpn" ] && [ -x /etc/init.d/selfvpn ]; then
+	/etc/init.d/selfvpn enable
 fi
 
 if [ "$(uci -q get openvpn.omr.proto)" != "tcp-client" ] || [ -z "$(uci -q get openvpn.omr.disable_dco)" ] || [ -z "$(uci -q get openvpn.omr.ping_restart)" ] || [ -z "$(uci -q get openvpn.omr.tun_mtu)" ]; then
@@ -203,16 +215,6 @@ if [ "$NBCPU" -gt 1 ] && [ -z "$(uci -q get openvpn.omr2)" ]; then
 	uci -q set openmptcprouter.settings.openvpn_lb="0"
 	uci -q commit openmptcprouter
 fi
-
-
-# This must not be enabled, this break everything
-#if [ "$(uci -q get openvpn.omr.com_lzo)" = "" ]; then
-#	uci -q batch <<-EOF >/dev/null
-#		set openvpn.omr.comp_lzo=adaptive
-#	EOF
-#fi
-
-
 
 rm -f /tmp/luci-indexcache
 exit 0

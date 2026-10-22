@@ -298,10 +298,12 @@ _config_service() {
 	case "$vpn_type" in
 		openvpn)
 			_stop_vpn mqvpn
+			_stop_vpn selfvpn
 			[ -n "$(uci -q get openvpn.omr)" ] && [ -z "$(_set_openvpn_vps)" ] && error=1 && logger -t "OMR-VPS" "<$FUNCNAME> _set_openvpn_vps error!"
 			;;
 		mqvpn)
 			_stop_vpn openvpn
+			_stop_vpn selfvpn
 			[ -z "$(_set_mqvpn_vps)" ] && error=1 && logger -t "OMR-VPS" "<$FUNCNAME> _set_mqvpn_vps error!"
 			;;
 		selfvpn)
