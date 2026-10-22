@@ -53,13 +53,40 @@ class SimState(Enum):
 
 # ICCID 前 6 位(IIN) -> 运营商, 与 oui-app-home 的 sim.lua 保持一致(仅中国大陆)
 IIN_OPERATORS = {
-	"898600": "中国移动", "898602": "中国移动",
-	"898604": "中国移动", "898607": "中国移动",
-	"898601": "中国联通", "898606": "中国联通",
-	"898609": "中国联通",
+	"898600": "中国移动", "898602": "中国移动",	"898604": "中国移动", "898607": "中国移动",
+	"898601": "中国联通", "898606": "中国联通", "898609": "中国联通",
 	"898603": "中国电信", "898611": "中国电信",
 	"898615": "中国广电",
 }
+
+# MCC+MNC -> 运营商: 比 long_name 可靠, 不受 "中国移动VIP服务" 这类别名影响
+PLMN_OPERATORS = {
+	"46000": "中国移动", "46002": "中国移动", "46004": "中国移动",
+	"46007": "中国移动", "46008": "中国移动",
+	"46001": "中国联通", "46006": "中国联通", "46009": "中国联通",
+	"46003": "中国电信", "46005": "中国电信", "46011": "中国电信",
+	"46015": "中国广电",
+}
+
+# 名称里可能带 "VIP服务"、英文缩写等, 用关键字归一到标准名称
+OPERATOR_KEYWORDS = (
+	("移动", "中国移动"), ("mobile", "中国移动"), ("cmcc", "中国移动"),
+	("联通", "中国联通"), ("unicom", "中国联通"),
+	("电信", "中国电信"), ("telecom", "中国电信"), ("ctcc", "中国电信"),
+	("广电", "中国广电"), ("broadnet", "中国广电"),
+)
+
+
+# 运营商名称归一化: 命中关键字返回标准名称, 否则原样返回(最终会落到未知图标)
+def _normalize_operator(name):
+	text = str(name).strip()
+	if not text:
+		return ""
+	lower = text.lower()
+	for keyword, operator in OPERATOR_KEYWORDS:
+		if keyword in lower:
+			return operator
+	return text
 
 
 # 读 tracker-sim 写的单个状态文件, 去掉首尾空白; 文件不存在按空串处理
@@ -130,12 +157,17 @@ def _latency(net):
 	return int(value)
 
 
-# 运营商: plmn 里的名称优先, 为空时用 ICCID 前 6 位反推; 都取不到返回空串
+# 运营商: PLMN 编码优先, 其次名称归一化, 最后用 ICCID 前 6 位反推; 都取不到返回空串
 def _operator(plmn, iccid):
+	code = str(plmn.get("plmn", "")).strip()
+	if code in PLMN_OPERATORS:
+		return PLMN_OPERATORS[code]
+
 	for key in ("long_name", "short_name", "spn_name"):
-		value = str(plmn.get(key, "")).strip()
+		value = _normalize_operator(plmn.get(key, ""))
 		if value:
 			return value
+
 	if len(iccid) >= 6:
 		return IIN_OPERATORS.get(iccid[:6], "")
 	return ""
