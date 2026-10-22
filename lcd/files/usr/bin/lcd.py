@@ -8,7 +8,7 @@
 # 协议: 淘晶驰/Nextion 兼容, 屏侧用 prints 发来的 ASCII 字符串即一条指令, 以 0xFF 0xFF 0xFF 结束
 #
 # 依赖的私有模块打包装到 /usr/libexec/lcd, 源码见 files/usr/libexec/lcd/:
-#   logger.py     日志, 同时输出到 stdout 与 /var/log/lcd.log
+#   logger.py     日志, 同时输出到 stdout 与 /var/log/lcd/lcd.log(满 1MB 轮转为 lcd.log.rotate)
 #   uart.py       串口的打开/下发/按结束符切帧
 #   uci.py        uci 配置读写
 #   modeDirect.py 直连模式页面(屏幕01)的状态
@@ -210,7 +210,7 @@ def main():
 	for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):		# Ctrl+C / procd stop / 挂断
 		signal.signal(sig, stop)									# 统一走优雅退出
 
-	open_log()														# 打开 /var/log/lcd.log(失败仅退化到 stdout)
+	open_log()														# 打开 /var/log/lcd/lcd.log(失败仅退化到 stdout)
 	log("lcd service started: %s @ %d 8N1" % (UART_DEV, UART_BAUD))	# 记录启动信息
 
 	while running:													# 打开失败则重试, 直到收到退出信号
@@ -233,4 +233,8 @@ def main():
 
 
 if __name__ == "__main__":											# 被 import 时不执行(便于单测/调试)
-	main()
+	try:
+		main()
+	except Exception as err:										# 未捕获异常也写进日志, 避免只留在被丢弃的 stderr
+		log("lcd service crashed: %r" % err)
+		raise
