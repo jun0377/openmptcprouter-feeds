@@ -1211,6 +1211,55 @@ function atcmd_disconnect()
     return 0
 }
 
+# 等待指定 CID 的 PDP 上下文真正激活
+# 模组内部 DHCP 与 PDP 无关: 未插卡/未激活时仍会分配地址, 因此必须以 PDP 状态为准
+function atcmd_wait_pdp_active()
+{
+    local cid="$1"
+    local tty="$2"
+    local tries=0
+    local max=15
+    local stat=""
+    local addr=""
+    local cgact_supported=1
+    local cgact_fail=0
+
+    while [ "$tries" -lt "$max" ]; do
+        # +CGACT: <cid>,<state>  1-已激活
+        if [ "$cgact_supported" = "1" ]; then
+            if _exec_at "AT+CGACT?" "$tty"; then
+                cgact_fail=0
+                stat=$(echo "$_AT_RES" | awk -v cid="$cid" -F'[,: ]+' '
+                    /\+CGACT:/{for (i = 2; i < NF; i += 2) if ($i == cid) print $(i + 1)}' | head -n 1)
+                [ "x${stat}" == "x1" ] && return 0
+            else
+                # 连续失败说明模组不支持该查询, 后续只用 CGPADDR, 避免每秒刷错误日志
+                cgact_fail=$((cgact_fail+1))
+                if [ "$cgact_fail" -ge 2 ]; then
+                    cgact_supported=0
+                    _log "CGACT query unsupported, use CGPADDR only"
+                fi
+            fi
+        fi
+
+        # MT5700M-CN 不支持 AT+CGCONTRDP, 改用 AT+CGPADDR 查询该 CID 已分配的地址
+        # +CGPADDR: <cid>,"<ipv4>","<ipv6>"
+        if _exec_at "AT+CGPADDR=${cid}" "$tty"; then
+            addr=$(echo "$_AT_RES" | awk -F'"' '/\+CGPADDR:/{print $2; exit}')
+            if [ -n "$addr" ] && [ "$addr" != "0.0.0.0" ] && \
+                echo "$addr" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+                return 0
+            fi
+        fi
+
+        tries=$((tries+1))
+        sleep 1
+    done
+
+    _log "CID ${cid} pdp not active after ${max}s, addr:${addr}"
+    return 1
+}
+
 # 使用PDP上下文8拨号
 function atcmd_connect_cid8()
 {
@@ -1218,18 +1267,22 @@ function atcmd_connect_cid8()
     local tries=0
     local max=30
     local stat=""
+    local query_fail=0
     local ATCMD="AT+CGATT?"
 
     while [ "$tries" -lt "$max" ]; do
         # +CGATT: <state>  1-已附着(PS域可用), 0-未附着
         if _exec_at "$ATCMD" $1; then
+            query_fail=0
             stat=$(echo "$_AT_RES" | awk -F'[^0-9]+' '/\+CGATT:/{print $2; exit}')
             [ "x${stat}" == "x1" ] && break
         else
-            # 模组不支持CGATT查询时无法判断附网状态, 跳过等待直接拨号
-            _log "CGATT query unsupported, skip attach wait"
-            stat="1"
-            break
+            # 查询失败不能当作已附着: 连续失败说明无法判断附网状态, 直接判拨号失败
+            query_fail=$((query_fail+1))
+            if [ "$query_fail" -ge 3 ]; then
+                _log "CGATT query failed ${query_fail} times, abort dial"
+                return 1
+            fi
         fi
 
         tries=$((tries+1))
@@ -1242,9 +1295,11 @@ function atcmd_connect_cid8()
             return 1 ;;
     esac
 
+    # NDISDUP 返回 ERROR 时可能只是上下文已激活, 因此不直接判失败, 统一由 PDP 状态校验决定
     ATCMD="AT^NDISDUP=8,1"
-    # _exec_at "$ATCMD" $1 || return 1
-    _exec_at "$ATCMD" $1
+    _exec_at "$ATCMD" $1 || _log "NDISDUP returned error, verify pdp state"
+
+    atcmd_wait_pdp_active 8 $1 || return 1
 
     return 0
 }
