@@ -13,8 +13,8 @@
 #       iccid       卡号, 读不到运营商名时用它的前 6 位(IIN)反推
 #       hcsq        信号强度(JSON, rsrp_dbm 为 RSRP; sysmode 为 NOSERVICE 表示无服务)
 #       monsc       当前驻留小区(hcsq 读不到时用它的 rsrp 兜底)
-#       IPv4        拨号成功后的地址, 非空即认为在线
-#       realtime_net_status 实时探测结果(JSON), rtt_ms 为到服务器的时延, 逐链路时延取这里
+#       IPv4        拨号成功后的地址(仅用于展示, 在线判定见 realtime_net_status)
+#       realtime_net_status 实时探测结果(JSON), status 为 ok 表示链路在线, rtt_ms 为到服务器的时延
 #       timestamp   写入时间, 用于判断这份数据是否已经失效
 #   /sys/class/net/<dev>/statistics/  收发字节数, 两次采样差分算出速率
 #   /tmp/tracker-ovpn/tracker-ovpn.json  聚合隧道(omrvpn)的探测结果, 见 read_tunnel()
@@ -37,8 +37,9 @@ TRACKER_DIR = "/tmp/tracker-sim"			                # tracker-sim 的状态目录
 TRACKER_TUNNEL = "/tmp/tracker-ovpn/tracker-ovpn.json"		# 聚合隧道的探测结果
 NET_STAT_DIR = "/sys/class/net"				                # 网口统计目录, 用于读收发字节数
 STALE_SECONDS = 30							                # 状态文件超过该秒数未更新即视为失效(每 5 秒更新一轮)
-OMR_STATE_UP = "up"							                # omr-tracker 判定该链路能上网
+OMR_STATE_UP = "up"						                # omr-tracker 判定该链路能上网
 TUNNEL_OK = "OK"							                # omr-tracker 判定聚合隧道可达
+NET_OK = "ok"							                # tracker-sim 实时探测正常, 链路在线
 
 SIM_NAME_PATTERN = re.compile(r"^sim\d+$")	                # uci 里 SIM 段名形如 sim1 / sim2
 
@@ -146,10 +147,15 @@ def _rsrp(hcsq, monsc):
 		return None
 
 
+# 实时探测是否正常: realtime_net_status.status 为 ok 才算链路在线
+def _net_ok(net):
+	return net.get("status") == NET_OK
+
+
 # 逐链路时延(ms): 取自 tracker-sim 的实时探测结果 realtime_net_status.rtt_ms
-# 探测判定这条链路不可用(欠费/服务器不通等)时 rtt_ms 可能是网关的读数, 没有意义, 一律按 0 处理
+# 探测状态不是 ok(欠费/服务器不通等)时读到的 rtt 没有意义, 一律按 0 处理
 def _latency(net):
-	if not net.get("usable"):
+	if not _net_ok(net):
 		return 0
 	value = net.get("rtt_ms")
 	if not isinstance(value, (int, float)):
@@ -176,15 +182,16 @@ def _operator(plmn, iccid):
 # 单张 SIM 卡的状态
 class SimInfo:
 
-	def __init__(self, name, alias, enable, module_exist, dev, sim_status, ipv4,
+	def __init__(self, name, alias, enable, module_exist, dev, sim_status, ipv4, net_ok,
 			service, stale, operator, rsrp, latency, reachable):
 		self.name = name					# uci 段名, 如 sim1
 		self.alias = alias					# 显示名, 如 5G-1
 		self.enable = enable				# uci 里是否启用
 		self.module_exist = module_exist	# 模组的 sysfs 路径是否存在(模组插好没有)
 		self.dev = dev						# 模组对应的网口名, 如 wwan0
-		self.sim_status = sim_status		# 取卡状态文本
+		self.sim_status = sim_status		# 卡状态文本
 		self.ipv4 = ipv4					# 拨号拿到的地址, 空串表示还没拨上
+		self.net_ok = net_ok				# tracker-sim 实时探测是否正常(status == ok)
 		self.service = service				# 是否已入网
 		self.stale = stale					# 状态文件是否已失效
 		self.operator = operator			# 运营商, 空串表示读不到
@@ -204,7 +211,7 @@ class SimInfo:
 		if "not Inserted" in self.sim_status or "removed" in self.sim_status:
 			return SimState.NO_SIM
 		if "Initialized" in self.sim_status or "Ready" in self.sim_status:
-			if self.ipv4:											# 卡就绪且有地址 = 在线
+			if self.net_ok:											# 卡就绪且实时探测 ok = 在线
 				return SimState.ONLINE
 			return SimState.DIALING if self.service else SimState.OFFLINE
 		return SimState.OFFLINE										# 初始化/锁卡/卡错误等
@@ -298,6 +305,7 @@ def _read_sim(name, options, omr):
 		dev = lines[0].strip() if lines else "",
 		sim_status = _read_file(name, "sim_status"),
 		ipv4 = _read_file(name, "IPv4"),
+		net_ok = _net_ok(net),
 		service = _has_service(hcsq),
 		stale = stale,
 		operator = _operator(_read_json(name, "plmn"), _read_file(name, "iccid")),
