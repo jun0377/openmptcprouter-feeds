@@ -15,6 +15,7 @@
 #   modeAgg.py    聚合模式页面(屏幕02)的状态
 #   ctrl-main.py  运维模式首页(屏幕04 链路设置)的状态
 #   ctrl-simx.py  运维模式 SIMx链路(屏幕05)的状态
+#   btsinfo.py    4G/5G 基站状态采集(当前为模拟值, 直连/聚合两页共用)
 #   reboot.py     页脚「重启设备」的重启动作
 #   factoryReset.py 系统设置「恢复出厂设置」的清除 overlay + 重启
 #   systemSettings.py 系统设置页面(页脚)的状态
@@ -117,12 +118,12 @@ def handle_booting(fd, text):
 def handle_ready_report(fd, text):
 	log("Screen ready, entering main page")
 
-# 在直连模式页面时,获取直连模式页面的所有状态,详见modeDirect.py
+# 在直连模式页面时,获取直连模式页面的所有状态(含 4G/5G 基站),详见 modeDirect.py
 def handle_GetDirectModeStatus(fd, text):
 	for command in DirectStatus.collect().commands():			# 采集状态并生成待下发的指令序列
 		uart_send(fd, command)									# 逐条下发
 
-# 在聚合模式页面时,获取聚合模式页面的所有状态
+# 在聚合模式页面时,获取聚合模式页面的所有状态(含 4G/5G 基站)
 def handle_GetAggregateStatus(fd, text):
 	for command in AggregateStatus.collect().commands():		# 采集状态并生成待下发的指令序列
 		uart_send(fd, command)									# 逐条下发, 串口与日志由 uart.py 统一负责

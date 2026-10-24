@@ -19,6 +19,7 @@
 #
 
 from siminfo import RateMeter, SimState, read_sims
+from btsinfo import read_bts
 
 # 直连模式只认 SIM4 / SIM5 两张卡(见 design.html 的 DIRECT_SIMS), 顺序即屏上从上到下的顺序
 # 名字取自 uci 的 sim 段名(sim4 / sim5), 与 /tmp/tracker-sim/<名字> 对应
@@ -65,6 +66,17 @@ RSRP_PICS = (
 )
 RSRP_NONE_PIC = 31							# 无服务(rsrp 为 None)
 
+# 基站状态卡片(页面右侧, 4G / 5G 上下各一张, 与聚合页同一套控件名):
+#   PicLteOnline.pic / Pic5GOnline.pic   在线 43 / 离线 42
+#   NumLteID.val / Num5GID.val           物理小区 ID
+#   NumLteUser.val / Num5GUser.val       连接用户数
+BTS_WIDGETS = {
+	"4G": ("PicLteOnline", "NumLteID", "NumLteUser"),
+	"5G": ("Pic5GOnline", "Num5GID", "Num5GUser"),
+}
+BTS_ONLINE_PIC = 43							# 基站图标: 在线
+BTS_OFFLINE_PIC = 42						# 基站图标: 离线
+
 
 # RSRP(dBm) -> PicSimxRsrp 的图片号; rsrp 为 None 表示读不到信号
 def rsrp_pic(rsrp):
@@ -104,11 +116,12 @@ class SimLink:
 _meter = RateMeter()
 
 
-# 直连模式页面的全部状态: 一个 SIM 链路数组
+# 直连模式页面的全部状态: 一个 SIM 链路数组 + 一个基站状态数组
 class DirectStatus:
 
-	def __init__(self, sims=None):
+	def __init__(self, sims=None, bts=None):
 		self.sims = list(sims) if sims else []												# 所有 SIM 链路(list[SimLink]), 顺序即屏上顺序
+		self.bts = list(bts) if bts else []													# 所有基站(list[BtsInfo]), 顺序固定 4G、5G
 
 	# 采集当前状态并返回实例
 	@classmethod
@@ -122,13 +135,14 @@ class DirectStatus:
 				continue
 			up, down = _meter.rates(sim.dev)												# 没拨号的链路流量为 0, 速率自然是 0
 			links.append(SimLink(name, sim.operator, sim.state, sim.rsrp, up, down, sim.latency))	# 时延取 tracker-sim 实时探测到的到服务器时延
-		return cls(links)
+		return cls(links, read_bts())														# 基站当前为模拟数据, 见 btsinfo.py
 
 	# 转成串口屏指令序列(不含 FF FF FF), 返回列表, 顺序即下发顺序
 	def commands(self):
 		commands = []
 		for sim in self.sims:
 			commands.extend(self._sim_commands(sim))
+		commands.extend(self._bts_commands())												# 右侧的基站状态卡片
 		return commands
 
 	# 生成单张 SIM 卡片(页面上半区左右各一张)的全部指令
@@ -146,3 +160,14 @@ class DirectStatus:
 			"Float%sRx.val=%d" % (prefix, mbps_to_val(sim.down if sim.online else 0)),
 			"Num%sRtt.val=%d" % (prefix, sim.latency if sim.online else 0),
 		]
+
+	# 生成基站状态卡片(4G / 5G 各一张)的全部指令
+	# 控件名不按卡槽编号, 由制式 label 查表; 基站离线时两个数值均下发 0
+	def _bts_commands(self):
+		commands = []
+		for bts in self.bts:
+			state_widget, pci_widget, ue_widget = BTS_WIDGETS[bts.label]
+			commands.append("%s.pic=%d" % (state_widget, BTS_ONLINE_PIC if bts.online else BTS_OFFLINE_PIC))
+			commands.append("%s.val=%d" % (pci_widget, bts.pci if bts.online else 0))
+			commands.append("%s.val=%d" % (ue_widget, bts.ue if bts.online else 0))
+		return commands

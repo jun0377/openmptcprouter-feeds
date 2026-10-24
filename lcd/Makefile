@@ -29,7 +29,7 @@ endef
 define Build/Compile
 endef
 
-# pics/fonts/proj/design.html 仅界面设计时使用, 不打包;
+# pics/fonts/main.HMI/design.html 仅界面设计时使用, 不打包; 只有串口屏固件 main.tft 随包安装
 # 源码中的 lcd.init 按 OpenWrt 惯例安装为 /etc/init.d/lcd, 服务名即 lcd;
 # 私有库(各页面的状态模块)放 /usr/libexec/lcd, 由 lcd.py 通过 sys.path 引入
 define Package/$(PKG_NAME)/install
@@ -40,6 +40,9 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_BIN) ./files/usr/bin/lcd-update.py $(1)/usr/bin/lcd-update.py
 	$(INSTALL_DIR) $(1)/usr/libexec/lcd
 	$(INSTALL_DATA) ./files/usr/libexec/lcd/*.py $(1)/usr/libexec/lcd/
+	# 串口屏固件: 开机由 lcd.init 扫描 /root/*.tft 下发, 成功后重命名为 main.tft.<日期>
+	$(INSTALL_DIR) $(1)/root
+	$(INSTALL_DATA) ./proj/main.tft $(1)/root/main.tft
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)))

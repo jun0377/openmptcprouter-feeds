@@ -22,6 +22,7 @@
 #
 
 from siminfo import RateMeter, SimState, read_sims, read_tunnel
+from btsinfo import read_bts
 
 
 LINK_SLOTS = 5								# 屏上预置的链路卡槽数, 需与串口屏工程一致
@@ -236,13 +237,10 @@ def _read_links():
 	return links
 
 
-# 基站卡片: 屏上固定显示离线与 0
-# 模组是终端, 读不到基站的物理小区 ID 与连接用户数, 这两个字段没有数据源
+# 基站卡片: 数据来自 btsinfo.py(当前为模拟值, 接入真实数据源后只改那边)
+# 顺序固定 4G、5G, 与屏上两张卡片一致
 def _read_bts():
-	return [
-		BtsStatus("4G", False, 0, 0),
-		BtsStatus("5G", False, 0, 0),
-	]
+	return [BtsStatus(b.label, b.online, b.pci, b.ue) for b in read_bts()]
 
 
 # 聚合模式页面的全部状态: 一个聚合链路状态卡片 + 一个链路集合 + 一个基站卡片数组
