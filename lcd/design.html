@@ -6,7 +6,7 @@
 <title>中油测井显控看板 · 854x480 设计稿</title>
 <style>
   /* ============================================================
-     源码导航 · 屏幕序号速查（共 10 屏，顶部页签逐屏切换）
+     源码导航 · 屏幕序号速查（共 11 屏，顶部页签逐屏切换）
        屏幕 01  工程模式 · 直连模式（首页默认）
        屏幕 02  工程模式 · 聚合模式
        屏幕 03  工程模式 · 卫星传输（左：卫星示意图 + 链路状态 / 信噪比 / 卫星参数，
@@ -26,14 +26,17 @@
        屏幕 10  恢复出厂进行中（08 上「确认恢复」的落点：全屏旋转动画 +
                  「正在恢复出厂设置 / 请勿断电」，无页眉、无页签栏、无页脚，
                  设备恢复完成重启后由屏自行复位）
+       屏幕 11  开机动画（上电首屏：网格底纹 + 扫描光带 + 旋转光环 + 轨道光点 + 外扩脉冲，
+                 整屏只有「启动中」一行字；无页眉、无页签栏、无页脚，
+                 点整屏任意位置进首页（屏幕 01），真机上主控就绪后由 BootFlag.val=1 + direct_mode=1 切走）
 
      CSS 分段与屏幕的对应（下面每段注释末尾也标了「→ 屏幕 xx」）：
-       页面外壳：内容区 …… 全部 10 屏；页眉（.bar-top，整条只有工程 / 运维两个模式按钮）
-                     屏幕 01~04（屏幕 05~07、09 是运维模式下的二级页、屏幕 08 / 10 整屏独立，
+       页面外壳：内容区 …… 全部 11 屏；页眉（.bar-top，整条只有工程 / 运维两个模式按钮）
+                     屏幕 01~04（屏幕 05~07、09 是运维模式下的二级页、屏幕 08 / 10 / 11 整屏独立，
                      都不给模式切换入口）；
                      页签栏（.bar-nav）屏幕 01~03、05~07（屏幕 04 是入口页，不放页签栏）；
                      底部栏：屏幕 01、02、03、05、06、07、08、09 用功能页脚，屏幕 04 整块不要底部，
-                     屏幕 10 整屏动画也不要页脚
+                     屏幕 10 / 11 整屏动画也不要页脚
        屏幕 01、02、03 专用：基站状态卡片（.bs-card，底色随在线状态淡绿 / 淡红）+ 功能页脚（.foot-bar / .foot-btn）；
                      屏幕 01、02 另有链路状态列表（.sim-*）
        屏幕 05、06、07、09 专用：功能页脚（.foot-bar / .foot-btn）—— 二级设置页共用 editFoot()：
@@ -51,6 +54,7 @@
                      右竖排两行「物理小区ID / 连接用户数 .set-kv」）
        屏幕 08 专用：系统设置用 9 宫格设置卡（.set-grid.sys 3×3 + .set-card，当前只有一张危险操作卡）
        屏幕 10 专用：恢复出厂动画（.reset-wrap / .reset-ring，CSS 旋圈示意，整屏居中）
+       屏幕 11 专用：开机动画（.boot-wrap / .boot-core 及环、脉冲、光点，整屏居中且整屏可点）
        弹窗（.modal / .modal-mask）…… 屏幕 01、02、03，由页脚按钮与模式页签触发：
                      「版本信息」→ 版本号 / 构建时间 / commit id / 发布说明
                      「屏幕亮度」→ .modal.sm 内一个水平滑块 + 百分比读数
@@ -350,6 +354,170 @@
   @keyframes reset-spin { to { transform: rotate(360deg); } }
   .reset-title { font-size: 18px; font-weight: 700; color: var(--txt); }
   .reset-tip { font-size: 12px; color: var(--muted); }
+
+  /* ---- 屏幕 11：开机动画（上电首屏，无页眉/页签栏/页脚） ----
+     实际 TFT 工程用定时器逐帧播放开机动画；这里用 CSS 做等价示意：
+     网格底纹 + 上下扫描光带 + 锥形渐变光环 + 反向虚线环 + 轨道光点 + 外扩脉冲圈，
+     整屏只有一个「启动中」文字（省略号做成三颗跳动的小点）。
+     整屏都是热区：点任意位置跳过动画进首页（见「九、跳转调试台」的派发）。
+     各动画周期都取 4.4s 的约数（2.2 / 4.4 / 1.1），导出的 GIF 按 4.4s 一循环即无缝 */
+  .boot-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 26px;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  /* 底纹：32px 网格，向四周淡出，只留中间一圈能看见 */
+  .boot-wrap::before {
+    content: '';
+    position: absolute;
+    inset: -12px;
+    background-image:
+      linear-gradient(rgba(137, 180, 250, .07) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(137, 180, 250, .07) 1px, transparent 1px);
+    background-size: 32px 32px;
+    -webkit-mask: radial-gradient(ellipse at center, #000 8%, transparent 66%);
+    mask: radial-gradient(ellipse at center, #000 8%, transparent 66%);
+  }
+  /* 扫描光带：一条淡蓝光自上而下扫过整屏，循环往复 */
+  .boot-wrap::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 120px;
+    background: linear-gradient(180deg, transparent, rgba(137, 180, 250, .12), transparent);
+    animation: boot-scan 4.4s ease-in-out infinite;
+  }
+  @keyframes boot-scan {
+    0%   { transform: translateY(-320px); }
+    100% { transform: translateY(520px); }
+  }
+  /* 动画主体：160×160 的圆，所有环与光点都叠在它上面 */
+  .boot-core {
+    position: relative;
+    z-index: 1;
+    width: 160px;
+    height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* 中心辉光：随呼吸明暗，给整个圆盘一层底光 */
+  .boot-glow {
+    position: absolute;
+    inset: 14px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(137, 180, 250, .30), rgba(137, 180, 250, 0) 70%);
+    animation: boot-breath 2.2s ease-in-out infinite;
+  }
+  @keyframes boot-breath {
+    0%, 100% { opacity: .45; transform: scale(.92); }
+    50%      { opacity: 1;   transform: scale(1.06); }
+  }
+  /* 主光环：锥形渐变扫出一段亮弧，靠遮罩抠成细环，再旋转 —— 像雷达扫描。
+     弧尾拉得比较长（淡蓝拖尾），旋转时前缘的位移更柔和，逐帧播放不容易看出台阶；
+     转速取 4.4s 一圈，与 GIF 的循环周期一致（每帧约 6.5°，10fps 以上就很顺） */
+  .boot-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg,
+      rgba(137, 180, 250, 0) 0deg,
+      rgba(137, 180, 250, 0) 150deg,
+      rgba(137, 180, 250, .10) 240deg,
+      rgba(137, 180, 250, .34) 310deg,
+      var(--blue) 348deg,
+      #dce9ff 360deg);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+    filter: drop-shadow(0 0 6px rgba(137, 180, 250, .65));
+    animation: boot-spin 4.4s linear infinite;
+  }
+  @keyframes boot-spin { to { transform: rotate(360deg); } }
+  /* 反向虚线环：比主环小一圈、转得更慢，两个方向叠出层次 */
+  .boot-ring2 {
+    position: absolute;
+    inset: 18px;
+    border: 2px dashed rgba(148, 226, 213, .32);
+    border-radius: 50%;
+    animation: boot-spin 4.4s linear infinite reverse;
+  }
+  /* 外扩脉冲：两道圆环从标识处向外扩散并淡出，错开半个周期 */
+  .boot-pulse {
+    position: absolute;
+    inset: 0;
+    border: 2px solid rgba(137, 180, 250, .45);
+    border-radius: 50%;
+    animation: boot-pulse 2.2s ease-out infinite;
+  }
+  /* 延迟统一用负值：t=0 时各动画就从周期中段开始，导出 GIF 时首尾帧一致（无缝循环） */
+  .boot-pulse.b { animation-delay: -1.1s; }
+  @keyframes boot-pulse {
+    0%   { transform: scale(.66); opacity: .85; }
+    100% { transform: scale(1.5); opacity: 0; }
+  }
+  /* 轨道光点：一圈慢转的容器 + 顶部一颗发光小点 */
+  .boot-orbit {
+    position: absolute;
+    inset: -6px;
+    animation: boot-spin 4.4s linear infinite;
+  }
+  .boot-orbit::before {
+    content: '';
+    position: absolute;
+    top: -3px;
+    left: 50%;
+    width: 6px;
+    height: 6px;
+    margin-left: -3px;
+    border-radius: 50%;
+    background: var(--teal);
+    box-shadow: 0 0 10px var(--teal), 0 0 20px rgba(148, 226, 213, .6);
+  }
+  /* 中心标识：稳坐正中，不跟着环转 */
+  .boot-mark {
+    position: relative;
+    z-index: 1;
+    width: 40px;
+    height: 40px;
+    color: var(--blue);
+    filter: drop-shadow(0 0 8px rgba(137, 180, 250, .55));
+  }
+  .boot-mark svg { width: 100%; height: 100%; }
+  /* 唯一的文字：启动中 + 三颗依次亮灭的小点 */
+  .boot-text {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 4px;
+    color: var(--txt2);
+  }
+  .boot-dots { display: flex; align-items: center; margin-left: 4px; }
+  .boot-dots i {
+    width: 4px;
+    height: 4px;
+    margin-left: 5px;
+    border-radius: 50%;
+    background: var(--blue);
+    opacity: .2;
+    animation: boot-blink 1.1s ease-in-out infinite;
+  }
+  .boot-dots i:nth-child(2) { animation-delay: -.2s; }
+  .boot-dots i:nth-child(3) { animation-delay: -.4s; }
+  @keyframes boot-blink {
+    0%, 100% { opacity: .2; transform: scale(.8); }
+    50%      { opacity: 1;  transform: scale(1); }
+  }
   .set-card {
     position: relative;
     display: flex;
@@ -937,7 +1105,7 @@
   .edit-hit { cursor: pointer; }
   .edit-hit:hover { border-color: var(--line2); }
 
-  /* ---- 文本 / 颜色工具类 → 全部 10 屏通用 ---- */
+  /* ---- 文本 / 颜色工具类 → 全部 11 屏通用 ---- */
   .mono { font-family: monospace; }
   .muted { color: var(--muted); }
   .good { color: var(--green); }
@@ -1101,6 +1269,8 @@
   .bg-export .set-grid.sys .set-card { visibility: var(--bg-vis); }
   /* 屏幕 10 的旋圈是逐帧素材，底图只保留标题与提示语 */
   .bg-export .reset-ring { visibility: var(--bg-vis); }
+  /* 屏幕 11 的动画主体（光环 / 脉冲 / 光点）是独立素材，底图只保留网格底纹与「启动中」 */
+  .bg-export .boot-core { visibility: var(--bg-vis); }
 
   /* ⑥ 屏幕 04「首页默认 · 设置入口」：入口卡上的内容都跟着实时状态走 ——
         链路卡的在线状态（SIM 走 .sim-state、卫星走 .state-slot）、
@@ -1197,7 +1367,7 @@
     </span>
   </header>
 
-  <!-- 跳转调试台（评审用外壳，不属于设计稿内容）：把 10 屏装进一块可点击的 854×480 活屏，
+  <!-- 跳转调试台（评审用外壳，不属于设计稿内容）：把 11 屏装进一块可点击的 854×480 活屏，
        验证页眉模式切换 / 页签跳转 / 页脚弹窗与跳转；内容由末尾「八、跳转调试台」的 JS 渲染 -->
   <section class="dbg">
     <div class="dbg-head">
@@ -1651,7 +1821,7 @@ function nbPanel(t, list, emptyText) {
 }
 
 /* ============================================================
-   三、页面骨架（9 屏共用的外壳与公共组件）
+   三、页面骨架（11 屏共用的外壳与公共组件）
    ============================================================ */
 /* 工程模式页签栏 → 屏幕 01、02、03
    data-go = 目标页序号 - 1，供开头的「跳转调试台」点击跳转；
@@ -1744,6 +1914,9 @@ const ICO_BTS5 = ico('<path d="M12 8.5 8.4 21"/><path d="M12 8.5 15.6 21"/>' +
   '<path d="M6.1 2.6Q3.6 8.5 6.1 14.4"/>' +
   '<path d="M14.3 6.2Q15.6 8.5 14.3 10.8"/><path d="M16.1 4.4Q18 8.5 16.1 12.6"/>' +
   '<path d="M17.9 2.6Q20.4 8.5 17.9 14.4"/>');
+/* 屏幕 11 开机动画的标识：外圈圆环 + 中间三根递增的信号柱（连通 / 上线的意思） */
+const ICO_BOOT = ico('<circle cx="12" cy="12" r="8.6"/>' +
+  '<path d="M9 15.4v-3.2"/><path d="M12 15.4V9"/><path d="M15 15.4v-4.8"/>');
 
 /* 版本信息弹窗：版本号 / 构建时间 / commit id / 发布说明
    数据见「一、样例数据 → VERSION」；默认隐藏，由 .foot-btn[data-modal="ver"] 触发 */
@@ -2471,8 +2644,31 @@ function renderReset() {
   return shell({ group: '', body: body, footer: '' });
 }
 
+/* ========== 屏幕 11 · 开机动画 → renderBoot() ==========
+   上电首屏：先播本屏动画，动画期间屏侧会周期性向主控发 "Booting" 查询是否已开机；
+   主控就绪后下发 BootFlag.val=1 与 direct_mode=1 离开本屏（见 docs/018-屏幕.md 第 4 节）。
+   本屏不是交互页：没有页眉/页签栏/页脚，整屏只有动画与「启动中」一行字；
+   点整屏任意位置即跳过动画进首页（屏幕 01），便于在设计稿里预览。
+   ============================================================ */
+function renderBoot() {
+  const body =
+    '<div class="boot-wrap">' +
+      '<div class="boot-core">' +
+        '<i class="boot-glow"></i>' +                          /* 中心呼吸辉光 */
+        '<i class="boot-ring"></i>' +                          /* 旋转的锥形亮弧 */
+        '<i class="boot-ring2"></i>' +                         /* 反向慢转的虚线环 */
+        '<i class="boot-pulse"></i>' +                         /* 外扩脉冲（两道，错开半个周期） */
+        '<i class="boot-pulse b"></i>' +
+        '<i class="boot-orbit"></i>' +                         /* 轨道光点 */
+        '<span class="boot-mark">' + ICO_BOOT + '</span>' +    /* 中心标识 */
+      '</div>' +
+      '<div class="boot-text">启动中<span class="boot-dots"><i></i><i></i><i></i></span></div>' +
+    '</div>';
+  return shell({ group: '', body: body, footer: '' });
+}
+
 /* ============================================================
-   五、页面清单（10 屏）
+   五、页面清单（11 屏）
    数组第 N 项 = 页面第 N 屏，渲染顺序即界面上的纵向排列顺序。
    ============================================================ */
 const SCREENS = [
@@ -2485,15 +2681,18 @@ const SCREENS = [
   /* 屏幕 07 */ { g: '运维模式', n: '5G基站',               h: () => renderBase(BTS5) },
   /* 屏幕 08 */ { g: '系统设置', n: '恢复出厂设置',         h: renderSettings },
   /* 屏幕 09 */ { g: '运维模式', n: '卫星链路设置',         h: satSettingsPage },
-  /* 屏幕 10 */ { g: '系统设置', n: '恢复出厂进行中',       h: renderReset }
+  /* 屏幕 10 */ { g: '系统设置', n: '恢复出厂进行中',       h: renderReset },
+  /* 屏幕 11 */ { g: '开机',     n: '开机动画（上电首屏）', h: renderBoot }
 ];
 /* 屏幕 05 / 09 的下标必须与上面的 SIM_PAGE / SAT_PAGE 一致（屏幕号 - 1） */
 
 /* 「系统设置」页在 SCREENS 中的下标 = 屏幕号 - 1；屏幕 01、02 页脚按钮据此跳转。
-   这里不能再写 SCREENS.length - 1：屏幕 09 / 10 追加在它后面，系统设置已不是末屏 */
+   这里不能再写 SCREENS.length - 1：屏幕 09 / 10 / 11 追加在它后面，系统设置已不是末屏 */
 const SETTINGS_PAGE = 7;
 /* 屏幕 10「恢复出厂进行中」：屏幕 08 确认恢复后跳到这里 */
 const RESET_PAGE = 9;
+/* 屏幕 11「开机动画」：点整屏任意位置跳首页（屏幕 01），见「九、跳转调试台」的派发 */
+const BOOT_PAGE = 10;
 
 /* 顶部页签：一屏一个按钮，点哪个就把「跳转调试台」那块活屏切到哪一屏
    （页签文案与高亮由 buildTabs() 维护，点这里与点右侧「页面清单」是同一个动作） */
@@ -2813,7 +3012,7 @@ document.getElementById('toggleRuler').onclick = function () {
 };
 
 /* ============================================================
-   八、跳转调试台：把 10 屏装进一块 854×480 活屏，逐屏走一遍真实跳转
+   八、跳转调试台：把 11 屏装进一块 854×480 活屏，逐屏走一遍真实跳转
      （顶部页签与右侧「页面清单」都能直达任意一屏，「跳转记录」按顺序记下每一步）
      屏内可点四类目标（跳转关系与设计稿本身一致，不额外编造）：
        页眉模式按钮  工程模式 → 屏幕 01（直连模式）、运维模式 → 屏幕 04（设置入口）；
@@ -2840,7 +3039,7 @@ const dbgLogEl  = document.getElementById('dbgLog');
 let dbgCur = -1, dbgSeq = 0;
 let dbgSettingsFrom = 0;                 /* 活屏里进入系统设置页前的来源页序号，「返回」据此退回 */
 
-/* 活屏可直达的页面 = 设计稿的 9 屏（顶部页签与右侧清单共用这份清单） */
+/* 活屏可直达的页面 = 设计稿的 11 屏（顶部页签与右侧清单共用这份清单） */
 const dbgPages = SCREENS.map(s => ({ g: s.g, n: s.n, h: s.h }));
 
 const dbgNo   = i => String(i + 1).padStart(2, '0');
@@ -2896,6 +3095,13 @@ function modeConfirm(go, to, why) {
 document.querySelector('.dbg').addEventListener('click', e => {
   const item = e.target.closest('.dbg-item');                  /* 右侧页面清单：直达 */
   if (item) { dbgGo(+item.dataset.go, '页面清单'); return; }
+
+  /* 屏幕 11 开机动画：整屏都是热区，点屏内任意位置直接进首页（屏幕 01）。
+     只认落在 .screen 里的点击，顶部页签与右侧清单仍按各自的目标跳转 */
+  if (dbgCur === BOOT_PAGE && e.target.closest('.screen')) {
+    dbgGo(0, '开机动画 · 点击任意位置');
+    return;
+  }
 
   const mode = e.target.closest('.mode-btn');                  /* 页眉模式按钮：各回各自首屏 */
   if (mode) {
@@ -3016,12 +3222,18 @@ window.addEventListener('resize', fitDbg);
    再加 &keep=1 就是「临时预览模式」：只藏页眉 / 页签栏 / 页脚三处按钮，
    屏内数值与状态原样留着，用来在串口屏上看整屏效果。
    再加 &modal=mode 就是「弹窗素材导出」：按「直连 → 聚合模式」把模式切换的
-   二级确认弹窗打开（两个操作按钮留位不画），&key=RRGGBB 换遮罩那面纯色键 */
+   二级确认弹窗打开（两个操作按钮留位不画），&key=RRGGBB 换遮罩那面纯色键。
+   再加 &t=秒 就是「动画定格」：把屏内所有 CSS 动画暂停在该时刻，
+   配合 &keep=1 逐帧截图即可拼出无缝循环的 GIF（开机动画按 4.4s 一循环，见屏幕 11） */
 const q = new URLSearchParams(location.search);
 if (q.has('bg')) {
   document.body.classList.add('bg-export');
   if (q.get('keep')) document.body.classList.add('bg-keep');
   dbgGo(Math.min(dbgPages.length - 1, Math.max(0, +(q.get('s') || 0))), '背景素材');
+  if (q.get('t') !== null) {
+    const ms = Math.max(0, +q.get('t')) * 1000;
+    document.getAnimations().forEach(a => { a.pause(); a.currentTime = ms; });
+  }
   if (q.get('modal') === 'mode') {
     document.body.classList.add('bg-modal');
     if (q.get('key')) document.body.style.setProperty('--key', '#' + q.get('key'));
