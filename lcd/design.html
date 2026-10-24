@@ -6,7 +6,7 @@
 <title>中油测井显控看板 · 854x480 设计稿</title>
 <style>
   /* ============================================================
-     源码导航 · 屏幕序号速查（共 9 屏，顶部页签逐屏切换）
+     源码导航 · 屏幕序号速查（共 10 屏，顶部页签逐屏切换）
        屏幕 01  工程模式 · 直连模式（首页默认）
        屏幕 02  工程模式 · 聚合模式
        屏幕 03  工程模式 · 卫星传输（左：卫星示意图 + 链路状态 / 信噪比 / 卫星参数，
@@ -18,23 +18,29 @@
        屏幕 06  运维模式 · 4G基站（基站设置页：标识与小区状态可改、参数卡片可改）
        屏幕 07  运维模式 · 5G基站（同上，共用一个模板、数据不同）
        屏幕 08  系统设置（独立整屏：无页眉模式切换、无页签栏，
-                 内容区两张设置卡左右并排 —— 左「管理平台地址」IP 大字可点着改、
-                 右「状态上报频率」四档选择器默认 15s；底部操作区「返回 / 确定」）
+                 内容区一张卡只有「恢复出厂设置」一行危险操作，点按钮弹二级确认；
+                 确认后进入屏幕 10；底部操作区「返回」）
        屏幕 09  运维模式 · 卫星链路设置（04 上「卫星链路」卡的落点：精简版只放
                  链路开关 / 卫星系统 / 频段 / 卫星标识 四项可编辑参数，单列竖排、
                  标签与控件各对齐成一列，卡片铺满内容区只让开底部页脚）
+       屏幕 10  恢复出厂进行中（08 上「确认恢复」的落点：全屏旋转动画 +
+                 「正在恢复出厂设置 / 请勿断电」，无页眉、无页签栏、无页脚，
+                 设备恢复完成重启后由屏自行复位）
 
      CSS 分段与屏幕的对应（下面每段注释末尾也标了「→ 屏幕 xx」）：
-       页面外壳：内容区 …… 全部 9 屏；页眉（.bar-top，整条只有工程 / 运维两个模式按钮）
-                     屏幕 01~04（屏幕 05~07、09 是运维模式下的二级页、屏幕 08 整屏独立，
+       页面外壳：内容区 …… 全部 10 屏；页眉（.bar-top，整条只有工程 / 运维两个模式按钮）
+                     屏幕 01~04（屏幕 05~07、09 是运维模式下的二级页、屏幕 08 / 10 整屏独立，
                      都不给模式切换入口）；
                      页签栏（.bar-nav）屏幕 01~03、05~07（屏幕 04 是入口页，不放页签栏）；
-                     底部栏：屏幕 01、02、03、05、06、07、08、09 用功能页脚，屏幕 04 整块不要底部
+                     底部栏：屏幕 01、02、03、05、06、07、08、09 用功能页脚，屏幕 04 整块不要底部，
+                     屏幕 10 整屏动画也不要页脚
        屏幕 01、02、03 专用：基站状态卡片（.bs-card，底色随在线状态淡绿 / 淡红）+ 功能页脚（.foot-bar / .foot-btn）；
                      屏幕 01、02 另有链路状态列表（.sim-*）
-       屏幕 05、06、07、08、09 专用：功能页脚（.foot-bar / .foot-btn）—— 二级设置页共用 editFoot()：
+       屏幕 05、06、07、09 专用：功能页脚（.foot-bar / .foot-btn）—— 二级设置页共用 editFoot()：
                      两个按钮都靠右下角，左「保存&应用」右「返回」，
                      填充色区分主次：保存蓝实底（.foot-btn.primary）、返回灰实底（.foot-btn.secondary）；
+                     屏幕 08 系统设置没有可保存项，只用 backFoot() 放一枚「返回」；
+                     屏幕 10 是恢复动画页，整屏不放页脚；
                      按下时保存转黄、返回转红（.press / :active），素材按这个态导出；
                      05、06、07、09 的「返回」跳回屏幕 04，屏幕 08 的「返回」退回来源页（data-back）
        屏幕 03 专用：指标卡（.m-card / .m-ico / .m-txt / .m-name，横排：图标 + 名称 + 数值，图标与数值同色）
@@ -43,7 +49,8 @@
                      两种卡都是左右分栏 —— 链路卡左「链路图标 + 标识」、右竖排「在线状态 + 运营商」；
                      基站卡左「基站图标 + 基站名 + 在线状态 .bs-state」、
                      右竖排两行「物理小区ID / 连接用户数 .set-kv」）
-       屏幕 08 专用：设置卡里的设置行（.sys-row 项名 + .sys-ctl 控件，两行等分卡高）
+       屏幕 08 专用：系统设置用 9 宫格设置卡（.set-grid.sys 3×3 + .set-card，当前只有一张危险操作卡）
+       屏幕 10 专用：恢复出厂动画（.reset-wrap / .reset-ring，CSS 旋圈示意，整屏居中）
        弹窗（.modal / .modal-mask）…… 屏幕 01、02、03，由页脚按钮与模式页签触发：
                      「版本信息」→ 版本号 / 构建时间 / commit id / 发布说明
                      「屏幕亮度」→ .modal.sm 内一个水平滑块 + 百分比读数
@@ -305,6 +312,44 @@
   .set-grid { flex: 1; min-height: 0; display: grid; gap: 8px; }
   .set-grid.links { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); }
   .set-grid.bts   { grid-template-columns: repeat(2, 1fr); }
+  /* 屏幕 08：9 宫格设置卡（3×3），后续按类别逐格增加；
+     当前只有「恢复出厂设置」一张，grid 自动排在左上角第一格 */
+  .set-grid.sys { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); }
+  .set-grid.sys .set-card .t { font-size: 13px; font-weight: 600; color: var(--txt); }
+  .set-card.danger { cursor: pointer; border-color: rgba(243, 139, 168, .45); }
+  .set-card.danger:hover { border-color: var(--red); }
+  /* 按下态要一眼能看出来：底色转为红半透、边框转亮红、文字也转红 */
+  .set-card.danger:active,
+  .set-card.danger.press {
+    background: rgba(243, 139, 168, .18);
+    border-color: var(--red);
+  }
+  .set-card.danger:active .t,
+  .set-card.danger.press .t { color: var(--red); }
+  .set-card.danger .set-ico { width: 26px; height: 26px; color: var(--red); }
+
+  /* ---- 屏幕 10：恢复出厂进行中（全屏动画页，无页眉/页脚/返回） ----
+     实际 TFT 工程用定时器切换多帧图片实现旋转；这里用 CSS 旋圈做等价示意 */
+  .reset-wrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+  }
+  .reset-ring {
+    width: 52px;
+    height: 52px;
+    border: 4px solid rgba(243, 139, 168, .22);
+    border-top-color: var(--red);
+    border-radius: 50%;
+    animation: reset-spin 1s linear infinite;
+  }
+  @keyframes reset-spin { to { transform: rotate(360deg); } }
+  .reset-title { font-size: 18px; font-weight: 700; color: var(--txt); }
+  .reset-tip { font-size: 12px; color: var(--muted); }
   .set-card {
     position: relative;
     display: flex;
@@ -655,23 +700,6 @@
     color: var(--muted);
   }
 
-  /* ---- 系统设置的设置行 → 屏幕 08（系统设置） ----
-     两项设置合并在一张卡里，一行一项、行间一条分隔线（.hr）：
-     行内左边是项名（固定 96px，两行左对齐）、右边是控件（.sys-ctl，贴左排）。
-     两行等分卡片剩余高度（flex:1），所以卡片铺满内容区、每项在行内竖直居中 ——
-     本屏只有两项设置，若按内容高度排会缩成窄窄一条，留白全堆在卡片下方 */
-  .sys-row {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 0 4px;
-  }
-  .sys-row .k { flex: none; width: 96px; font-size: 13px; color: var(--muted); }
-  .sys-ctl { flex: 1; min-width: 0; display: flex; align-items: center; }
-  .sys-ctl .seg > span { min-width: 52px; text-align: center; }   /* 四档按钮等宽，档位文字居中 */
-
   /* ---- 底部功能页脚（左 2 + 右 2 图标按钮，替代底栏） → 屏幕 01、02 ---- */
   .foot-bar {
     flex: 0 0 36px;
@@ -699,7 +727,7 @@
   .foot-btn svg { width: 14px; height: 14px; flex: none; }
   .foot-btn.danger { color: var(--red); border-color: rgba(243, 139, 168, .45); }
   /* 屏幕 05 页脚那对按钮用填充色区分主次：主操作（保存&应用）蓝实底、
-     次操作（返回）中性灰实底 —— 与屏幕 08「确定 / 返回」那对同一套配色，
+     次操作（返回）中性灰实底 —— 与屏幕 08 那枚「返回」同一套配色，
      实底按钮在串口屏上直接导出成整块按钮素材即可 */
   .foot-btn.primary   { background: var(--blue); border-color: var(--blue); color: #11111b; font-weight: 600; }
   .foot-btn.secondary { background: var(--line); color: var(--txt2); }
@@ -717,6 +745,7 @@
   /*      版本信息：点击页脚「版本信息」弹出（宽度 410）
           屏幕亮度：点击页脚「屏幕亮度」弹出（.modal.sm 宽度 300，内含水平滑块）
           重启确认：点击页脚「重启设备」弹出（.modal.confirm 宽度 340，二级确认）
+          恢复出厂：系统设置页「恢复出厂设置」弹出（.modal.confirm.factory 宽度 420，二级确认）
           模式切换：点页签栏「直连 / 聚合 / 卫星传输」弹出（.modal.confirm.mode 宽度 372，二级确认）
           编辑参数：屏幕 06、07 点设置项弹出（.modal.edit 宽度 360，项名 + 输入框 + 确定 / 取消） */
   .modal-mask {
@@ -813,6 +842,35 @@
      重启那枚的「取消」比「确认重启」略大，提供一个更顺手的退出位（见下面的 .cbtn.cancel）；
      重启是危险操作，主按钮保留自己的红半透样式（.cbtn.danger），不进下面的统一规格 */
   .modal.confirm { width: 340px; }
+  /* 恢复出厂设置确认弹窗：提示语较长、后果不可撤销，比其它二级确认宽一档（420），
+     正文与按钮同步放大，避免文字挤在两行窄框里 */
+  .modal.confirm.factory { width: 420px; }
+  .modal.confirm.factory .confirm-tip {
+    padding: 14px 18px 0;
+    font-size: 14px;
+    line-height: 22px;
+  }
+  .modal.confirm.factory .cbtn { height: 30px; padding: 0 20px; font-size: 13px; }
+  /* 确认恢复按钮用不透明底色与边框：等价于原来的红 16% / 50% 叠在弹窗底色上，
+     导出素材时不依赖背景透出，串口屏上直接整块贴图 */
+  .modal.confirm.factory .cbtn.danger {
+    background: #3b2a3a;
+    border-color: #855266;
+  }
+  .modal.confirm.factory .cbtn.cancel { height: 32px; padding: 0 26px; }
+  /* 恢复出厂弹窗的按下反馈：确认变实底红、取消转红，与其它二级确认的按下态一致 */
+  .modal.confirm.factory .cbtn.danger:active,
+  .modal.confirm.factory .cbtn.danger.press {
+    background: var(--red);
+    border-color: var(--red);
+    color: #11111b;
+  }
+  .modal.confirm.factory .cbtn.cancel:active,
+  .modal.confirm.factory .cbtn.cancel.press {
+    background: var(--red);
+    border-color: var(--red);
+    color: #11111b;
+  }
   .modal.confirm .modal-head svg { color: var(--red); }      /* 危险操作：标题栏图标走红 */
   .modal.confirm.save .modal-head svg { color: var(--green); }  /* 保存并应用不表危险：图标走绿 */
 
@@ -879,7 +937,7 @@
   .edit-hit { cursor: pointer; }
   .edit-hit:hover { border-color: var(--line2); }
 
-  /* ---- 文本 / 颜色工具类 → 全部 9 屏通用 ---- */
+  /* ---- 文本 / 颜色工具类 → 全部 10 屏通用 ---- */
   .mono { font-family: monospace; }
   .muted { color: var(--muted); }
   .good { color: var(--green); }
@@ -1031,15 +1089,18 @@
         （单位 Mbps / ms / 在线 是固定素材，留着） */
   .bg-export .agg-bar .st, .bg-export .agg-bar .kpi .num { visibility: var(--bg-vis); }
 
-  /* ⑤ 屏幕 08「平台与上报」：管理平台地址那个 IP 与状态上报频率那组四档按钮都是变量
-        （两行项名、面板标题、分隔线是固定素材，留着）。
-        行尾那支铅笔（.big-id .pen）是「这一项能改」的固定提示图标，跟 ↑↓ 箭头同理：
-        它跟着值一起排在 .big-id 里，藏掉整个 .big-id 再单独放它出来 ——
-        visibility 隐藏仍占位，铅笔正好停在设计稿里那个位置上。
-        .sys-ctl 是屏幕 08 专有的（见上面「设置行」那段），所以这条不会波及 05~07、09 的选择器 */
+  /* ⑤ 可编辑的标识大字（屏幕 06 / 07 的基站标识；屏幕 08 已无此项）：
+        值是变量，行尾那支铅笔（.big-id .pen）是「这一项能改」的固定提示图标，
+        跟着值一起排在 .big-id 里，藏掉整个 .big-id 再单独放它出来 ——
+        visibility 隐藏仍占位，铅笔正好停在设计稿里那个位置上 */
   .bg-export .big-id { visibility: var(--bg-vis); }
   .bg-export .big-id .pen { visibility: visible; }
-  .bg-export .sys-ctl .seg { visibility: var(--bg-vis); }
+
+  /* 屏幕 08 的 9 宫格卡片是独立素材（见 pics/08-系统设置/恢复出厂设置/），
+     底图里只留格位、不画卡片 */
+  .bg-export .set-grid.sys .set-card { visibility: var(--bg-vis); }
+  /* 屏幕 10 的旋圈是逐帧素材，底图只保留标题与提示语 */
+  .bg-export .reset-ring { visibility: var(--bg-vis); }
 
   /* ⑥ 屏幕 04「首页默认 · 设置入口」：入口卡上的内容都跟着实时状态走 ——
         链路卡的在线状态（SIM 走 .sim-state、卫星走 .state-slot）、
@@ -1089,6 +1150,40 @@
   .bg-modal .modal-mask { background: var(--key, #ff00ff); }
   .bg-modal .modal { box-shadow: none; }
   .bg-modal .cbtn { visibility: hidden; }
+
+  /* ---------- 单元素素材导出：?bg=1&s=7&solo=card[&press=1][&key=RRGGBB] ----------
+     只保留被标记的元素，其余全部隐藏、面板底色换成纯色键；
+     截图后按「两底色合成法」还原 alpha，再裁到元素边框，得到可直接叠放的 RGBA 素材。
+     当前用于导出屏幕 08 的「恢复出厂设置」卡片（&press=1 出按下态） */
+  .bg-solo .panel,
+  .bg-solo .body,
+  .bg-solo .dbg-stage {
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+  .bg-solo .screen { background: var(--key, #ff00ff); }
+  .bg-solo .screen * { visibility: hidden; }
+  /* 卡片自身与内部子元素都要放出来：子元素被上一条显式设为 hidden，
+     不会再从父元素继承 visible，必须一并覆盖 */
+  .bg-solo .screen .set-grid.sys .set-card[data-solo],
+  .bg-solo .screen .set-grid.sys .set-card[data-solo] * { visibility: visible; }
+
+  /* ---------- 弹窗按钮素材导出：?bg=1&s=7&btn=ok|cancel[&press=1][&key=RRGGBB] ----------
+     弹窗本体与其它子元素全部隐藏，只留目标按钮，遮罩铺纯色键；
+     截图后按两底色合成法还原 alpha，再裁到按钮边框。&press=1 出按下态 */
+  .bg-btn .modal-mask { background: var(--key, #ff00ff); }
+  .bg-btn .modal {
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+  .bg-btn .modal .modal-head,
+  .bg-btn .modal .confirm-tip,
+  .bg-btn .modal .modal-body { visibility: hidden; }
+  .bg-btn .modal .cbtn { visibility: hidden; }
+  .bg-btn .modal .cbtn[data-btn],
+  .bg-btn .modal .cbtn[data-btn] * { visibility: visible; }
 </style>
 </head>
 <body>
@@ -1102,7 +1197,7 @@
     </span>
   </header>
 
-  <!-- 跳转调试台（评审用外壳，不属于设计稿内容）：把 9 屏装进一块可点击的 854×480 活屏，
+  <!-- 跳转调试台（评审用外壳，不属于设计稿内容）：把 10 屏装进一块可点击的 854×480 活屏，
        验证页眉模式切换 / 页签跳转 / 页脚弹窗与跳转；内容由末尾「八、跳转调试台」的 JS 渲染 -->
   <section class="dbg">
     <div class="dbg-head">
@@ -1126,11 +1221,11 @@
 
 <script>
 /* ============================================================
-   源码导航 · 九个页面的源码位置
+   源码导航 · 十个页面的源码位置
      页面序号与函数的对应关系（每个函数 = 一个屏幕的完整 HTML）：
-       屏幕 01  renderDirect()            …… 四、九个页面 → 「屏幕 01」
-       屏幕 02  renderAgg()               …… 四、九个页面 → 「屏幕 02」
-       屏幕 03  renderSat()               …… 四、九个页面 → 「屏幕 03」
+       屏幕 01  renderDirect()            …… 四、十个页面 → 「屏幕 01」
+       屏幕 02  renderAgg()               …… 四、十个页面 → 「屏幕 02」
+       屏幕 03  renderSat()               …… 四、十个页面 → 「屏幕 03」
        屏幕 04  renderOpsHome()           …… 运维模式首页：只做设置入口，无页签栏、无底部栏；
                                               两种卡内都是左右分栏 = 左「图标 + 名称」/
                                               右竖排「在线状态 + 第二行」（链路卡左栏只有图标与
@@ -1167,22 +1262,27 @@
                                               编辑弹窗（editItemModal()）；数据源见
                                               「一、样例数据 → BTS4 / BTS5」
        屏幕 08  renderSettings()           …… 系统设置（屏幕 01、02 页脚「系统设置」按钮的落点）：
-                                              两项设置合并在一张「系统设置」卡里 ——
-                                              「管理平台地址」（IP 大字 + 铅笔，点它弹编辑弹窗）、
-                                              「状态上报频率」（四档选择器，默认 15s），
-                                              两行等分卡高、行间一条分隔线；
-                                              底部与屏幕 05 同款功能页脚 editFoot(true)
-                                              （「返回」走 data-back 退回来源页），
-                                              数据源见「一、样例数据 → SYS_SET / REPORT_STEPS」
+                                              整屏只保留一项危险操作「恢复出厂设置」，
+                                              以 3×3 九宫格卡片承载，当前只有左上角一张
+                                              「恢复出厂设置」卡，点击弹二级确认（factoryModal）；
+                                              确认后进屏幕 10 播恢复动画；
+                                              其余格子留空，后续按类别补卡；
+                                              底部只有一枚「返回」（backFoot()，走 data-back
+                                              退回来源页；本屏无可保存项，不放「保存&应用」）
        屏幕 09  satSettingsPage()          …… 卫星链路设置（屏幕 04「卫星链路」卡的落点）：
                                               精简版只一张「卫星参数设置」卡（链路开关 /
                                               卫星系统 / 频段 / 卫星标识），卡片铺满内容区、
                                               卡内 4 行单列竖排且标签、控件各对齐成一列；
                                               数据源见「一、样例数据 → SAT_SET」，
                                               无页眉、无页签栏，底部同屏幕 05 的 editFoot()
+       屏幕 10  renderReset()              …… 恢复出厂进行中（屏幕 08「确认恢复」的落点）：
+                                              整屏只有旋转圈 + 「正在恢复出厂设置」+
+                                              「请勿断电，完成后设备将自动重启」，
+                                              无页眉、无页签栏、无页脚；实际 TFT 工程用
+                                              定时器切帧实现旋转，设备重启后本屏随之复位
 
      修改某一屏时怎么找：
-       · 想改某一屏的排版/字段 → 直接跳到「四、九个页面」里对应的 renderXxx()
+       · 想改某一屏的排版/字段 → 直接跳到「四、十个页面」里对应的 renderXxx()
        · 想改某一屏显示的数据   → 跳到「一、样例数据」改 OPS / SAT / SAT_SET / BTS4 / BTS5
        · 想改某一屏的样式       → 见 <style> 顶部的 CSS 源码导航（每段都标了 → 屏幕 xx）
        · 想调整屏幕顺序/标题     → 「五、页面清单」的 SCREENS 数组，第 N 项就是第 N 屏
@@ -1317,15 +1417,6 @@ const SAT = { cn0: 42, up: 1.2, down: 4.5, ping: 201, jitter: 30 };
 const SAT_SET = { disabled: false, system: '亚太6D', band: 'Ku', id: 'SAT-KU-03' };
 const SAT_SYSTEMS = ['天通一号', '北斗三号', '亚太6D', 'Inmarsat'];
 const SAT_BANDS   = ['L', 'S', 'Ku', 'Ka'];
-
-/* 屏幕 08「系统设置」的两项设置（改这两项 → 跳到「四、九个页面 → 屏幕 08」）：
-     ip     = 管理平台地址，状态数据上报到这个 IP；点地址那块大字弹编辑弹窗改它
-     report = 状态上报频率，单位秒，默认 15s 上报一次；
-              页面上摆成 REPORT_STEPS 四档的分段选择器，选中哪档就写回这个字段 */
-const SYS_SET = { ip: '192.168.10.100', report: 15 };
-
-/* 上报频率的可选档位（秒）：默认值 15 就在列表里，页面上高亮的那一档即当前值 */
-const REPORT_STEPS = [5, 15, 30, 60];
 
 /* 屏幕 03「链路状态」的三种取值：数组顺序即点击徽标时的切换顺序，
    默认停在下标 0（无卫星链路）。cls 只决定徽标底色，
@@ -1718,6 +1809,27 @@ function confirmModal() {
     '</div>';
 }
 
+/* 恢复出厂设置二级确认弹窗：系统设置页「恢复出厂设置」按钮触发。
+   不可撤销，标题栏保留右上角 ✕，提示语写明会清除配置并重启；
+   确认按钮走危险色（.cbtn.danger），与「确认重启」同一套。
+   屏侧「确认恢复」需向主控下发字符串指令 FactoryReset（prints + printh ff ff ff），
+   由 lcd.py 执行恢复出厂并重启 */
+function factoryModal() {
+  return '<div class="modal-mask" data-modal="factory">' +
+      '<div class="modal confirm factory">' +
+        '<div class="modal-head">' + ICO_POWER +
+          '<span class="modal-title">恢复出厂设置</span>' +
+          '<span class="modal-close">' + ICO_CLOSE + '</span>' +
+        '</div>' +
+        '<div class="confirm-tip">将清除所有配置并重启，且无法撤销</div>' +
+        '<div class="confirm-foot">' +
+          '<span class="cbtn danger">确认恢复</span>' +
+          '<span class="cbtn cancel">取消</span>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
 /* 模式切换二级确认弹窗：屏幕 01、02、03 页签栏点「直连 / 聚合 / 卫星传输」触发 ——
    换模式要重建数据链路并重新拨号，当前连接会短暂中断，不能一步到位；
    与「重启设备 / 保存&应用」同一套 .modal.confirm，按钮走统一的 .btn-uni 规格：
@@ -1768,22 +1880,29 @@ function footBar() {
 }
 
 /* 二级设置页的功能页脚（屏幕 05 SIM 链路详情 / 屏幕 06 4G基站 / 屏幕 07 5G基站 /
-   屏幕 08 系统设置 / 屏幕 09 卫星链路设置共用）：
+   屏幕 09 卫星链路设置共用）：
    两个按钮都靠右下角，左「保存&应用」右「返回」，并用填充色区分主次 ——
    保存是主操作（蓝实底）、返回是次操作（灰实底）。
    和屏幕 01、02 的页脚同一个组件（.foot-bar / .foot-btn），只是按钮少、位置与语义都不同 ——
    返回是跳页（data-go）、回上层即屏幕 04 的链路入口页；保存不跳页、走二级确认弹窗：
    参数要下发到模组并重新拨号才生效，跟「重启设备」一样让用户再确认一次，避免误触。
-   back = true 时「返回」不固定回屏幕 04，改成退回进来之前那一屏（走 [data-back]）——
-   屏幕 08 是从屏幕 01 / 02 的页脚进来的，来源页不固定，只能这么回 */
-function editFoot(back) {
+   屏幕 08 系统设置没有可保存项，用 backFoot() 只放一枚「返回」（退回来源页） */
+function editFoot() {
   return '<div class="foot-bar" style="justify-content:flex-end">' +
       '<div class="foot-group">' +
         footBtn('保存&amp;应用', ICO_CHECK, 'primary', 'save') +
-        (back ? footBtn('返回', ICO_BACK, 'secondary', null, undefined, true)
-              : footBtn('返回', ICO_BACK, 'secondary', null, SIM_PAGE - 1)) +
+        footBtn('返回', ICO_BACK, 'secondary', null, SIM_PAGE - 1) +
       '</div>' +
     '</div>' + saveModal();
+}
+
+/* 只有「返回」的功能页脚（屏幕 08 系统设置用：本屏没有可保存项，只留返回） */
+function backFoot() {
+  return '<div class="foot-bar" style="justify-content:flex-end">' +
+      '<div class="foot-group">' +
+        footBtn('返回', ICO_BACK, 'secondary', null, undefined, true) +
+      '</div>' +
+    '</div>';
 }
 
 /* 保存&应用二级确认弹窗：屏幕 05~09 页脚的「保存&应用」触发
@@ -1916,7 +2035,7 @@ function btsPanel() {
 }
 
 /* ============================================================
-   四、九个页面（每个函数就是界面上的一个屏幕，序号即页面序号）
+   四、十个页面（每个函数就是界面上的一个屏幕，序号即页面序号）
    ============================================================ */
 
 /* ========== 屏幕 01 · 工程模式 · 直连模式（首页默认） → renderDirect() ==========
@@ -2314,41 +2433,46 @@ function renderBase(b) {
 
 /* ========== 屏幕 08 · 系统设置 → renderSettings() ==========
    入口：屏幕 01、02 页脚的「系统设置」按钮（data-go 跳转，不弹窗）。
-   整屏独立：没有页眉的模式切换、没有工程模式页签栏，底部是屏幕 05 同款功能页脚
-   （editFoot(true)：左「保存&应用」右「返回」，尺寸、位置、配色都与屏幕 05 一致，
-   只有「返回」的目标不同 —— 本屏是从屏幕 01 / 02 进来的、来源页不固定，
-   所以那枚按钮走 [data-back] 退回进来之前那一屏，见「八、跳转调试台」的派发）。
-   两项设置合并在一张卡里，一行一项，左边项名、右边控件，行间一条分隔线：
-     管理平台地址 —— IP 大字（等宽、蓝色）+ 行尾铅笔，整块可点，弹编辑弹窗改这串地址
-     状态上报频率 —— 四档选择器（5s / 15s / 30s / 60s，默认 15s）
-   两行等分卡片高度（.sys-row），所以卡片铺满内容区、每项在行内竖直居中；
-   样例值见「一、样例数据 → SYS_SET / REPORT_STEPS」。
+   整屏独立：没有页眉的模式切换、没有工程模式页签栏，底部只有一枚「返回」
+   （backFoot()，走 [data-back] 退回进来之前那一屏 —— 本屏是从屏幕 01 / 02 进来的、
+   来源页不固定）；本屏没有可保存项，所以不放「保存&应用」。
+   卡内是 3×3 的 9 宫格设置卡；当前只有一张「恢复出厂设置」卡，落在左上角，
+   点击弹二级确认（factoryModal）。后续按类别逐格增加卡片。
    ============================================================ */
 function renderSettings() {
-  const s = SYS_SET;
-  /* 一行设置：左边项名（固定宽度，两行左对齐）、右边控件 */
-  const field = (k, ctrl) =>
-    '<div class="sys-row">' +
-      '<span class="k">' + k + '</span>' +
-      '<div class="sys-ctl">' + ctrl + '</div>' +
-    '</div>';
   const body =
     '<section class="panel" style="flex:1">' +
       '<div class="panel-title"><span>系统设置</span></div>' +
-      field('管理平台地址',
-        '<div class="big-id edit-hit" data-e="sys" data-p="ip">' + s.ip +
-          '<span class="pen">' + ICO_PEN + '</span></div>') +
-      '<div class="hr"></div>' +
-      field('状态上报频率',
-        seg(REPORT_STEPS.map(n => [n + 's', n === s.report]), 'report', 'sys')) +
+      '<div class="set-grid sys">' +
+        '<div class="set-card danger" data-modal="factory">' +
+          '<span class="set-ico">' + ICO_POWER + '</span>' +
+          '<span class="t">恢复出厂设置</span>' +
+        '</div>' +
+      '</div>' +
     '</section>';
   /* 页眉整条不要（进本屏后不再给模式切换入口，与屏幕 05、06、07、09 一致）；
-     footer = 屏幕 05 同款功能页脚（返回改走 data-back）+ 本屏的编辑参数弹窗 */
-  return shell({ group: '', body: body, footer: editFoot(true) + editItemModal() });
+     footer = 只有「返回」+ 恢复出厂的二级确认弹窗（本屏无可保存项） */
+  return shell({ group: '', body: body, footer: backFoot() + factoryModal() });
+}
+
+/* ========== 屏幕 10 · 恢复出厂进行中 → renderReset() ==========
+   入口：屏幕 08 的「确认恢复」——弹窗关闭后直接进本屏，
+   同时向主控下发 FactoryReset（prints + printh ff ff ff）。
+   本屏不是交互页：没有页眉/页脚/返回，整屏只显示旋转动画与提示，
+   直到 lcd.py 执行完恢复出厂、设备重启，屏随主控断电复位。
+   ============================================================ */
+function renderReset() {
+  const body =
+    '<div class="reset-wrap">' +
+      '<div class="reset-ring"></div>' +
+      '<div class="reset-title">正在恢复出厂设置</div>' +
+      '<div class="reset-tip">请勿断电，完成后设备将自动重启</div>' +
+    '</div>';
+  return shell({ group: '', body: body, footer: '' });
 }
 
 /* ============================================================
-   五、页面清单（9 屏）
+   五、页面清单（10 屏）
    数组第 N 项 = 页面第 N 屏，渲染顺序即界面上的纵向排列顺序。
    ============================================================ */
 const SCREENS = [
@@ -2359,14 +2483,17 @@ const SCREENS = [
   /* 屏幕 05 */ { g: '运维模式', n: 'SIM 链路详情',         h: simPage },
   /* 屏幕 06 */ { g: '运维模式', n: '4G基站',               h: () => renderBase(BTS4) },
   /* 屏幕 07 */ { g: '运维模式', n: '5G基站',               h: () => renderBase(BTS5) },
-  /* 屏幕 08 */ { g: '系统设置', n: '平台与上报',           h: renderSettings },
-  /* 屏幕 09 */ { g: '运维模式', n: '卫星链路设置',         h: satSettingsPage }
+  /* 屏幕 08 */ { g: '系统设置', n: '恢复出厂设置',         h: renderSettings },
+  /* 屏幕 09 */ { g: '运维模式', n: '卫星链路设置',         h: satSettingsPage },
+  /* 屏幕 10 */ { g: '系统设置', n: '恢复出厂进行中',       h: renderReset }
 ];
 /* 屏幕 05 / 09 的下标必须与上面的 SIM_PAGE / SAT_PAGE 一致（屏幕号 - 1） */
 
 /* 「系统设置」页在 SCREENS 中的下标 = 屏幕号 - 1；屏幕 01、02 页脚按钮据此跳转。
-   这里不能再写 SCREENS.length - 1：屏幕 09 卫星链路设置追加在它后面，系统设置已不是末屏 */
+   这里不能再写 SCREENS.length - 1：屏幕 09 / 10 追加在它后面，系统设置已不是末屏 */
 const SETTINGS_PAGE = 7;
+/* 屏幕 10「恢复出厂进行中」：屏幕 08 确认恢复后跳到这里 */
+const RESET_PAGE = 9;
 
 /* 顶部页签：一屏一个按钮，点哪个就把「跳转调试台」那块活屏切到哪一屏
    （页签文案与高亮由 buildTabs() 维护，点这里与点右侧「页面清单」是同一个动作） */
@@ -2441,13 +2568,6 @@ document.addEventListener('click', e => {
     return;
   }
 
-  /* 屏幕 08：状态上报频率，四档选择器（值是 '15s' 这样的档位文案，写回时取整数秒） */
-  if (segEl.dataset.t === 'sys') {
-    SYS_SET.report = parseInt(value, 10);
-    refreshPage(SETTINGS_PAGE, renderSettings);
-    return;
-  }
-
   /* 屏幕 06 / 07：左侧「小区状态」开关（激活 / 禁用）改的是顶层字段 status；
      参数卡片里的「工作模式」开关（FDD / TDD）改的是 b.cells 里那一项的值（data-i 指第几项）。
      写回后都重渲染本屏 */
@@ -2473,19 +2593,11 @@ document.addEventListener('click', e => {
   refreshPage(SIM_PAGE, simPage);
 });
 
-/* 点「可编辑项」弹输入框的那些目标（屏幕 06 / 07 的基站设置、屏幕 08 的系统设置）：
+/* 点「可编辑项」弹输入框的那些目标（屏幕 06 / 07 的基站设置）：
    key = .edit-hit 的 data-e，p = data-p，i = data-i（只有参数卡片用得上，指第几项）。
    统一解析成 { name, value, set, page, render } —— 项名、当前值、写回、哪一屏、怎么重渲染，
-   打开与确定两处各调一次，于是三种来源（基站标识 / 参数卡片 / 平台地址）共用同一套弹窗逻辑 */
+   打开与确定两处各调一次，于是两种来源（基站标识 / 参数卡片）共用同一套弹窗逻辑 */
 function editTarget(key, p, i) {
-  /* 屏幕 08：整屏只有「管理平台地址」一处可编辑项 */
-  if (key === 'sys') {
-    return {
-      name: '管理平台地址', value: SYS_SET.ip,
-      set: v => { SYS_SET.ip = v; },
-      page: SETTINGS_PAGE, render: renderSettings
-    };
-  }
   const b = BTS_KEYS[key];
   if (!b) return null;
   const isCell = p === 'cells';                    /* 参数卡片：只改数值、不动单位 */
@@ -2497,8 +2609,8 @@ function editTarget(key, p, i) {
   };
 }
 
-/* 屏幕 06 / 07 / 08 的「编辑参数」：点设置项弹输入框，确定后写回数据
-   ① 打开：点的是 .edit-hit（基站标识那块大字 / 任意一张参数卡片 / 屏幕 08 的平台地址）时，
+/* 屏幕 06 / 07 的「编辑参数」：点设置项弹输入框，确定后写回数据
+   ① 打开：点的是 .edit-hit（基站标识那块大字 / 任意一张参数卡片）时，
       把弹窗的项名与输入框按这一项填好 —— 目标存在弹窗自己的 dataset 上，
       所以同一屏只需要一个弹窗实例（editItemModal() 里那份静态骨架）。
    ② 确定：按 editTarget() 解析出的 set() 写回数据，再重渲染那一屏。
@@ -2560,7 +2672,6 @@ const RULER_SEL = [
   '.sim-dbm', '.sim-rate', '.sim-ping', '.fix-fw',
   '.bs-card', '.bs-head', '.bs-name', '.bs-meta', '.bs-id', '.bs-state',
   '.foot-bar', '.foot-group', '.foot-btn',
-  '.sys-row', '.sys-ctl',
   '.modal-mask', '.modal', '.modal-head', '.modal-title', '.modal-close', '.modal-body', '.ver-notes', '.ver-box',
   '.bright-body', '.slider', '.bright-val', '.edit-inp',
   '.confirm-foot', '.cbtn', '.confirm-tip',
@@ -2595,7 +2706,6 @@ const RULER_NAMES = {
   'sim-ping': '时延', 'fix-fw': '等宽数值域', 'bs-card': '基站卡', 'bs-head': '基站卡头', 'bs-name': '基站名',
   'bs-id': '物理小区ID', 'bs-num': '连接用户数', 'bs-meta': '基站指标行', 'bs-kv': '基站指标', 'bs-state': '基站状态',
   'foot-bar': '功能页脚', 'foot-group': '页脚按钮组', 'foot-btn': '页脚按钮',
-  'sys-row': '设置行', 'sys-ctl': '设置行控件',
   'modal-mask': '弹窗遮罩', 'modal': '弹窗', 'modal-head': '弹窗标题栏',
   'modal-title': '弹窗标题', 'modal-close': '关闭按钮', 'modal-body': '弹窗内容', 'ver-notes': '发布说明',
   'ver-box': '发布说明文本框',
@@ -2635,7 +2745,7 @@ function rulerName(el) {
 }
 
 /* 元素自己那段文字：只看直接子文本节点，跳过子元素里的字。
-   这样「一段文字 + 一个图标」的元素（屏幕 08 的 .big-id 就是「IP + 铅笔」）也能量字号 */
+   这样「一段文字 + 一个图标」的元素（屏幕 06 / 07 的基站标识就是「ID + 铅笔」）也能量字号 */
 function ownText(el) {
   return Array.from(el.childNodes)
       .filter(n => n.nodeType === 3)
@@ -2703,7 +2813,7 @@ document.getElementById('toggleRuler').onclick = function () {
 };
 
 /* ============================================================
-   八、跳转调试台：把 9 屏装进一块 854×480 活屏，逐屏走一遍真实跳转
+   八、跳转调试台：把 10 屏装进一块 854×480 活屏，逐屏走一遍真实跳转
      （顶部页签与右侧「页面清单」都能直达任意一屏，「跳转记录」按顺序记下每一步）
      屏内可点四类目标（跳转关系与设计稿本身一致，不额外编造）：
        页眉模式按钮  工程模式 → 屏幕 01（直连模式）、运维模式 → 屏幕 04（设置入口）；
@@ -2720,7 +2830,7 @@ document.getElementById('toggleRuler').onclick = function () {
                       只是把 opsSel 指的那条链路摆出来，点了没反应；
                       屏幕 06 / 07 页签栏则只有本屏那一张基站页签，不再摆「当前链路」
        页脚功能按钮  有 data-modal 的打开对应弹窗（点遮罩 / 关闭按钮 / 确认按钮收起），
-                      有 data-back 的退回来源页（屏幕 08 的「返回 / 确定」）
+                      有 data-back 的退回来源页（屏幕 08 的「返回」）
      右侧「页面清单」可直达任意页，「跳转记录」按发生顺序记下每一步
    ============================================================ */
 const dbgScreen = document.getElementById('dbgScreen');
@@ -2728,7 +2838,7 @@ const dbgNow    = document.getElementById('dbgNow');
 const dbgList   = document.getElementById('dbgList');
 const dbgLogEl  = document.getElementById('dbgLog');
 let dbgCur = -1, dbgSeq = 0;
-let dbgSettingsFrom = 0;                 /* 活屏里进入系统设置页前的来源页序号，「返回 / 确定」据此退回 */
+let dbgSettingsFrom = 0;                 /* 活屏里进入系统设置页前的来源页序号，「返回」据此退回 */
 
 /* 活屏可直达的页面 = 设计稿的 9 屏（顶部页签与右侧清单共用这份清单） */
 const dbgPages = SCREENS.map(s => ({ g: s.g, n: s.n, h: s.h }));
@@ -2833,9 +2943,20 @@ document.querySelector('.dbg').addEventListener('click', e => {
     return;
   }
 
+  const sbtn = e.target.closest('.set-grid.sys .set-card[data-modal]');  /* 设置卡片：打开对应弹窗 */
+  if (sbtn) {
+    const smask = sbtn.closest('.screen')
+      .querySelector('.modal-mask[data-modal="' + sbtn.dataset.modal + '"]');
+    if (smask) {
+      smask.classList.add('on');
+      dbgLog(dbgNo(dbgCur) + '　设置项「' + sbtn.textContent.trim() + '」打开弹窗', true);
+    }
+    return;
+  }
+
   const gbtn = e.target.closest('.foot-btn[data-go]');         /* 页脚跳转按钮：进系统设置页 */
   if (gbtn) {
-    /* 只有进「系统设置」才记来源页（屏幕 08 的「返回 / 确定」要退回进来之前那一屏）；
+    /* 只有进「系统设置」才记来源页（屏幕 08 的「返回」要退回进来之前那一屏）；
        屏幕 05 页脚的「返回」也是 data-go，别让它把来源页顶掉 */
     if (+gbtn.dataset.go === SETTINGS_PAGE) dbgSettingsFrom = Math.max(0, dbgCur);
     dbgGo(+gbtn.dataset.go, '页脚「' + gbtn.textContent.trim() + '」');
@@ -2853,6 +2974,16 @@ document.querySelector('.dbg').addEventListener('click', e => {
     const go = +mask.dataset.go;
     mask.classList.remove('on');
     dbgGo(go, '确认切换模式');
+    return;
+  }
+
+  /* 恢复出厂弹窗：点「确认恢复」先收起弹窗，再进屏幕 10 的恢复动画；
+     「取消 / ✕ / 点遮罩」仍走下面的通用收起逻辑，停在系统设置页 */
+  const fOk = e.target.closest('.modal-mask[data-modal="factory"] .cbtn:not(.cancel)');
+  if (fOk) {
+    fOk.closest('.modal-mask').classList.remove('on');
+    dbgLog(dbgNo(dbgCur) + '　已确认恢复出厂设置', true);
+    dbgGo(RESET_PAGE, '确认恢复出厂');
     return;
   }
 
@@ -2895,6 +3026,40 @@ if (q.has('bg')) {
     document.body.classList.add('bg-modal');
     if (q.get('key')) document.body.style.setProperty('--key', '#' + q.get('key'));
     modeConfirm(1, '聚合模式', '弹窗素材');
+  }
+  /* 恢复出厂设置弹窗导出：只出弹窗本体，确认 / 取消按钮留位不画 */
+  if (q.get('modal') === 'factory') {
+    document.body.classList.add('bg-modal');
+    if (q.get('key')) document.body.style.setProperty('--key', '#' + q.get('key'));
+    const mask = dbgScreen.querySelector('.modal-mask[data-modal="factory"]');
+    if (mask) mask.classList.add('on');
+  }
+  /* 单元素素材导出：目前只支持屏幕 08 的恢复出厂设置卡片，&press=1 出按下态 */
+  if (q.get('solo') === 'card') {
+    document.body.classList.add('bg-solo');
+    if (q.get('key')) document.body.style.setProperty('--key', '#' + q.get('key'));
+    const card = dbgScreen.querySelector('.set-card[data-modal="factory"]');
+    if (card) {
+      card.dataset.solo = '1';
+      if (q.get('press')) card.classList.add('press');
+    }
+  }
+  /* 弹窗按钮素材导出：btn=ok|cancel，&press=1 出按下态 */
+  const btn = q.get('btn');
+  if (btn) {
+    document.body.classList.add('bg-btn');
+    if (q.get('key')) document.body.style.setProperty('--key', '#' + q.get('key'));
+    const mask = dbgScreen.querySelector('.modal-mask[data-modal="factory"]');
+    if (mask) {
+      mask.classList.add('on');
+      const target = btn === 'cancel'
+        ? mask.querySelector('.cbtn.cancel')
+        : mask.querySelector('.cbtn.danger');
+      if (target) {
+        target.dataset.btn = '1';
+        if (q.get('press')) target.classList.add('press');
+      }
+    }
   }
 } else {
   buildTabs();

@@ -16,6 +16,7 @@
 #   ctrl-main.py  运维模式首页(屏幕04 链路设置)的状态
 #   ctrl-simx.py  运维模式 SIMx链路(屏幕05)的状态
 #   reboot.py     页脚「重启设备」的重启动作
+#   factoryReset.py 系统设置「恢复出厂设置」的清除 overlay + 重启
 #   systemSettings.py 系统设置页面(页脚)的状态
 #   version.py    版本信息页面(页脚弹窗)的状态
 #
@@ -40,6 +41,7 @@ from modeAgg import AggregateStatus					# 聚合模式页面(屏幕02)的状态
 from logger import log, open_log						# 日志输出
 from modeDirect import DirectStatus						# 直连模式页面(屏幕01)的状态
 from reboot import reboot_device						# 重启本机
+from factoryReset import factory_reset					# 恢复出厂设置(清 overlay + 重启)
 from uart import FrameParser, open_uart, uart_send		# 串口操作
 from uci import uci_get									# uci 配置读取
 from systemSettings import SystemSettings				# 系统设置页面(页脚)的状态
@@ -153,6 +155,11 @@ def handle_reboot(fd, text):
 	log("Reboot requested by screen")							# 重启前先记一条日志, 便于对照屏上的操作
 	reboot_device()												# 成功时系统随即重启, 失败原因由 reboot.py 记日志
 
+# 系统设置「恢复出厂设置」二级确认后, 清除 overlay 并重启
+# 屏侧此时已切到屏幕 10 的恢复动画; 执行结果与失败原因由 factoryReset.py 记日志
+def handle_factory_reset(fd, text):
+	factory_reset()
+
 # 指令分发表: 字符串指令 -> 处理函数
 # 新增指令只需在此登记一行并写一个同签名的处理函数, handle_frame 无需改动
 # 注意 prints 无结束符, 屏侧需紧跟一条 printh ff ff ff 才能被 FrameParser 切成帧
@@ -179,6 +186,8 @@ TEXT_HANDLERS = {
 	"GetSim5Status": handle_GetSimxStatus,
 	# 重启页面
 	"Reboot": handle_reboot,										# 页脚「重启设备」二级确认后, 重启本机
+	# 系统设置->恢复出厂设置
+	"FactoryReset": handle_factory_reset,							# 二级确认后清除 overlay 并重启
 }
 
 # 可被退出信号打断的定时等待
