@@ -40,7 +40,7 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_BIN) ./files/usr/bin/lcd-update.py $(1)/usr/bin/lcd-update.py
 	$(INSTALL_DIR) $(1)/usr/libexec/lcd
 	$(INSTALL_DATA) ./files/usr/libexec/lcd/*.py $(1)/usr/libexec/lcd/
-	# 串口屏固件: 开机由 lcd.init 扫描 /root/*.tft 下发, 成功后重命名为 main.tft.<日期>
+	# 串口屏固件: 开机由 lcd.init 扫描 /root/*.tft 下发, 刷入后把文件 MD5 写到 /boot/lcd-fw.md5
 	$(INSTALL_DIR) $(1)/root
 	$(INSTALL_DATA) ./proj/main.tft $(1)/root/main.tft
 endef

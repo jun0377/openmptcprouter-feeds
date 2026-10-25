@@ -5,11 +5,15 @@
 # 淘晶驰(TJC)串口屏固件升级工具
 #
 # 由 /etc/init.d/lcd 在检测到 /root/*.tft 时作为 procd 实例启动:
-#   1. 按 HMI 下载协议联机、校验 FLASH 大小、分块下发 tft 文件
-#   2. 依次尝试 DOWNLOAD_BAUDS 里的波特率, 每种尝试 ATTEMPTS_PER_BAUD 次
-#   3. 成功后把文件重命名为 <name>.tft.<日期时间>, 避免下次开机重复升级
-#   4. 全部失败后重命名为 <name>.tft.failed.<日期时间>
-#   5. 结束时 exec 成 /usr/bin/lcd.py, PID 不变, 不需要重启 lcd 服务
+#   1. 比对 /boot/lcd-fw.md5 里记录的固件 MD5, 与待升级文件一致则直接跳过(恢复出厂后不会重复升级)
+#   2. 按 HMI 下载协议联机、校验 FLASH 大小、分块下发 tft 文件
+#   3. 依次尝试 DOWNLOAD_BAUDS 里的波特率, 每种尝试 ATTEMPTS_PER_BAUD 次
+#   4. 成功后把文件 MD5 写到 /boot/lcd-fw.md5, 不改名(文件来自只读 rootfs, 改不动也不必要)
+#   5. 全部失败后重命名为 <name>.tft.failed.<日期时间>, 避免每次开机反复重试
+#   6. 结束时 exec 成 /usr/bin/lcd.py, PID 不变, 不需要重启 lcd 服务
+#
+# 为什么把 MD5 记在 /boot: /root 位于 overlay, 恢复出厂会被 jffs2reset 清空,
+# 打包进镜像的 main.tft 会重新出现; 而 /boot 是独立的 vfat 启动分区, 不参与 overlay, 能跨恢复出厂保留
 #
 # 协议参考: http://wiki2.tjc1688.com/advanced/hmi_download_protocol.html
 #
@@ -18,6 +22,7 @@ import argparse								# 命令行参数
 import datetime							# 生成重命名后缀
 import errno								# 区分 EINTR/EAGAIN
 import fcntl								# 升级互斥锁
+import hashlib								# 计算固件 MD5
 import os									# 串口/文件操作
 import select								# 串口读超时
 import sys									# 退出
@@ -43,6 +48,10 @@ SCAN_BAUDS = (9600, 19200, 38400, 57600, 230400, 460800, 921600)	# 联机失败�
 
 LCD_BIN = "/usr/bin/lcd.py"				# 升级结束后要接管的 UI 进程
 LOCK_FILE = "/var/run/lcd-update.lock"	# 防止两个升级进程同时操作串口
+
+# 固件指纹: 刷屏成功后把 tft 的 MD5 写到 /boot/lcd-fw.md5, 下次开机比对, 一致就不再刷.
+# /boot 是独立的 vfat 启动分区, 不参与 overlay, jffs2reset 清不到它, 所以恢复出厂后依然记得屏幕里是哪版固件.
+MD5_MARKER = "/boot/lcd-fw.md5"			# 只有一行 MD5, 每次成功升级覆盖
 
 # 日志: 输出到 stdout 与 /var/log/lcd/lcd.log, 写满 1MB 备份为 lcd.log.rotate
 LOG_DIR = "/var/log/lcd"
@@ -151,6 +160,34 @@ def scan_upgrade_file():
 			best = path
 			best_mtime = mtime
 	return best
+
+
+# 计算文件 MD5: 分块读, 不把几 MB 的 tft 一次性读进内存
+def file_md5(path):
+	h = hashlib.md5()
+	with open(path, "rb") as f:
+		for chunk in iter(lambda: f.read(1024 * 1024), b""):
+			h.update(chunk)
+	return h.hexdigest()
+
+
+# 读上次刷入屏幕的固件 MD5; 文件不存在(首次启动)或读失败返回空串, 调用方按"需要升级"处理
+def read_flashed_md5():
+	try:
+		with open(MD5_MARKER, "r") as f:
+			return f.read().split()[0].lower()
+	except (OSError, IndexError):
+		return ""
+
+
+# 记录本次刷入的固件 MD5, 每次成功升级都覆盖; 写失败只记日志, 不影响界面启动
+def save_flashed_md5(md5):
+	try:
+		with open(MD5_MARKER, "w") as f:
+			f.write(md5 + "\n")
+		log("recorded firmware md5 %s in %s" % (md5, MD5_MARKER))
+	except OSError as e:
+		log("write %s failed: %s" % (MD5_MARKER, e))
 
 
 # 把 tft 文件重命名: 成功加日期后缀, 失败加 .failed.<日期> 后缀
@@ -384,6 +421,8 @@ def main():
 			",".join(str(b) for b in DOWNLOAD_BAUDS))
 	parser.add_argument("--no-exec", action="store_true",
 		help="debug: do not exec lcd.py after upgrade")
+	parser.add_argument("--force", action="store_true",
+		help="flash even if the recorded md5 matches (screen replaced)")
 	args = parser.parse_args()
 
 	global NO_EXEC
@@ -421,7 +460,7 @@ def main():
 		log("no usable download baud, fallback to %d" % RUNTIME_BAUD)
 		usable_bauds = [RUNTIME_BAUD]
 
-	# 文件可能已被上一次成功升级重命名, 这里再扫一遍以便被 procd 重新拉起时仍能工作
+	# 文件可能已被上一次失败升级重命名, 这里再扫一遍以便被 procd 重新拉起时仍能工作
 	path = args.file
 	if not path or not os.path.isfile(path):
 		path = scan_upgrade_file()
@@ -437,6 +476,21 @@ def main():
 		rename_file(path, failed=True)
 		exec_lcd()
 		return 0
+
+	# 屏幕里已经是这一版固件就跳过: 只认 /boot/lcd-fw.md5 里记着的 MD5, 与文件是否来自只读 rootfs 无关
+	md5 = file_md5(path)
+	log("upgrade file md5: %s" % md5)
+	flashed_md5 = "" if args.force else read_flashed_md5()
+	if args.force:
+		log("force upgrade, ignore recorded md5")
+	if flashed_md5 and flashed_md5 == md5:
+		log("screen already has this firmware, skip upgrade")
+		exec_lcd()
+		return 0
+	if flashed_md5:
+		log("screen firmware differs (recorded %s), upgrading" % flashed_md5)
+	elif not args.force:
+		log("no recorded firmware md5, upgrading")
 
 	# 依次尝试每种下载波特率, 每种最多 ATTEMPTS_PER_BAUD 次
 	for dl_baud in usable_bauds:
@@ -462,7 +516,7 @@ def main():
 					close_uart(fd)
 					fd = None
 					time.sleep(3)			# 等待屏幕重启进入新工程
-					rename_file(path, failed=False)
+					save_flashed_md5(md5)	# 记到启动分区, 恢复出厂后据此跳过重复升级
 					exec_lcd()
 					return 0
 			finally:
