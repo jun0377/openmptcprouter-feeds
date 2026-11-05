@@ -1220,34 +1220,20 @@ function atcmd_wait_pdp_active()
     local tries=0
     local max=15
     local stat=""
-    local addr=""
-    local cgact_supported=1
     local cgact_fail=0
 
     while [ "$tries" -lt "$max" ]; do
         # +CGACT: <cid>,<state>  1-已激活
-        if [ "$cgact_supported" = "1" ]; then
-            if _exec_at "AT+CGACT?" "$tty"; then
-                cgact_fail=0
-                stat=$(echo "$_AT_RES" | awk -v cid="$cid" -F'[,: ]+' '
-                    /\+CGACT:/{for (i = 2; i < NF; i += 2) if ($i == cid) print $(i + 1)}' | head -n 1)
-                [ "x${stat}" == "x1" ] && return 0
-            else
-                # 连续失败说明模组不支持该查询, 后续只用 CGPADDR, 避免每秒刷错误日志
-                cgact_fail=$((cgact_fail+1))
-                if [ "$cgact_fail" -ge 2 ]; then
-                    cgact_supported=0
-                    _log "CGACT query unsupported, use CGPADDR only"
-                fi
-            fi
-        fi
-
-        # MT5700M-CN 不支持 AT+CGCONTRDP, 改用 AT+CGPADDR 查询该 CID 已分配的地址
-        # +CGPADDR: <cid>,"<ipv4>","<ipv6>"
-        if _exec_at "AT+CGPADDR=${cid}" "$tty"; then
-            addr=$(echo "$_AT_RES" | awk -F'"' '/\+CGPADDR:/{print $2; exit}')
-            if [ -n "$addr" ] && [ "$addr" != "0.0.0.0" ] && \
-                echo "$addr" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        if _exec_at "AT+CGACT?" "$tty"; then
+            cgact_fail=0
+            stat=$(echo "$_AT_RES" | awk -v cid="$cid" -F'[,: ]+' '
+                /\+CGACT:/{for (i = 2; i < NF; i += 2) if ($i == cid) print $(i + 1)}' | head -n 1)
+            [ "x${stat}" == "x1" ] && return 0
+        else
+            # 连续失败说明模组不支持该查询: 无法判断PDP状态, 直接放行, 避免空等到超时导致拨号失败
+            cgact_fail=$((cgact_fail+1))
+            if [ "$cgact_fail" -ge 2 ]; then
+                _log "CGACT query unsupported, skip pdp check"
                 return 0
             fi
         fi
@@ -1256,7 +1242,7 @@ function atcmd_wait_pdp_active()
         sleep 1
     done
 
-    _log "CID ${cid} pdp not active after ${max}s, addr:${addr}"
+    _log "CID ${cid} pdp not active after ${max}s"
     return 1
 }
 
@@ -2204,8 +2190,8 @@ function atcmd_e5_autodial()
     sleep 3
     atcmd_set_airplane_off $1
 
-    # 使用PDP上下文8
-    atcmd_connect_cid8 $1 || return 1
+    # E5模式由模组自动拨号: AT^SETAUTODIAL 的APN作用于默认承载CID1, 等待其真正激活
+    atcmd_wait_pdp_active 1 $1 || return 1
 
     return 0
 }
