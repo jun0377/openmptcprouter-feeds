@@ -1,0 +1,21 @@
+config log 'log'
+	# 日志文件路径(含文件名), 目录不存在时自动创建
+	option path '/var/log/lcd/lcd.log'
+	# 单个日志文件大小上限, 单位 MB; 超过后覆盖备份为 <path>.rotate(只保留一份)
+	option max_size '1'
+config bts 'bts'
+	# 基站模组的mac地址, 支持 AA:BB:CC:DD:EE:FF / AA-BB-... / AABBCC... 写法
+	option mac '8c:e4:68:35:05:68'
+	# 两次查询的间隔(秒); 未配置时默认 60
+	option intervalSec '30'
+	# 登录基站模组的 SSH 账号(见 btsremote.py)
+	option user 'root'
+	option port '22'
+	# 私钥路径, 存在时优先公钥认证
+	option key '/root/.ssh/id_dropbear'
+	# 备选密码, 仅在公钥认证失败时使用
+	option password 'root'
+	# 单次执行超时(秒)
+	option timeout '10'
+	# 输出上限(字节), 防止 pty 无限读取
+	option maxOutput '65536'

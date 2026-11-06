@@ -135,7 +135,7 @@ class DirectStatus:
 				continue
 			up, down = _meter.rates(sim.dev)												# 没拨号的链路流量为 0, 速率自然是 0
 			links.append(SimLink(name, sim.operator, sim.state, sim.rsrp, up, down, sim.latency))	# 时延取 tracker-sim 实时探测到的到服务器时延
-		return cls(links, read_bts())														# 基站当前为模拟数据, 见 btsinfo.py
+		return cls(links, read_bts())														# 基站状态来自后台轮询缓存, 见 btsinfo.py
 
 	# 转成串口屏指令序列(不含 FF FF FF), 返回列表, 顺序即下发顺序
 	def commands(self):

@@ -1,16 +1,18 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
 #
-# 远端命令执行模块: 通过 dropbear 客户端(/usr/bin/ssh, 软链接到 /usr/sbin/dropbear)
-# SSH 到远端主机执行命令并取回结果
+# 基站 SSH 执行模块: 通过 dropbear 客户端(/usr/bin/ssh, 软链接到 /usr/sbin/dropbear)
+# SSH 到基站模组执行命令并取回结果
 #
 # 主路径: 预置公钥认证(-i 指定私钥), 无密码、非交互
 # 备选路径: 公钥不可用/部署有误时回退到伪终端(pty)驱动, 自动应答密码提示
 #
+# 登录参数(用户/端口/私钥/密码)由调用方从 /etc/config/lcd 的 bts 节读取后传入,
+# 见 btsinfo.py; 超时与输出上限在这里按 lcd.bts.timeout / lcd.bts.maxOutput 读取
+#
 # 用法:
-#   import remote
-#   rc, out, err = remote.run("192.168.16.7", "jun", "ls -l", password="xxx")
+#   import btsremote
+#   rc, out, err = btsremote.run("192.168.16.7", "root", "ls -l", password="xxx")
 
 import os									# 私钥是否存在判断
 import pty									# 伪终端, 用于驱动 dropbear 客户端输入密码
@@ -20,17 +22,18 @@ import signal								# 超时后终止子进程
 import subprocess							# 公钥路径的执行
 import time									# 超时计时
 
-SSH_BIN = os.environ.get("BASESTATION_SSH_BIN", "/usr/bin/ssh")					# dropbear 客户端
-KEY_FILE = os.environ.get("BASESTATION_SSH_KEY", "/root/.ssh/id_dropbear")		# 默认私钥
-UCI_BIN = os.environ.get("BASESTATION_UCI_BIN", "/sbin/uci")					# uci 命令, 用于读取运行参数
-UCI_CONFIG = "basestation"														# 配置文件(见 files/etc/config/basestation)
-UCI_SECTION = "remote"															# 配置节
+SSH_BIN = "/usr/bin/ssh"									# dropbear 客户端
+KEY_FILE = "/root/.ssh/id_dropbear"							# 默认私钥
+UCI_BIN = "/sbin/uci"										# uci 命令, 用于读取运行参数
+UCI_CONFIG = "lcd"											# 配置文件(见 files/etc/config/lcd)
+UCI_SECTION = "bts"											# 配置节
 
 DEFAULT_TIMEOUT = 10						# 单次执行超时默认值(秒)
 DEFAULT_MAX_OUTPUT = 64 * 1024				# 输出上限默认值, 防止 pty 无限读取
 
 
 # 从 UCI 配置读取整型参数: uci 不可用、配置缺失或取值非法时回退默认值
+# 这里不引用 logger, 避免模块导入时(配置项尚未落地)刷失败日志
 def _uci_get_int(option, default):
 	try:
 		p = subprocess.run([UCI_BIN, "-q", "get", "%s.%s.%s" % (UCI_CONFIG, UCI_SECTION, option)],
@@ -42,7 +45,7 @@ def _uci_get_int(option, default):
 
 
 TIMEOUT = _uci_get_int("timeout", DEFAULT_TIMEOUT)				# 单次执行超时(秒)
-MAX_OUTPUT = _uci_get_int("max_output", DEFAULT_MAX_OUTPUT)		# 输出上限, 防止 pty 无限读取
+MAX_OUTPUT = _uci_get_int("maxOutput", DEFAULT_MAX_OUTPUT)		# 输出上限, 防止 pty 无限读取
 
 # dropbear 客户端自身打印的错误行(形如 "ssh: ...")
 CLIENT_LINE_PAT = re.compile(r"(?im)^\s*(?:ssh|dbclient)\s*:\s*(.*)$")
@@ -54,6 +57,14 @@ PASSWORD_PROMPT_PAT = re.compile(rb"password\s*:", re.IGNORECASE)
 
 def _decode(data):
 	return data.decode("utf-8", errors="replace")
+
+
+# 信号编号转名字, 仅用于日志可读性
+def _signal_name(signo):
+	try:
+		return signal.Signals(signo).name
+	except ValueError:
+		return "unknown"
 
 
 def _target(host, user):
@@ -98,7 +109,25 @@ def run_key(host, user, cmd, port=None, key=KEY_FILE, timeout=TIMEOUT):
 		return 124, "", "timeout"
 	except OSError as e:
 		return 127, "", str(e)
+	if p.returncode < 0:						# 被信号终止: 明确告知调用方
+		signo = -p.returncode
+		return p.returncode, _decode(p.stdout), "killed by signal %d (%s)" % (signo, _signal_name(signo))
 	return p.returncode, _decode(p.stdout), _decode(p.stderr)
+
+
+# 回收子进程: 子进程关闭 pty 后正常会在毫秒级退出, 最多再等 1 秒, 仍未退出才强杀
+# 必须先回收再关 master: 提前关闭 pty master 会给该会话的前台进程组发 SIGHUP,
+# 把刚执行成功的 ssh 客户端变成"被信号杀死", 调用方只会看到 rc=-1 的假失败
+def _reap(pid, killed):
+	limit = time.monotonic() + 1
+	while True:
+		wpid, status = os.waitpid(pid, os.WNOHANG)
+		if wpid:
+			return status, killed
+		if time.monotonic() >= limit:
+			os.kill(pid, signal.SIGKILL)
+			return os.waitpid(pid, 0)[1], True
+		time.sleep(0.02)
 
 
 # 备选路径: pty 驱动 dropbear 客户端, 自动应答密码提示
@@ -138,13 +167,16 @@ def run_password(host, user, pwd, cmd, port=None, timeout=TIMEOUT):
 			os.kill(pid, signal.SIGKILL)
 			killed = True
 			break
+	status, killed = _reap(pid, killed)		# 先回收再关 master, 见 _reap 注释
 	os.close(master)
+	text = _clean(bytes(out), pwd)
 
-	_, status = os.waitpid(pid, 0)
-	rc = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
 	if killed:
-		return 124, _clean(bytes(out), pwd), "timeout"
-	return rc, _clean(bytes(out), pwd), ""
+		return 124, text, "timeout"
+	if os.WIFSIGNALED(status):				# 被外部信号杀死: 明确告知调用方, 不要只给一个 -1
+		signo = os.WTERMSIG(status)
+		return -signo, text, "killed by signal %d (%s)" % (signo, _signal_name(signo))
+	return os.WEXITSTATUS(status), text, ""
 
 
 # 统一入口: 优先公钥认证, 认证失败且提供了密码时回退 pty

@@ -25,6 +25,7 @@ import fcntl								# 升级互斥锁
 import hashlib								# 计算固件 MD5
 import os									# 串口/文件操作
 import select								# 串口读超时
+import subprocess							# 读取 /etc/config/lcd 的日志配置
 import sys									# 退出
 import termios							# 串口配置与波特率
 import time								# 延时与超时计算
@@ -53,7 +54,12 @@ LOCK_FILE = "/var/run/lcd-update.lock"	# 防止两个升级进程同时操作串
 # /boot 是独立的 vfat 启动分区, 不参与 overlay, jffs2reset 清不到它, 所以恢复出厂后依然记得屏幕里是哪版固件.
 MD5_MARKER = "/boot/lcd-fw.md5"			# 只有一行 MD5, 每次成功升级覆盖
 
-# 日志: 输出到 stdout 与 /var/log/lcd/lcd.log, 写满 1MB 备份为 lcd.log.rotate
+# 日志: 输出到 stdout 与日志文件, 路径/大小上限由 /etc/config/lcd 的 log 段配置,
+# 未配置时默认 /var/log/lcd/lcd.log、1MB, 写满后备份为 lcd.log.rotate
+CONFIG = "lcd"							# uci 配置文件 /etc/config/lcd
+SECTION = "log"							# 日志配置段
+UCI_TIMEOUT = 2							# 读配置时 uci 命令的超时(秒)
+
 LOG_DIR = "/var/log/lcd"
 LOG_FILE = LOG_DIR + "/lcd.log"
 LOG_ROTATE = LOG_DIR + "/lcd.log.rotate"
@@ -64,9 +70,40 @@ NO_EXEC = False							# 调试用: 为 True 时结束后不 exec 成 lcd.py
 _log_fd = None							# 日志文件描述符, 打开失败时保持 None
 
 
+# 读取一项日志配置, 不存在或读取失败返回 None
+def _uci_get(option):
+	try:
+		proc = subprocess.run(["uci", "-q", "get", "%s.%s.%s" % (CONFIG, SECTION, option)],
+							  capture_output=True, text=True, timeout=UCI_TIMEOUT)
+	except (OSError, subprocess.SubprocessError):							# uci 不存在/超时等
+		return None
+	if proc.returncode != 0:												# 配置项不存在
+		return None
+	return proc.stdout.strip()
+
+
+# 从 uci 读取日志路径与大小上限, 配置缺失或非法时保留默认值
+def _load_config():
+	global LOG_FILE, LOG_DIR, LOG_ROTATE, LOG_MAX_SIZE
+	path = _uci_get("path")
+	if path:
+		LOG_FILE = path
+		LOG_DIR = os.path.dirname(path) or "."
+		LOG_ROTATE = path + ".rotate"
+	size = _uci_get("max_size")
+	if size:
+		try:
+			mb = int(size)
+		except ValueError:
+			mb = 0
+		if mb > 0:															# 0/负数视为未配置, 用默认值
+			LOG_MAX_SIZE = mb * 1024 * 1024
+
+
 # 打开日志文件, 失败时退化为只输出到 stdout
 def open_log():
 	global _log_fd
+	_load_config()							# 先按 uci 配置确定路径与大小上限
 	try:
 		os.makedirs(LOG_DIR, exist_ok=True)
 		_log_fd = os.open(LOG_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)

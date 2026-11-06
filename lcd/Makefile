@@ -35,6 +35,8 @@ endef
 define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/lcd.init $(1)/etc/init.d/lcd
+	$(INSTALL_DIR) $(1)/etc/config
+	$(INSTALL_CONF) ./files/etc/config/lcd $(1)/etc/config/lcd
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./files/usr/bin/lcd.py $(1)/usr/bin/lcd.py
 	$(INSTALL_BIN) ./files/usr/bin/lcd-update.py $(1)/usr/bin/lcd-update.py

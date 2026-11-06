@@ -21,6 +21,7 @@
 #   - 本模块无任何串口依赖, 可在开发机上直接 import 验证
 #
 
+from btsinfo import read_bts
 from modeDirect import OPERATOR_PICS, STATE_PICS
 from siminfo import SimState, read_sims
 
@@ -77,13 +78,9 @@ def _read_entries():
 	return entries
 
 
-# 基站入口卡: 屏上固定显示离线与 0
-# 模组是终端, 读不到基站的物理小区 ID 与连接用户数, 这两个字段没有数据源
+# 基站入口卡: 数据来自 btsinfo.py 的后台轮询缓存, 顺序固定 4G、5G
 def _read_bts():
-	return [
-		BtsEntry("4G", False, 0, 0),
-		BtsEntry("5G", False, 0, 0),
-	]
+	return [BtsEntry(b.label, b.online, b.pci, b.ue) for b in read_bts()]
 
 
 # 运维模式首页(链路设置)的全部状态

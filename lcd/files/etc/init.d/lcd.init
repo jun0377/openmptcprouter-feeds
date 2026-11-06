@@ -15,9 +15,11 @@ USE_PROCD=1
 LCD_BIN=/usr/bin/lcd.py
 LCD_UPDATE=/usr/bin/lcd-update.py
 LCD_UART=/dev/ttyAMA4
-LOG_FILE=/var/log/lcd/lcd.log
+# 日志路径与 Python 侧保持一致: 优先取 /etc/config/lcd 的 lcd.log.path, 未配置时用默认值
+LOG_FILE="$(uci -q get lcd.log.path 2>/dev/null)"
+[ -n "$LOG_FILE" ] || LOG_FILE=/var/log/lcd/lcd.log
 
-# 日志写入文件, 不经过 logd; 1MB 轮转由 Python 侧的 logger 统一处理
+# 日志写入文件, 不经过 logd; 文件大小上限与轮转由 Python 侧的 logger 统一处理
 log_msg() {
 	mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
 	printf '[%s] [LCD] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG_FILE" 2>/dev/null

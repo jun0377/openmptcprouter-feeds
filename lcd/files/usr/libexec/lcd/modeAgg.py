@@ -237,7 +237,7 @@ def _read_links():
 	return links
 
 
-# 基站卡片: 数据来自 btsinfo.py(当前为模拟值, 接入真实数据源后只改那边)
+# 基站卡片: 数据来自 btsinfo.py 的后台轮询缓存
 # 顺序固定 4G、5G, 与屏上两张卡片一致
 def _read_bts():
 	return [BtsStatus(b.label, b.online, b.pci, b.ue) for b in read_bts()]
