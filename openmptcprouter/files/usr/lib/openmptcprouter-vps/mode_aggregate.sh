@@ -287,7 +287,8 @@ _config_service() {
 	# openmptcprouter.settings.vpn 决定聚合模式使用哪种 VPN
 	local vpn_type="$(uci -q get openmptcprouter.settings.vpn)"
 	if [ -z "$vpn_type" ]; then
-		vpn_type="mqvpn"
+		# 默认使用 TCP(selfvpn)
+		vpn_type="selfvpn"
 		logger -t "OMR-VPS" "<$FUNCNAME> settings.vpn is empty, set default to ${vpn_type}"
 		uci -q set openmptcprouter.settings.vpn="${vpn_type}"
 		uci -q commit openmptcprouter
