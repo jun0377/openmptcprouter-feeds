@@ -1164,6 +1164,21 @@ function atcmd_set_airplane_off()
     return 0
 }
 
+# 复位模组: 硬件没有把SIM检测脚接到模组, 热插拔后模组无法重新识别SIM卡,
+# 只有复位让模组重启并重新初始化, 才能看到新插入的卡
+function atcmd_reset()
+{
+    local ttyUSB=$1
+    [ -z "${ttyUSB}" ] && return 1
+
+    _log "ifname:${ifname} reset modem by AT^RESET on ${ttyUSB}"
+
+    # AT^RESET 后模组立即重启, 不会返回OK, 不能用返回值判断是否成功
+    _exec_at "AT^RESET" "${ttyUSB}"
+
+    return 0
+}
+
 # 拨号
 function atcmd_stick_connect()
 {
@@ -1690,9 +1705,6 @@ function atcmd_get_addr()
                 printf "%s%s", hex, (i%2==0 ? (i<NF ? ":" : "") : "")
             }
         }')
-    #     _log "IPv4: ${SIM_IPv4}, IPv6: ${SIM_IPv6}"
-    # else
-    #     _log "IPv4: ${SIM_IPv4}"
     fi
 
     _save "IPv4" "${SIM_IPv4:-}"
