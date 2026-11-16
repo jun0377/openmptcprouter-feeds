@@ -35,11 +35,6 @@ stop_all_vpn() {
 	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/glorytun-udp stop"
 	uci -q set glorytun-udp.vpn.enable=0 && uci commit glorytun-udp
 
-
-
-	# omr-tracker
-	/etc/init.d/omr-tracker restart >/dev/null 2>&1
-	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/omr-tracker restart"
 }
 
 # 更新nft snat规则
@@ -140,83 +135,46 @@ nft_snat() {
 	ip route replace "$lan_subnet" dev "$lan_dev" table "$ip4table" 2>/dev/null
 	logger -t "OMR-VPS" "<$FUNCNAME> ip route replace ${lan_subnet} dev ${lan_dev} table ${ip4table}"
 
-	[ "$(uci -q get firewall.zone_wan)" = "zone" ] || {
-		logger -t "OMR-VPS" "<$FUNCNAME> firewall.zone_wan not found! return now..."
-		return
-	}
-
-	# 添加单卡模式防火墙规则,先备份一下, 然后只允许当前选择的这个链路作为出口
-	# 备份防火墙wan zone配置
-	local current_networks="$(uci -q get firewall.zone_wan.network)"
-	[ -n "$current_networks" ] && [ -z "$(uci -q get openmptcprouter.settings.single_wan_networks_backup)" ] && {
-		uci -q set openmptcprouter.settings.single_wan_networks_backup="$current_networks"
-		uci -q commit openmptcprouter
-	}
-	# 删除防火墙wan zone
-	uci -q del firewall.zone_wan.network
-	# 只允许当前选择的单卡链路作为出口wan
-	uci -q add_list firewall.zone_wan.network="$channel"
-	# 开启防火墙masquerade(SNAT)
-	[ "$(uci -q get firewall.zone_wan.masq)" = "1" ] || uci -q set firewall.zone_wan.masq="1"
-	uci -q commit firewall
-	/etc/init.d/firewall reload >/dev/null 2>&1
-	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/firewall reload"
+	# firewall.zone_wan 由 mode_manager.sh 统一收窄/恢复, 这里不再修改
 }
 
-# 停止单卡模式, 删除SNAT规则和路由
-function stop_mode_single() {
-
+# 停止单卡模式: 删除策略规则与手工补的 LAN 回程路由
+# firewall.zone_wan 的恢复由 mode_manager.sh 统一处理
+stop_mode_single() {
 	logger -t "OMR-VPS" "<$FUNCNAME>"
-	
-	# 1. 清除单卡模式路由规则
+
+	local channel ip4table lan_ip lan_netmask
+	local prefix lan_network lan_subnet
+
+	channel="$(uci -q get global.single.channel)"
+	ip4table=""
+	[ -n "$channel" ] && ip4table="$(uci -q get network.${channel}.ip4table)"
+
+	# 删除 nft_snat 中补的 LAN 回程路由, 避免残留在策略表里影响其它模式
+	lan_ip="$(uci -q get network.lan.ipaddr)"
+	lan_netmask="$(uci -q get network.lan.netmask)"
+	case "$ip4table" in
+		''|*[!0-9]*) ;;
+		*)
+			if [ -n "$lan_ip" ] && [ -n "$lan_netmask" ]; then
+				prefix="$(echo "$lan_netmask" | awk -F. '{c=0; for(i=1;i<=4;i++){n=$i+0; for(b=0;b<8;b++){c+=and(n,1); n=rshift(n,1)}} print c}')"
+				lan_network="$(echo "$lan_ip $lan_netmask" | awk '{split($1,ip,"."); split($2,mask,"."); printf "%d.%d.%d.%d", and(ip[1],mask[1]), and(ip[2],mask[2]), and(ip[3],mask[3]), and(ip[4],mask[4])}')"
+				lan_subnet="${lan_network}/${prefix}"
+				ip route del "$lan_subnet" table "$ip4table" >/dev/null 2>&1
+				logger -t "OMR-VPS" "<$FUNCNAME> ip route del ${lan_subnet} table ${ip4table}"
+			fi
+			;;
+	esac
+
+	# 清除单卡模式策略规则
 	uci -q delete network.omr_single_lan
 	uci -q commit network
 	/etc/init.d/network reload >/dev/null 2>&1
+	logger -t "OMR-VPS" "<$FUNCNAME> delete network.omr_single_lan"
 
-	logger -t "OMR-VPS" "<$FUNCNAME> uci -q delete network.omr_single_lan"
-
-	[ "$(uci -q get firewall.zone_wan)" = "zone" ] || return
-	local backup_networks="$(uci -q get openmptcprouter.settings.single_wan_networks_backup)"
-	[ -z "$backup_networks" ] && return
-
-	# 2. 恢复防火墙 zone_wan 的 network 配置
-	uci -q del firewall.zone_wan.network
-	local net
-	for net in $backup_networks; do
-		uci -q add_list firewall.zone_wan.network="$net"
-	done
-	uci -q commit firewall
-	/etc/init.d/firewall reload >/dev/null 2>&1
-
-	uci -q delete openmptcprouter.settings.single_wan_networks_backup
-	uci -q commit openmptcprouter
-
-	logger -t "OMR-VPS" "<$FUNCNAME> done..."
-}
-
-# 单卡模式处理逻辑
-mode_single_handler() {
-	logger -t "OMR-VPS" "<$FUNCNAME> mode: single"
-	
-	# 停止聚合模式
-	[ -f /usr/lib/openmptcprouter-vps/mode_aggregate.sh ] && {
-		. /usr/lib/openmptcprouter-vps/mode_aggregate.sh
-		stop_mode_aggregate
-	}
-
-	# 停止负载均衡模式
-	[ -f /usr/lib/openmptcprouter-vps/mode_balance.sh ] && {
-		. /usr/lib/openmptcprouter-vps/mode_balance.sh
-		stop_mode_balance
-	}
-
-	# 停止所有VPN和代理进程
-	stop_all_vpn
-
-	# 负载均衡mwan3
-	/etc/init.d/mwan3 stop >/dev/null 2>&1
-	logger -t "OMR-VPS" "<$FUNCNAME> /etc/init.d/mwan3 stop"
-
-	# 更新nft snat规则
-	nft_snat
+	# 旧版本遗留的备份键由 mode_manager.sh 迁移, 这里清理
+	if [ -n "$(uci -q get openmptcprouter.settings.single_wan_networks_backup)" ]; then
+		uci -q delete openmptcprouter.settings.single_wan_networks_backup
+		uci -q commit openmptcprouter >/dev/null 2>&1
+	fi
 }

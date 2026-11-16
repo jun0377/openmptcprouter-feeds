@@ -387,26 +387,3 @@ stop_mode_aggregate() {
 	logger -t "OMR-VPS" "<$FUNCNAME> deleted aggregate routes dev:${vpnifname} table:${ip4table}/${ip6table}"
 }
 
-mode_aggregate_handler() {
-
-	# 停止单卡模式
-	[ -f /usr/lib/openmptcprouter-vps/mode_single.sh ] && {
-		. /usr/lib/openmptcprouter-vps/mode_single.sh
-		stop_mode_single
-	}
-
-	# 停止负载均衡模式
-	[ -f /usr/lib/openmptcprouter-vps/mode_balance.sh ] && {
-		. /usr/lib/openmptcprouter-vps/mode_balance.sh
-		stop_mode_balance
-	}
-
-    logger -t "OMR-VPS" "$FUNCNAME..."
-
-	config_load openmptcprouter
-	config_foreach _get_local_wan_ip interface
-	config_foreach _config_service server				# uci show openmptcprouter | grep '=server
-	uci -q batch <<-EOF >/dev/null
-		commit openmptcprouter
-	EOF
-}

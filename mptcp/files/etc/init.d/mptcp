@@ -9,6 +9,10 @@ USE_PROCD=1
 . /usr/lib/unbound/iptools.sh
 . /lib/functions/network.sh
 
+# 策略路由表号偏移: 普通 WAN 使用 metric+偏移(>60), 与 mwan3 管理的 1~60 表解耦,
+# 避免 mwan3 停止时把所有 <=60 的表一起 flush, 误删本项目的 WAN 路由
+OMR_TABLE_OFFSET=100
+
 # 根据uci配置文件 /etc/config/network 进行配置
 global_multipath_settings() {
 	local multipath mptcp_path_manager mptcp_scheduler mptcp_subflows mptcp_debug mptcp_add_addr_accepted congestion mptcp_checksum mptcp_syn_retries mptcp_fullmesh_num_subflows mptcp_fullmesh_create_on_err mptcp_ndiffports_num_subflows mptcp_rr_cwnd_limited mptcp_rr_num_segments
@@ -124,11 +128,23 @@ interface_macaddr_count() {
 interface_max_metric() {
 	local config="$1"
 
-	# 普通网络接口，从/etc/config/network获取metric的值，如：uci show network.wan1.ip4table
+	# 普通网络接口, metric 优先取 network.<if>.metric
 	if [ "$1" != "omrvpn" ] && [ "$1" != "omr6in4" ] && [ "$1" != "lan" ] && [ "$1" != "loopback" ]; then
-		config_get metric "$config" ip4table
+		config_get metric "$config" metric
+		case "$metric" in
+			''|*[!0-9]*) metric="" ;;
+		esac
+		# 兼容旧配置: metric 缺失且 ip4table 是 <=60 的数字时, 把它当作旧版 metric
+		# (ip4table 现在可能是 101~105 这类显式表号, 不能用来当 metric)
+		if [ -z "$metric" ]; then
+			config_get metric "$config" ip4table
+			case "$metric" in
+				''|*[!0-9]*) metric="" ;;
+				*) [ "$metric" -le 60 ] || metric="" ;;
+			esac
+		fi
 		# 更新count值，避免metric冲突
-		if [ "$metric" -gt "$count" ] && [ "$metric" -lt "1000" ]; then
+		if [ -n "$metric" ] && [ "$metric" -gt "$count" ] && [ "$metric" -lt "1000" ]; then
 			count=$metric
 		fi
 	elif [ "$1" = "omrvpn" ]; then
@@ -152,7 +168,7 @@ interface_max_metric() {
 
 # 为一个网络接口配置所有与 MPTCP（多路径TCP）相关的设置，包括路由策略、多路径模式和硬件参数
 interface_multipath_settings() {
-	local mode iface proto metric ip4table
+	local mode iface proto metric ip4table ip6table special current_table
 	local config="$1"
 	local intf="$2"
 	local enabled
@@ -180,20 +196,44 @@ interface_multipath_settings() {
 	# 如果 metric 值大于 1000 (通常用于特殊目的)，并且不是特殊接口，则减去 1000 恢复为基础 metric
 	[ "$metric" -gt 1000 ] && [ "${config}" != "omrvpn" ] && [ "${config}" != "omr6in4" ] && [ "${config}" != "loopback" ] && metric=$((metric-1000))
 	# 为特殊接口 "lan", "omrvpn", "omr6in4" 分配固定的 metric 值
+	local special=0
 	if [ "${config}" = "lan" ] || [ "$(uci -q get network.${config}.ip4table)" = "lan" ] || [ "$(uci -q get network.${config}.ip4table)" = "9999" ]; then
 		metric="9999"
+		special=1
 	elif [ "${config}" = "omrvpn" ]; then
 		metric="1500"
+		special=1
 	elif [ "${config}" = "omr6in4" ]; then
 		metric="1201"
+		special=1
 #	elif [ "$(uci -q get network.${config}.multipath)" = "off" ]; then
 #		metric="9998"
 	fi
+
+	# 策略表与 metric 解耦: 普通 WAN 使用 metric+偏移, 特殊接口保持固定表号
+	if [ "$special" = "1" ] || [ "${config}" = "loopback" ]; then
+		ip4table="$metric"
+	else
+		ip4table=$((metric + OMR_TABLE_OFFSET))
+	fi
+
+	# 允许在 UCI 中显式指定 >60 的表号(如 sim1~sim5 的 101~105), 此时沿用配置值;
+	# 只有名字(wan/lan)、空值或 <=60 的旧表号才按上面的规则重算
+	current_table="$(uci -q get network.${config}.ip4table)"
+	case "$current_table" in
+		''|*[!0-9]*) ;;
+		*) [ "$current_table" -gt 60 ] && ip4table="$current_table" ;;
+	esac
+	ip6table="6${metric}"
+
+	# 旧版本表号等于 metric; 这里不做主动清理, 避免误删 mwan3 正在使用的 1~60 表。
+	# 旧规则/路由重启后自然消失, 升级当次新旧规则并存但不影响转发。
+
 	# 将最终确定的 metric 值保存回 UCI 配置
 	config_set "$config" metric $metric
 	uci -q set network.${config}.metric=$metric
-	uci -q set network.${config}.ip4table=$metric
-	uci -q set network.${config}.ip6table=6$metric
+	uci -q set network.${config}.ip4table=$ip4table
+	uci -q set network.${config}.ip6table=$ip6table
 	uci -q set openmptcprouter.${config}.metric=$metric
 
 	# 获取接口的多路径模式 (on, off, master, backup)
@@ -203,8 +243,7 @@ interface_multipath_settings() {
 	# 如果接口被禁用，则强制将模式设为 "off"
 	[ "$disabled" = "1" ] && mode="off"
 	id=$metric
-	ip4table=$metric
-	ip6table=6$metric
+	# ip4table/ip6table 已在上面按 metric 计算(普通 WAN 表号 = metric+偏移)
 	# 配置硬件卸载选项 (GRO, GSO, LRO, UFO, TSO)
 	[ -n "$iface" ] && {
 		gro=$(uci -q get network.${config}.gro)
@@ -370,8 +409,8 @@ interface_multipath_settings() {
 			commit network
 		EOF
 	else
-		[ -n "$(ip rule list | grep $id)" ] && ip rule del table $ip4table > /dev/null 2>&1
-		ip route flush $id > /dev/null 2>&1
+		[ -n "$(ip rule show 2>/dev/null | grep -E "lookup ${ip4table}\$")" ] && ip rule del table $ip4table > /dev/null 2>&1
+		ip route flush table $ip4table > /dev/null 2>&1
 	fi
 
 	# 成功获取到网关和网络地址，则添加策略路由和路由表项
@@ -380,7 +419,7 @@ interface_multipath_settings() {
 			uci -q batch <<-EOF >/dev/null
 				delete network.${config}_rule
 				set network.${config}_rule=rule
-				set network.${config}_rule.lookup=${id}
+				set network.${config}_rule.lookup=${ip4table}
 				set network.${config}_rule.priority=0
 				set network.${config}_rule.src="${ipaddr}/32"
 				set network.${config}_rule.created=mptcp
@@ -439,7 +478,7 @@ interface_multipath_settings() {
 			uci -q batch <<-EOF >/dev/null
 				delete network.${config}_rule
 				set network.${config}_rule=rule
-				set network.${config}_rule.lookup=${id}
+				set network.${config}_rule.lookup=${ip4table}
 				set network.${config}_rule.priority=0
 				set network.${config}_rule.src="${ipaddr}/32"
 				set network.${config}_rule.created=mptcp

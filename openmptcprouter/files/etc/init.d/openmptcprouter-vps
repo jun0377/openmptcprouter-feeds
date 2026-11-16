@@ -1361,69 +1361,17 @@ token() {
 	config_foreach _get_token server
 }
 
-# 聚合模式
-mode_aggregate() {
-	if [ -f /usr/lib/openmptcprouter-vps/mode_aggregate.sh ]; then
-		. /usr/lib/openmptcprouter-vps/mode_aggregate.sh
-	fi
-
-	# 启动聚合模式
-	if type mode_aggregate_handler >/dev/null 2>&1; then
-		mode_aggregate_handler
-		return
-	fi
-}
-
-# 负载均衡模式
-mode_balance() {
-	if [ -f /usr/lib/openmptcprouter-vps/mode_balance.sh ]; then
-		. /usr/lib/openmptcprouter-vps/mode_balance.sh
-	fi
-
-	# 启动聚合模式
-	if type mode_balance_handler >/dev/null 2>&1; then
-		mode_balance_handler
-		return
-	fi
-}
-
-# 单卡模式
-mode_single() {
-	
-	logger -t "OMR-VPS" "<$FUNCNAME> mode: single"
-
-	# 单卡模式逻辑在单独的文件中实现
-	if [ -f /usr/lib/openmptcprouter-vps/mode_single.sh ]; then
-		. /usr/lib/openmptcprouter-vps/mode_single.sh
-	fi
-	
-	# 单卡模式入口函数
-	if type mode_single_handler >/dev/null 2>&1; then
-		mode_single_handler
-		return
-	fi
-}
-
-# 工作模式: 单卡模式 / 聚合模式 / 负载均衡模式
+# 工作模式: 单一状态机入口, 由 mode_manager.sh 串行完成"先归零再搭建"
+# 目标模式由 mode_manager 在拿到锁之后再读, 避免并发切换时按旧值生效
 work_mode_init() {
-	
-	local mode="$(uci -q get global.global.mode)"
-	logger -t "OMR-VPS" "<$FUNCNAME> mode: ${mode}"
-	case "$mode" in
-		'single')
-			mode_single
-			;;
-		'aggregate')
-			mode_aggregate
-			;;
-		'balance')
-			mode_balance
-			;;
-		*)
-			logger -t "OMR-VPS" "<$FUNCNAME> unknown mode:${mode}! reset to mode single"
-			mode_single
-			;;
-	esac
+	logger -t "OMR-VPS" "<$FUNCNAME> desired mode: $(uci -q get global.global.mode)"
+
+	[ -f /usr/lib/openmptcprouter-vps/mode_manager.sh ] || {
+		logger -t "OMR-VPS" "<$FUNCNAME> mode_manager.sh not found!"
+		return
+	}
+	. /usr/lib/openmptcprouter-vps/mode_manager.sh
+	omr_mode_apply
 }
 
 # 序列号管理, 使用CPU序列号作为整机序列号
@@ -1464,4 +1412,12 @@ start_service() {
 service_triggers() {
 	# 当如下服务发生reload时, 会自动触发当前服务的reload
 	procd_add_reload_trigger openvpn mqvpn
+}
+
+# 模式切换只由 start_service -> work_mode_init 完成。
+# 若不做这个空实现, rc.common 会把 reload 回退成 start, 导致 uci commit openvpn/mqvpn
+# 触发整个模式流程重入(拆掉刚建好的规则/路由)。
+reload_service() {
+	logger -t "OMR-VPS" "<$FUNCNAME> reload ignored, mode is applied on start"
+	return 0
 }

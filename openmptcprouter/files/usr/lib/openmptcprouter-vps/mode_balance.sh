@@ -187,111 +187,27 @@ mwan3_balance_get_ifaces() {
 	done | xargs
 }
 
-# 将参与负载均衡的接口加入 firewall zone_wan 并启用 MASQUERADE，
-# 确保路由器自身发出的流量使用正确的源 IP，避免源地址与出口不匹配导致丢包。
-# 该函数备份原始 firewall.zone_wan 配置，退出负载均衡模式时恢复。
-mwan3_balance_setup_masquerade() {
-	[ "$(uci -q get firewall.zone_wan)" = "zone" ] || {
-		mwan3_balance_log "firewall.zone_wan not found, skip masquerade setup"
-		return
-	}
-
-	local current_networks="$(uci -q get firewall.zone_wan.network)"
-	[ -n "$current_networks" ] && [ -z "$(uci -q get openmptcprouter.settings.balance_wan_networks_backup)" ] && {
-		uci -q set openmptcprouter.settings.balance_wan_networks_backup="$current_networks"
-		uci -q commit openmptcprouter
-		mwan3_balance_log "backup firewall.zone_wan.network"
-	}
-
-	uci -q del firewall.zone_wan.network
-	for iface in $1; do
-		uci -q add_list firewall.zone_wan.network="$iface"
-	done
-	[ "$(uci -q get firewall.zone_wan.masq)" = "1" ] || uci -q set firewall.zone_wan.masq=1
-	uci -q commit firewall
-	/etc/init.d/firewall reload >/dev/null 2>&1
-	mwan3_balance_log "enable MASQUERADE for balance interfaces: $1"
-}
-
-# 恢复进入负载均衡模式前的 firewall.zone_wan 配置。
-mwan3_balance_cleanup_masquerade() {
-	[ "$(uci -q get firewall.zone_wan)" = "zone" ] || return
-	local backup_networks="$(uci -q get openmptcprouter.settings.balance_wan_networks_backup)"
-	[ -z "$backup_networks" ] && return
-
-	uci -q del firewall.zone_wan.network
-	for net in $backup_networks; do
-		uci -q add_list firewall.zone_wan.network="$net"
-	done
-	uci -q commit firewall
-	/etc/init.d/firewall reload >/dev/null 2>&1
-
-	uci -q delete openmptcprouter.settings.balance_wan_networks_backup
-	uci -q commit openmptcprouter
-	mwan3_balance_log "restore firewall.zone_wan from backup"
-}
-
 # 停止负载均衡模式，停掉 mwan3 并恢复进入该模式前的原始配置。
+# firewall.zone_wan 的恢复由 mode_manager.sh 统一处理。
+# 注意: mwan3 的 stop_service 会 flush 所有 <=MWAN3_INTERFACE_MAX(默认 60) 的路由表,
+# 因此本项目的 WAN 策略表已统一放到 metric+100(>60), 不会被误删。
 stop_mode_balance() {
 	mwan3_balance_log "stop balance mode"
 
-	# mwan3_balance_cleanup_masquerade
-
-	# 仅当 mwan3 服务存在且正在运行时才停止, 否则其 stop_service 会照常清空 id<=60 的路由表
-	if [ -x /etc/init.d/mwan3 ] && /etc/init.d/mwan3 running; then
+	# 无论 procd 是否认为 mwan3 在运行, 都执行一次 stop:
+	# 它同时清理可能残留的 iptables/fwmark 规则; 本项目 WAN 表已迁到 >60, 不会被其 flush
+	if [ -x /etc/init.d/mwan3 ]; then
 		/etc/init.d/mwan3 stop >/dev/null 2>&1
 	else
-		mwan3_balance_log "mwan3 not running, skip stop"
+		mwan3_balance_log "mwan3 init script not found, skip stop"
 	fi
 
 	mwan3_balance_restore_config
 
-	# bugfix-恢复被误删的路由
-	/etc/init.d/mptcp reload
-}
-
-# 负载均衡模式主入口：停止其他模式，生成配置并重启 mwan3 使其生效。
-mode_balance_handler() {
-	logger -t "OMR-VPS" "<mode_balance_handler> mode: balance"
-
-	# 停止单卡模式，并复用其中的公共辅助函数
-	[ -f /usr/lib/openmptcprouter-vps/mode_single.sh ] && {
-		. /usr/lib/openmptcprouter-vps/mode_single.sh
-		stop_mode_single
-	}
-
-	# 停止聚合模式
-	[ -f /usr/lib/openmptcprouter-vps/mode_aggregate.sh ] && {
-		. /usr/lib/openmptcprouter-vps/mode_aggregate.sh
-		stop_mode_aggregate
-	}
-
-	type stop_all_vpn >/dev/null 2>&1 && stop_all_vpn
-
-	mwan3_balance_backup_config
-	
-	# 生成完整的mwan3负载均衡配置并提交到 UCI
-	if ! mwan3_balance_generate_config; then
-		mwan3_balance_log "generate balance config failed, stop mwan3"
-		/etc/init.d/mwan3 stop >/dev/null 2>&1
-		mwan3_balance_restore_config
-		return 1
+	# 旧版本遗留的备份键(新版本由 mode_manager.sh 统一维护)
+	if [ -n "$(uci -q get openmptcprouter.settings.balance_wan_networks_backup)" ]; then
+		uci -q delete openmptcprouter.settings.balance_wan_networks_backup
+		uci -q commit openmptcprouter >/dev/null 2>&1
 	fi
-
-	# 收集参与负载均衡的原始接口名列表(如 sim1 wan1), 供masquerade使用
-	# 解决的是路由器自身出站流量的源IP与出口不匹配问题
-	# 具体场景如下:
-	## 1. 路由器自己发起请求(如 DNS 查询、NTP 同步、ping 检测), Linux 内核根据路由表选择源 IP, 比如选的是 sim1 的 IP
-	## 2. mwan3 的fwmark策略路由把这个包实际从wan1发出去了
-	## 3. 包到达对方服务器时,源IP还是sim1的地址
-	## 4. 对方回复时把包发给sim1的IP,但sim1此时可能不通,或者回复路径与发出路径不一致
-	## 5. 结果是conntrack中出现大量[UNREPLIED] —— 包发出去了但没收到回复
-	## 6. 启用MASQUERADE后,iptables会把源IP改写为实际出口接口的IP,确保回包能正确返回
-	## 7. 注意: 这只影响路由器自身的流量。来自LAN的转发流量不受影响,因为mwan3在PREROUTING阶段就已经决定了出口,且LAN设备的IP是私有地址,本来就会被MASQUERADE
-	local balance_ifaces
-	balance_ifaces="$(mwan3_balance_get_ifaces)"
-	[ -n "$balance_ifaces" ] && mwan3_balance_setup_masquerade "$balance_ifaces"
-
-	/etc/init.d/mwan3 restart >/dev/null 2>&1
-	mwan3_balance_log "restart mwan3 for balance mode"
 }
+
