@@ -10,8 +10,9 @@
 #         odi -n oamProcess getcf Device.Services.FAPService.1.CellConfig.1.NR.RAN.OpState
 #       getcf 读配置树; odi -n duapp0 display-ue-info 读终端数
 #   4G: 按平台自适应(FGSL 本地 odi / FGBD expect+mdf):
-#       先裸跑工具取注册列表, 再查 callpctrl0 ue-list;
-#       输出含 "allocated in cell" 即激活
+#       OpState 判断激活:
+#         odi -n oamprocess getcf Device.Services.FAPService.1.FAPControl.LTE.OpState
+#       ue-list 只统计终端数, show-alarm-list 统计告警数
 #   SN: 读 confdb_v2.xml 的 <SerialNumber>
 #
 # 每次查询间隔取自 UCI lcd.bts.intervalSec, 未配置时默认 60 秒.
@@ -60,7 +61,7 @@ _worker = None								# 后台轮询线程
 _worker_lock = threading.Lock()				# 保证线程只启动一次
 _platform = ""								# 基站平台: FGSL / FGBD, 首次查询时识别
 _5g_active = False							# 最近一次查询的 5G 激活状态(OpState=1)
-_4g_active = False							# 最近一次查询的 4G 激活状态(allocated in cell)
+_4g_active = False							# 最近一次查询的 4G 激活状态(OpState=1)
 
 
 # 5G 查询: 配置树 + 终端数, 输出 KEY=VALUE 行
@@ -113,7 +114,7 @@ expect eof'''
 
 # 4G 脚本模板: 平台识别后替换 @LD@ / @TOOL@ / @MDF@
 # 先裸跑工具取注册列表, 拿到 oamprocess / callpctrl0 端口;
-# 4G 激活状态 = callpctrl0 ue-list 输出含 "allocated in cell"
+# 4G 激活状态 = FAPControl.LTE.OpState=1, ue-list 只用于统计终端数量
 _FOUR_G_INNER_TMPL = r'''@LD@TOOL_4G=@TOOL@
 MDF_4G=@MDF@
 PORT=""
@@ -142,6 +143,7 @@ if [ -n "$PORT" ]; then
 			echo "4G:$f:$leaf=$(getv Device.Services.FAPService.$f.CellConfig.LTE.$leaf)"
 		done
 	done
+	echo "4G:OPSTATE=$(getv Device.Services.FAPService.1.FAPControl.LTE.OpState)"
 fi
 run_mdf_n() {
 	out=""
@@ -160,11 +162,6 @@ if [ -n "$CP_PORT" ]; then
 	UE=$($MDF_4G -p "$CP_PORT" ue-list 2>&1)
 else
 	UE=$(run_mdf_n callpctrl0 ue-list)
-fi
-if printf '%s\n' "$UE" | grep -q "allocated in cell"; then
-	echo "4G:ACTIVE"
-else
-	echo "4G:INACTIVE"
 fi
 if printf '%s\n' "$UE" | grep -qi "no UEs allocated"; then
 	UECNT=0
@@ -526,10 +523,10 @@ def _query_4g(ip, platform):
 	status = {
 		"ue": _int_or_none(values.get("4G:UE_COUNT")),
 		"alarms": _int_or_none(values.get("4G:ALARM_COUNT")),
-		"active": "4G:ACTIVE" in out,
+		"opstate": _int_or_none(values.get("4G:OPSTATE")),
 	}
-	log("bts 4G query ok: platform=%s elapsed=%.1fs cells=%d active=%s ue=%s alarms=%s" % (
-		platform, elapsed, len(cells), status["active"], status["ue"], status["alarms"]))
+	log("bts 4G query ok: platform=%s elapsed=%.1fs cells=%d opstate=%s ue=%s alarms=%s" % (
+		platform, elapsed, len(cells), status["opstate"], status["ue"], status["alarms"]))
 	return cells, status
 
 
@@ -571,7 +568,7 @@ def _update_details(meta, cells5, cells4, status5=None, status4=None):
 
 
 # 用最近一次静态参数和激活状态生成缓存
-# 在线状态 = 激活状态: 5G 看 OpState=1, 4G 看 callpctrl0 是否有 allocated in cell
+# 在线状态 = 激活状态: 4G/5G 都看 OpState=1
 def _apply(ip, reachable, reason=""):
 	global _snapshot, _last_state
 	if (reachable, ip) != _last_state:
@@ -634,7 +631,7 @@ def _poll_once():
 		status5 = None
 
 	cells4, status4 = _query_4g(ip, platform)
-	_4g_active = bool(status4 and status4.get("active"))
+	_4g_active = bool(status4 and status4.get("opstate") == 1)
 	if cells4 is None:
 		status4 = None
 
