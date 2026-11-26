@@ -2176,6 +2176,16 @@ function dial
 # E5模式设置自动拨号
 function atcmd_e5_autodial()
 {
+    # 模组软重启后会重新枚举, 调用方传入的 ttyUSB 可能已失效; 先按 UCI 的 usb/ttyUSB 重新解析
+    local sysfs=$(uci -q get sim.${ifname}.usb)
+    local tty_if=$(uci -q get sim.${ifname}.ttyUSB)
+    local tty="$1"
+    local node=""
+    if [ -n "${sysfs}" ] && [ -n "${tty_if}" ] && [ -d "${sysfs}/${tty_if}" ]; then
+        node=$(ls "${sysfs}/${tty_if}" 2>/dev/null | grep ttyUSB | head -n 1)
+        [ -n "${node}" ] && tty="/dev/${node}"
+    fi
+
     # UCI配置: APN/用户名/密码/鉴权
     local apn=$(uci -q get sim.${ifname}.apn)
     local user=$(uci -q get sim.${ifname}.user)
@@ -2187,23 +2197,198 @@ function atcmd_e5_autodial()
     [ "PAP" == "${auth}" ] && auth_type=1
     [ "CHAP" == "${auth}" ] && auth_type=2
 
-    # 1. 先关闭自动拨号
-    local ATCMD="AT^SETAUTODIAL=0"
-    _exec_at "$ATCMD" $1 || return 1
+    # 1. 查询自动拨号状态: 已开启且参数一致时不再关闭/重设, 避免每次拨号把模组打回冷启动
+    _exec_at "AT^SETAUTODIAL?" "${tty}" || {
+        _log "ifname:${ifname} query autodial failed, skip this round"
+        return 1
+    }
+    local ad_enable=$(echo "${_AT_RES}" | sed -n 's/.*\^SETAUTODIA[L]*: *\([01]\).*/\1/p' | head -n 1)
+    local ad_params=$(echo "${_AT_RES}" | tr -d '\r' | sed -n 's/.*\^SETAUTODIA[L]*:\([^ ]*\).*/\1/p' | head -n 1 | tr -d '"' | awk -F',' '{if (NF >= 7) {gsub(/[^0-9]/, "", $7); print $4"|"$5"|"$6"|"$7}}')
 
+    local cfg_now="${apn}|${user}|${passwd}|${auth_type}"
+    local cfg_mark="/tmp/tracker-sim/sim/${ifname}/e5_dial_cfg"
+    local cfg_reset_mark="/tmp/tracker-sim/sim/${ifname}/e5_cfg_reset"
+    mkdir -p "$(dirname "${cfg_mark}")" 2>/dev/null
+    local cfg_saved=""
+    [ -f "${cfg_mark}" ] && cfg_saved=$(cat "${cfg_mark}" 2>/dev/null)
+    local cfg_reset_saved=""
+    [ -f "${cfg_reset_mark}" ] && cfg_reset_saved=$(cat "${cfg_reset_mark}" 2>/dev/null)
+
+    local need_cfg=1 cfg_ok=0
+    if [ "${ad_enable}" = "1" ]; then
+        if [ -n "${ad_params}" ]; then
+            if [ "${ad_params}" = "${cfg_now}" ]; then
+                need_cfg=0
+                cfg_ok=1
+            fi
+        elif [ -n "${cfg_saved}" ]; then
+            if [ "${cfg_saved}" = "${cfg_now}" ]; then
+                need_cfg=0
+                cfg_ok=1
+            fi
+        else
+            # 模组只返回使能位, 参数无法比较; 按已配置处理, 避免每次开机都复位
+            need_cfg=0
+            cfg_ok=1
+        fi
+    fi
+
+    # 已经为这份配置复位过一次仍然读不回一致结果时, 不再重设, 避免反复重启模组
+    if [ "${need_cfg}" = "1" ] && [ "${cfg_reset_saved}" = "${cfg_now}" ]; then
+        _log "ifname:${ifname} autodial config still differs after reset, skip reconfig"
+        need_cfg=0
+    fi
+    [ "${cfg_ok}" = "1" ] && rm -f "${cfg_reset_mark}"
+
+    if [ "${need_cfg}" = "1" ]; then
+        _log "ifname:${ifname} update autodial config"
+        if [ "${ad_enable}" = "1" ]; then
+            _exec_at "AT^SETAUTODIAL=0" "${tty}" || return 1
+            sleep 3
+        fi
+
+        local ATCMD="AT^SETAUTODIAL=1,1,\"IP\",\"${apn}\",\"${user}\",\"${passwd}\",${auth_type}"
+        if ! _exec_at "$ATCMD" "${tty}"; then
+            # 网络注册 URC 可能把 OK 顶掉, 用查询命令确认是否已经打开
+            local retry=0 ok=0
+            while [ ${retry} -lt 3 ]; do
+                retry=$((retry + 1))
+                sleep 3
+                if _exec_at "AT^SETAUTODIAL?" "${tty}" && \
+                   echo "${_AT_RES}" | grep -q '\^SETAUTODIA[L]*:1'; then
+                    ok=1
+                    break
+                fi
+            done
+            if [ "${ok}" != "1" ]; then
+                echo "${cfg_now}" > "${cfg_reset_mark}"
+                _log "ifname:${ifname} enable autodial failed, reset modem"
+                _exec_at "AT^RESET" "${tty}"
+                return 1
+            fi
+            _log "ifname:${ifname} autodial enabled (verified)"
+        fi
+        echo "${cfg_now}" > "${cfg_mark}"
+    fi
+
+    # 2. 入网方式变化时按手册处理: C5GOPTION 设置前先切飞行模式, 设置完软重启才生效
+    local net=$(uci -q get sim.${ifname}.net)
+    [ -z "${net}" ] && net="auto"
+    local want_net=$(echo "${net}" | tr 'a-z' 'A-Z')
+
+    # 不能直接用 atcmd_get_net 判断: 它解析 SYSCFGEX 的 LTE 分支时变量里带了
+    # "acqorder=" 前缀, "03" 永远匹配不上, 会把 LTE 误判成 AUTO/SA/NSA, 造成反复复位
+    # 另外响应里会带回显的 "AT^SYSCFGEX?" 行, 必须按 "^SYSCFGEX:" 取值, 不能用字段位置
+    _exec_at "AT^SYSCFGEX?" "${tty}" || return 1
+    local acqorder=$(echo "${_AT_RES}" | tr -d '"' | sed -n 's/.*\^SYSCFGEX: *\([0-9A-Fa-f]*\).*/\1/p' | head -n 1)
+    local cur_net=""
+    case "${acqorder}" in
+        03) cur_net="LTE" ;;
+        *)
+            _exec_at "AT^C5GOPTION?" "${tty}" || return 1
+            local c5g=$(echo "${_AT_RES}" | tr -d '"' | sed -n 's/.*\^C5GOPTION: *\([0-9]\), *\([0-9]\), *\([0-9]\).*/\1,\2,\3/p' | head -n 1)
+            case "${c5g}" in
+                1,1,1) cur_net="AUTO" ;;
+                1,0,1) cur_net="SA" ;;
+                0,1,0) cur_net="NSA" ;;
+            esac
+            ;;
+    esac
+
+    # 同一个入网方式只主动复位一次, 避免模组重启后配置未生效时无限重启
+    local reset_mark="/tmp/tracker-sim/sim/${ifname}/net_reset"
+    mkdir -p "$(dirname "${reset_mark}")" 2>/dev/null
+
+    if [ "${cur_net}" = "${want_net}" ]; then
+        rm -f "${reset_mark}"
+    else
+        _log "ifname:${ifname} net change: ${cur_net:-unknown} -> ${want_net}"
+
+        atcmd_set_airplane_on "${tty}" || return 1
+        if ! atcmd_set_net "${tty}" "${net}"; then
+            _log "ifname:${ifname} set net failed"
+            atcmd_set_airplane_off "${tty}"
+            return 1
+        fi
+
+        case "${want_net}" in
+            AUTO|SA|NSA)
+                local last_reset=""
+                [ -f "${reset_mark}" ] && last_reset=$(cat "${reset_mark}" 2>/dev/null)
+                if [ "${last_reset}" = "${want_net}" ]; then
+                    # 上次已经为这个入网方式复位过, 再复位只会让模组无限重启
+                    _log "ifname:${ifname} net still ${cur_net:-unknown} after reset, skip reset"
+                    atcmd_set_airplane_off "${tty}"
+                else
+                    echo "${want_net}" > "${reset_mark}"
+                    _log "ifname:${ifname} reset modem to apply 5g option, wait for ncm.sh redial"
+                    _exec_at "AT^RESET" "${tty}"      # 模组重启, 正常情况下不返回 OK
+
+                    # 模组重启后会由 ncm.sh 重新走初始化/拨号流程, 这里直接返回失败, 不阻塞等待
+                    return 1
+                fi
+                ;;
+            *)
+                atcmd_set_airplane_off "${tty}" || return 1
+                ;;
+        esac
+    fi
+
+    # 3. 自动拨号参数刚变化时, 按手册软重启一次后交给 ncm.sh 重拨
+    if [ "${need_cfg}" = "1" ]; then
+        echo "${cfg_now}" > "${cfg_reset_mark}"
+        _log "ifname:${ifname} reset modem to apply autodial config, wait for ncm.sh redial"
+        _exec_at "AT^RESET" "${tty}"
+        return 1
+    fi
+
+    # 4. 锁5G频段
+    local nrBandLock=$(uci -q get sim.${ifname}.nrBandLock)
+    # 去掉前导的 n/N（如 n78 → 78）
+    nrBandLock=$(echo "$nrBandLock" | sed 's/^[nN]//')
+    # 锁5G PCI小区
+    local nrPciLockEnable=$(uci -q get sim.${ifname}.nrPciLockEnable)
+    local nrPciPcid=$(uci -q get sim.${ifname}.nrPciPcid)
+    local nrPciBand=$(uci -q get sim.${ifname}.nrPciBand)
+    local nrPciFreq=$(uci -q get sim.${ifname}.nrPciFreq)
+    local nrPciScs=$(uci -q get sim.${ifname}.nrPciScs)
+    local nrPciForbidFlag=$(uci -q get sim.${ifname}.nrPciForbidFlag)
+
+    if [ -n "$nrBandLock" ] && [ "$nrBandLock" != "unlocked" ]; then
+        atcmd_nr_band_lock "${tty}" "$nrBandLock"
+    elif [ -n "$nrPciLockEnable" ] && [ "$nrPciLockEnable" = "locked" ]; then
+        atcmd_nr_pci_lock "${tty}" "$nrPciForbidFlag" "$nrPciBand" "$nrPciFreq" "$nrPciScs" "$nrPciPcid"
+    else
+        atcmd_nr_unlock "${tty}"
+    fi
+
+    # 5. 锁LTE频段
+    local lteBandLock=$(uci -q get sim.${ifname}.lteBandLock)
+    # 去掉前导的 b/B/n/N
+    lteBandLock=$(echo "$lteBandLock" | sed 's/^[bBnN]//')
+    # 锁LTE PCI小区
+    local ltePciLockEnable=$(uci -q get sim.${ifname}.ltePciLockEnable)
+    local ltePciForbidFlag=$(uci -q get sim.${ifname}.ltePciForbidFlag)
+    [ -z "$ltePciForbidFlag" ] && ltePciForbidFlag=0
+
+    if [ -n "$lteBandLock" ] && [ "$lteBandLock" != "unlocked" ]; then
+        atcmd_lte_band_lock "${tty}" "$lteBandLock"
+    elif [ -n "$ltePciLockEnable" ] && [ "$ltePciLockEnable" = "locked" ]; then
+        local ltePciPcid=$(uci -q get sim.${ifname}.ltePciPcid)
+        local ltePciBand=$(uci -q get sim.${ifname}.ltePciBand)
+        local ltePciFreq=$(uci -q get sim.${ifname}.ltePciFreq)
+        atcmd_lte_pci_lock "${tty}" "$ltePciForbidFlag" "$ltePciBand" "$ltePciFreq" "$ltePciPcid"
+    else
+        atcmd_lte_unlock "${tty}"
+    fi
+
+    # 6. 切换一次飞行模式, 使锁频/锁小区配置生效
+    atcmd_set_airplane_on "${tty}"
     sleep 3
+    atcmd_set_airplane_off "${tty}"
 
-    # 2. 重新开启自动拨号, 同时设置APN/用户名/密码/鉴权
-    ATCMD="AT^SETAUTODIAL=1,1,\"IP\",\"${apn}\",\"${user}\",\"${passwd}\",${auth_type}"
-    _exec_at "$ATCMD" $1 || return 1
-
-    # 3. 切换一次飞行模式, 使自动拨号配置生效
-    atcmd_set_airplane_on $1
-    sleep 3
-    atcmd_set_airplane_off $1
-
-    # E5模式由模组自动拨号: AT^SETAUTODIAL 的APN作用于默认承载CID1, 等待其真正激活
-    atcmd_wait_pdp_active 1 $1 || return 1
+    # 7. 等待 PDP 激活
+    atcmd_wait_pdp_active 1 "${tty}" || return 1
 
     return 0
 }
